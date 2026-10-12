@@ -2669,12 +2669,11 @@ final class Engine implements AutoCloseable {
     }
 
     private StoredRow rowById(TableStore table, long id) {
-        for (StoredRow row : table.scan()) {
-            if (row.id == id) {
-                return row;
-            }
+        StoredRow row = table.row(id);
+        if (row == null) {
+            throw new NexException("registro não encontrado");
         }
-        throw new NexException("registro não encontrado");
+        return row;
     }
 
     private void restoreStatement() {
@@ -3861,10 +3860,11 @@ final class Engine implements AutoCloseable {
         if (txn == null || txn.tables.containsKey(table)) {
             return;
         }
-        txn.layout.put(table, table.savepoint());
-        txn.baseline.put(table, table.freeze());
+        table.markShared();
+        TableStore.Snapshot layout = table.savepoint();
+        txn.layout.put(table, layout);
         txn.tables.put(table, Boolean.TRUE);
-        table.materialize();
+        table.fork();
         installed = owner;
     }
 
@@ -3964,7 +3964,7 @@ final class Engine implements AutoCloseable {
                 if (onto == null) {
                     onto = txn.layout.get(table);
                 }
-                table.publishChanges(txn.baseline.get(table), onto);
+                table.publishChanges(txn.layout.get(table), onto);
             }
         } catch (RuntimeException exception) {
             for (Map.Entry<TableStore, TableStore.Snapshot> entry : safety.entrySet()) {
@@ -3999,7 +3999,6 @@ final class Engine implements AutoCloseable {
         private final IdentityHashMap<TableStore, TableStore.Snapshot> layout = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, TableStore.Snapshot> held = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, TableStore.Snapshot> workspace = new IdentityHashMap<>();
-        private final IdentityHashMap<TableStore, Map<Long, Object[]>> baseline = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, Boolean> tables = new IdentityHashMap<>();
 
         private OpenTxn(long id) {

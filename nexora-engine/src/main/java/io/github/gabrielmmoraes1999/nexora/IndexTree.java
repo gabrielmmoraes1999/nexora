@@ -147,18 +147,10 @@ final class IndexTree {
 
         DiskIndex insert(Schema schema, Object[] values, long rowId, List<Extent> freed, PageSource pages) {
             byte[] key = IndexKeys.encode(schema, columns, values);
-            Node live = live(pages);
-            if (live != null) {
-                Node leaf = descend(live, key, schema, pages);
-                int at = leaf.exact(schema, columns, key);
-                if (at >= 0 && contains(leaf.ids[at], rowId)) {
-                    return this;
-                }
-                if (at >= 0 && unique) {
-                    throw duplicate(schema, values);
-                }
+            Split split = insertRec(live(pages), key, values, rowId, schema, freed, pages);
+            if (split.left == null) {
+                return this;
             }
-            Split split = insertRec(live, key, rowId, schema, freed, pages);
             Node next = split.right == null ? split.left : branch(split.separator, split.left, split.right);
             return new DiskIndex(name, columns, primary, unique, next, 0);
         }
@@ -314,21 +306,32 @@ final class IndexTree {
             }
         }
 
-        private Split insertRec(Node node, byte[] key, long rowId, Schema schema, List<Extent> freed, PageSource pages) {
+        private Split insertRec(Node node, byte[] key, Object[] values, long rowId, Schema schema,
+                                List<Extent> freed, PageSource pages) {
             if (node == null) {
                 return new Split(Node.leaf(key, new long[]{rowId}), null, null);
             }
-            Node current = cow(node, freed);
-            if (current.leaf) {
+            if (node.leaf) {
+                int at = node.exact(schema, columns, key);
+                if (at >= 0 && contains(node.ids[at], rowId)) {
+                    return new Split(null, null, null);
+                }
+                if (at >= 0 && unique) {
+                    throw duplicate(schema, values);
+                }
+                Node current = cow(node, freed);
                 current.put(schema, columns, key, rowId);
                 if (Pages.fits(current)) {
                     return new Split(current, null, null);
                 }
                 return current.splitLeaf();
             }
-            int at = current.childIndex(schema, columns, key);
-            Node child = load(current, at, pages);
-            Split below = insertRec(child, key, rowId, schema, freed, pages);
+            int at = node.childIndex(schema, columns, key);
+            Split below = insertRec(load(node, at, pages), key, values, rowId, schema, freed, pages);
+            if (below.left == null) {
+                return below;
+            }
+            Node current = cow(node, freed);
             current.children[at] = below.left;
             current.childOffsets[at] = 0;
             if (below.right == null) {
@@ -494,7 +497,7 @@ final class IndexTree {
             copy.leaf = leaf;
             copy.dirty = true;
             copy.keys = keys.clone();
-            copy.ids = cloneIds(ids);
+            copy.ids = ids.clone();
             copy.childOffsets = childOffsets.clone();
             copy.children = children == null ? null : children.clone();
             return copy;
@@ -519,11 +522,17 @@ final class IndexTree {
         }
 
         int childIndex(Schema schema, int[] columns, byte[] key) {
-            int index = 0;
-            while (index < keys.length && IndexKeys.compare(schema, columns, keys[index], key) <= 0) {
-                index++;
+            int lo = 0;
+            int hi = keys.length;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (IndexKeys.compare(schema, columns, keys[mid], key) <= 0) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
             }
-            return index;
+            return lo;
         }
 
         void put(Schema schema, int[] columns, byte[] key, long rowId) {
@@ -887,6 +896,25 @@ final class IndexTree {
         }
 
         static int compare(Schema schema, int[] columns, byte[] left, byte[] right) {
+            if (!orderedBytes(schema, columns)) {
+                return compareDecoded(schema, columns, left, right);
+            }
+            int a = 0;
+            int b = 0;
+            for (int column : columns) {
+                DataType type = schema.columns.get(column).type;
+                int cmp = compareFixed(type, left, a, right, b);
+                if (cmp != 0) {
+                    return cmp;
+                }
+                int width = width(type);
+                a += width;
+                b += width;
+            }
+            return 0;
+        }
+
+        private static int compareDecoded(Schema schema, int[] columns, byte[] left, byte[] right) {
             Object[] a = decode(schema, columns, left);
             Object[] b = decode(schema, columns, right);
             for (int i = 0; i < columns.length; i++) {
@@ -896,6 +924,55 @@ final class IndexTree {
                 }
             }
             return 0;
+        }
+
+        private static boolean orderedBytes(Schema schema, int[] columns) {
+            for (int column : columns) {
+                if (width(schema.columns.get(column).type) == 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static int width(DataType type) {
+            return switch (type) {
+                case BOOLEAN -> 1;
+                case SMALLINT -> 2;
+                case INTEGER, DATE -> 4;
+                case BIGINT, TIME -> 8;
+                case TIMESTAMP -> 12;
+                default -> 0;
+            };
+        }
+
+        private static int compareFixed(DataType type, byte[] left, int a, byte[] right, int b) {
+            return switch (type) {
+                case BOOLEAN -> Boolean.compare(left[a] != 0, right[b] != 0);
+                case SMALLINT -> Short.compare(readShort(left, a), readShort(right, b));
+                case INTEGER, DATE -> Integer.compare(readInt(left, a), readInt(right, b));
+                case BIGINT, TIME -> Long.compare(readLong(left, a), readLong(right, b));
+                case TIMESTAMP -> {
+                    int cmp = Long.compare(readLong(left, a), readLong(right, b));
+                    yield cmp != 0 ? cmp : Integer.compare(readInt(left, a + 8), readInt(right, b + 8));
+                }
+                default -> 0;
+            };
+        }
+
+        private static short readShort(byte[] raw, int offset) {
+            return (short) ((raw[offset] << 8) | (raw[offset + 1] & 0xFF));
+        }
+
+        private static int readInt(byte[] raw, int offset) {
+            return (raw[offset] << 24)
+                    | ((raw[offset + 1] & 0xFF) << 16)
+                    | ((raw[offset + 2] & 0xFF) << 8)
+                    | (raw[offset + 3] & 0xFF);
+        }
+
+        private static long readLong(byte[] raw, int offset) {
+            return ((long) readInt(raw, offset) << 32) | (readInt(raw, offset + 4) & 0xFFFFFFFFL);
         }
 
         private static Object[] decode(Schema schema, int[] columns, byte[] encoded) {
@@ -1004,14 +1081,6 @@ final class IndexTree {
         System.arraycopy(ids, 0, next, 0, at);
         System.arraycopy(ids, at + 1, next, at, ids.length - at - 1);
         return next;
-    }
-
-    private static long[][] cloneIds(long[][] ids) {
-        long[][] copy = ids.clone();
-        for (int i = 0; i < copy.length; i++) {
-            copy[i] = copy[i].clone();
-        }
-        return copy;
     }
 
     private static byte[][] insertKey(byte[][] keys, int at, byte[] key) {

@@ -38,7 +38,17 @@ final class TableStore implements AutoCloseable {
     private int activeSlot;
     private int formatVersion = Format.VERSION;
     private boolean dirty;
+    /**
+     * O mapa vivo é o que um savepoint confirmado ainda enxerga.
+     * A próxima alteração copia o mapa antes de mexer nele.
+     */
+    private boolean shared;
     private final Map<Long, byte[]> blobCache = new HashMap<>();
+    /**
+     * Savepoint que ainda aponta para o mapa vivo. Os ids inseridos nele
+     * são desfeitos se esse savepoint for restaurado.
+     */
+    private Snapshot undo;
     private List<IndexTree.DiskIndex> indexes = List.of();
 
     private TableStore(DatabaseFile file, long base, long capacity) {
@@ -99,6 +109,10 @@ final class TableStore implements AutoCloseable {
 
     List<StoredRow> scan() {
         return new ArrayList<>(rows.values());
+    }
+
+    StoredRow row(long id) {
+        return rows.get(id);
     }
 
     boolean hasIndex(String name) {
@@ -222,7 +236,11 @@ final class TableStore implements AutoCloseable {
             }
             long id = nextRowId++;
             StoredRow row = new StoredRow(id, cells, -1, 0, true);
+            unshare();
             rows.put(id, row);
+            if (undo != null && undo.rows == rows) {
+                undo.inserted.add(id);
+            }
             indexInserted(row);
             dirty = true;
             count++;
@@ -234,6 +252,7 @@ final class TableStore implements AutoCloseable {
         if (replacements.isEmpty()) {
             return;
         }
+        unshare();
         Schema nextSchema = schema;
         TreeMap<Long, StoredRow> next = new TreeMap<>(rows);
         List<Extent> freed = new ArrayList<>();
@@ -273,6 +292,7 @@ final class TableStore implements AutoCloseable {
         if (ids.isEmpty()) {
             return 0;
         }
+        unshare();
         TreeMap<Long, StoredRow> next = new TreeMap<>(rows);
         List<Extent> freed = new ArrayList<>();
         List<Extent> extra = new ArrayList<>();
@@ -380,13 +400,23 @@ final class TableStore implements AutoCloseable {
     }
 
     Snapshot savepoint() {
-        return new Snapshot(schema, new TreeMap<>(rows), List.copyOf(indexes), new ArrayList<>(freeExtents), new ArrayList<>(pendingFree),
-                fileSize, nextRowId, metaOffset, metaLength, generation, activeSlot, dirty);
+        Snapshot snapshot = new Snapshot(schema, rows, List.copyOf(indexes), new ArrayList<>(freeExtents), new ArrayList<>(pendingFree),
+                fileSize, nextRowId, metaOffset, metaLength, generation, activeSlot, dirty, shared);
+        undo = snapshot;
+        return snapshot;
     }
 
     void restore(Snapshot snapshot) {
+        if (snapshot == undo) {
+            undo = null;
+        }
         schema = snapshot.schema;
-        rows = new TreeMap<>(snapshot.rows);
+        rows = snapshot.rows;
+        shared = snapshot.shared;
+        for (int i = snapshot.inserted.size() - 1; i >= 0; i--) {
+            rows.remove(snapshot.inserted.get(i));
+        }
+        snapshot.inserted.clear();
         indexes = snapshot.indexes;
         freeExtents = new ArrayList<>(snapshot.freeExtents);
         pendingFree = new ArrayList<>(snapshot.pendingFree);
@@ -401,30 +431,24 @@ final class TableStore implements AutoCloseable {
     }
 
     /**
-     * Copia registros e índices para a memória. A transação deixa de depender
-     * dos deslocamentos do arquivo, que outra confirmação pode reescrever.
+     * Separa o mapa da transação do mapa confirmado. As linhas que não mudam
+     * continuam as mesmas e o commit não as regrava.
      */
-    void materialize() {
-        TreeMap<Long, StoredRow> next = new TreeMap<>();
-        for (StoredRow row : rows.values()) {
-            Cell[] cells = new Cell[row.cells.length];
-            for (int i = 0; i < cells.length; i++) {
-                cells[i] = toCell(schema.columns.get(i), detached(value(row, i)));
-            }
-            next.put(row.id, new StoredRow(row.id, cells, -1, 0, true));
-        }
-        rows = next;
-        indexes = rebuild(schema, rows);
-        dirty = true;
-        blobCache.clear();
+    void markShared() {
+        shared = true;
     }
 
-    Map<Long, Object[]> freeze() {
-        Map<Long, Object[]> copy = new LinkedHashMap<>();
-        for (StoredRow row : rows.values()) {
-            copy.put(row.id, valuesOf(schema, row));
+    void fork() {
+        rows = new TreeMap<>(rows);
+        shared = false;
+    }
+
+    private void unshare() {
+        if (!shared) {
+            return;
         }
-        return copy;
+        rows = new TreeMap<>(rows);
+        shared = false;
     }
 
     void raiseAllocation(Schema other, long otherNext) {
@@ -444,12 +468,12 @@ final class TableStore implements AutoCloseable {
     }
 
     /**
-     * A tabela corrente é a cópia da transação. Publica só as linhas alteradas
-     * sobre {@code committed}. Linha confirmada por outra sessão desde {@code frozen}
+     * Publica no estado confirmado só as linhas que a transação inseriu, alterou
+     * ou apagou desde {@code base}. Outra sessão que tenha mudado a mesma linha
      * impede a publicação.
      */
-    void publishChanges(Map<Long, Object[]> frozen, Snapshot committed) {
-        if (frozen == null || committed == null) {
+    void publishChanges(Snapshot base, Snapshot committed) {
+        if (base == null || committed == null) {
             throw new NexException("falha interna ao confirmar " + schema.name);
         }
         if (!sameShape(schema, committed.schema)) {
@@ -462,21 +486,28 @@ final class TableStore implements AutoCloseable {
         Map<Long, Object[]> insertedValues = new LinkedHashMap<>();
         Map<Long, Cell[]> updatedCells = new LinkedHashMap<>();
         for (StoredRow row : rows.values()) {
-            Object[] before = frozen.get(row.id);
-            Object[] now = valuesOf(schema, row);
-            if (before == null) {
+            StoredRow original = base.rows.get(row.id);
+            if (original == null) {
                 inserted.add(row.id);
-                insertedValues.put(row.id, now);
-            } else if (!Arrays.deepEquals(before, now)) {
-                updated.add(row.id);
-                Cell[] cells = new Cell[now.length];
-                for (int i = 0; i < now.length; i++) {
-                    cells[i] = toCell(schema.columns.get(i), now[i]);
-                }
-                updatedCells.put(row.id, cells);
+                insertedValues.put(row.id, valuesOf(schema, row));
+                continue;
             }
+            if (original == row) {
+                continue;
+            }
+            Object[] before = valuesOf(base.schema, original);
+            Object[] now = valuesOf(schema, row);
+            if (Arrays.deepEquals(before, now)) {
+                continue;
+            }
+            updated.add(row.id);
+            Cell[] cells = new Cell[now.length];
+            for (int i = 0; i < now.length; i++) {
+                cells[i] = toCell(schema.columns.get(i), now[i]);
+            }
+            updatedCells.put(row.id, cells);
         }
-        for (Long id : frozen.keySet()) {
+        for (Long id : base.rows.keySet()) {
             if (!rows.containsKey(id)) {
                 deleted.add(id);
             }
@@ -484,21 +515,16 @@ final class TableStore implements AutoCloseable {
         blobCache.clear();
         for (Long id : updated) {
             StoredRow current = committed.rows.get(id);
-            if (current == null || !Arrays.deepEquals(frozen.get(id), valuesOf(committed.schema, current))) {
+            StoredRow original = base.rows.get(id);
+            if (current == null || !Arrays.deepEquals(valuesOf(base.schema, original), valuesOf(committed.schema, current))) {
                 throw new NexException("outra transação alterou a mesma linha de " + name);
             }
         }
         for (Long id : deleted) {
             StoredRow current = committed.rows.get(id);
-            if (current == null || !Arrays.deepEquals(frozen.get(id), valuesOf(committed.schema, current))) {
+            StoredRow original = base.rows.get(id);
+            if (current == null || !Arrays.deepEquals(valuesOf(base.schema, original), valuesOf(committed.schema, current))) {
                 throw new NexException("outra transação alterou a mesma linha de " + name);
-            }
-        }
-        for (Object[] values : insertedValues.values()) {
-            for (StoredRow current : committed.rows.values()) {
-                if (sameKey(schema, values, committed.schema, current)) {
-                    throw new NexException("outra transação gravou a mesma chave em " + name);
-                }
             }
         }
         long privateNext = nextRowId;
@@ -508,6 +534,8 @@ final class TableStore implements AutoCloseable {
         if (inserted.isEmpty() && updated.isEmpty() && deleted.isEmpty()) {
             return;
         }
+        rows = new TreeMap<>(rows);
+        shared = false;
         if (!deleted.isEmpty()) {
             delete(deleted);
         }
@@ -541,23 +569,6 @@ final class TableStore implements AutoCloseable {
             Column one = left.columns.get(i);
             Column other = right.columns.get(i);
             if (!Names.same(one.name, other.name) || one.type != other.type) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean sameKey(Schema leftShape, Object[] left, Schema rightShape, StoredRow right) {
-        if (leftShape.primaryKey.length == 0 || rightShape.primaryKey.length != leftShape.primaryKey.length) {
-            return false;
-        }
-        Object[] rightValues = valuesOf(rightShape, right);
-        for (int i = 0; i < leftShape.primaryKey.length; i++) {
-            int column = leftShape.primaryKey[i];
-            if (column >= left.length || column >= rightValues.length) {
-                return false;
-            }
-            if (!Arrays.deepEquals(new Object[]{left[column]}, new Object[]{rightValues[column]})) {
                 return false;
             }
         }
@@ -760,6 +771,7 @@ final class TableStore implements AutoCloseable {
         activeSlot = plan.targetSlot;
         nextRowId = plan.nextRowId;
         dirty = false;
+        shared = false;
         blobCache.clear();
         indexes = IndexTree.attach(plan.schema, plan.indexRoots);
     }
@@ -796,6 +808,7 @@ final class TableStore implements AutoCloseable {
         freeExtents = Extent.coalesce(freeExtents);
         pendingFree = new ArrayList<>();
         rows = new TreeMap<>();
+        shared = false;
         for (LiveSlot slot : image.rows) {
             StoredRow row = readSlot(slot);
             rows.put(row.id, row);
@@ -1294,10 +1307,12 @@ final class TableStore implements AutoCloseable {
         final long generation;
         final int activeSlot;
         final boolean dirty;
+        final boolean shared;
+        final List<Long> inserted = new ArrayList<>();
 
         Snapshot(Schema schema, TreeMap<Long, StoredRow> rows, List<IndexTree.DiskIndex> indexes, List<Extent> freeExtents,
                  List<Extent> pendingFree, long fileSize, long nextRowId, long metaOffset, int metaLength, long generation,
-                 int activeSlot, boolean dirty) {
+                 int activeSlot, boolean dirty, boolean shared) {
             this.schema = schema;
             this.rows = rows;
             this.indexes = indexes;
@@ -1310,6 +1325,7 @@ final class TableStore implements AutoCloseable {
             this.generation = generation;
             this.activeSlot = activeSlot;
             this.dirty = dirty;
+            this.shared = shared;
         }
     }
 
