@@ -19,7 +19,7 @@ import java.util.logging.Logger;
  * Rede: {@code jdbc:nexora://192.168.0.10:4580/loja}<br>
  * Usuário inicial: {@code dba}<br>
  * Senha inicial: {@code dba}<br>
- * Página, se o arquivo ainda não existe: 8192. Outro tamanho sai de {@code java -jar ... create}.
+ * O arquivo {@code .xdb} já existe. Quem o cria é o CLI do Nexora.
  */
 public final class NexDriver implements Driver {
 

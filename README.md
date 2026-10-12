@@ -4,17 +4,17 @@ Driver JDBC do Nexora. O banco é um arquivo `.xdb`: as tabelas, os `BLOB`, a co
 
 Java 21. O driver declara JDBC 4.2 e não é um driver certificado (`jdbcCompliant()` devolve `false`).
 
-São três projetos Maven. `nexora-engine` tem o arquivo `.xdb`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. O driver e o motor dependem do engine e não dependem um do outro.
+São quatro projetos Maven. `nexora-engine` tem o arquivo `.xdb`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. `nexora-cli` cria o banco e reúne as utilidades de linha de comando. O driver, o motor e o CLI dependem do engine. O driver e o motor não dependem um do outro.
 
 ## Instalação
 
-Na raiz, o Maven compila o engine e em seguida o driver e o motor.
+Na raiz, o Maven compila o engine e em seguida o driver, o motor e o CLI.
 
 ```bash
 mvn package
 ```
 
-O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dentro. Ele sobe com `java -jar`, como em [Rede](#rede).
+O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dentro. Ele sobe com `java -jar`, como em [Rede](#rede). O CLI é o JAR `nexora-cli/target/nexora-cli-1.0.jar`, também com o engine dentro. Ele cria o banco, como em [Criar o banco](#criar-o-banco).
 
 `mvn install` publica o driver no repositório local. Dependência da aplicação, só o driver:
 
@@ -46,7 +46,7 @@ try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
 
 `jdbc:nexora:C:/dados/loja.xdb` continua válido. `jdbc:nexora://C:/dados/loja.xdb` também: a barra antes da letra de unidade é ignorada. A URL sem arquivo (`jdbc:nexora:`) falha. Para outro processo, use a URL de rede descrita em [Rede](#rede). Usuário ou senha em branco falha com SQLSTATE `28000`. Senha errada falha com a mensagem de usuário ou senha inválidos.
 
-O arquivo é criado se ainda não existir, com página de 8192 bytes e usuário `dba`. A página fica fixa. Para escolher outro tamanho, a senha do DBA, o nome ou o conjunto de caracteres, crie o arquivo antes pela linha de comando.
+O arquivo `.xdb` já existe. O JDBC e o motor não o criam. A página fica fixa, escolhida na criação pelo CLI.
 
 A senha não fica em texto puro. Cada gravação usa bcrypt (`$2a$`, custo 10). `Connection.getMetaData().getUserName()` devolve o usuário autenticado, em maiúsculas.
 
@@ -54,10 +54,10 @@ A senha não fica em texto puro. Cada gravação usa bcrypt (`$2a$`, custo 10). 
 
 ## Criar o banco
 
-O comando `create` gera o `.xdb` e o usuário DBA. A página segue o Firebird: `4096`, `8192`, `16384` ou `32768`. O padrão é `8192`. Ela não muda depois da criação. A página 0 é o cabeçalho; o catálogo e as tabelas ocupam páginas inteiras.
+O comando `create` do CLI gera o `.xdb` e o usuário DBA. A página segue o Firebird: `4096`, `8192`, `16384` ou `32768`. O padrão é `8192`. Ela não muda depois da criação. A página 0 é o cabeçalho; o catálogo e as tabelas ocupam páginas inteiras.
 
 ```bash
-java -jar nexora-jdbc/target/nexora-jdbc-1.0.jar create C:/dados/loja.xdb --page-size 16384 --user DBA --password segredo --name LOJA --charset UTF8
+java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/dados/loja.xdb --page-size 16384 --user DBA --password segredo --name LOJA --charset UTF8
 ```
 
 | Opção | Padrão |
@@ -87,7 +87,7 @@ O arquivo `.xdb` fica aberto num processo só. O projeto `nexora-server` é esse
 }
 ```
 
-`host` omitido escuta em todas as interfaces. A porta e ao menos um banco são obrigatórios. Um caminho relativo resolve a partir da pasta do json. O arquivo ausente nasce como no JDBC embutido, com página 8192 e DBA `dba` / `dba`.
+`host` omitido escuta em todas as interfaces. A porta e ao menos um banco são obrigatórios. Um caminho relativo resolve a partir da pasta do json. Cada arquivo do json já existe, criado pelo CLI.
 
 ```bash
 java -jar nexora-server/target/nexora-server-1.0.jar serve motor.json
@@ -114,6 +114,8 @@ O nome depois da porta é o do json, sem distinguir maiúsculas. Várias conexõ
 
 ## Exemplo
 
+O arquivo `C:/dados/loja.xdb` já foi criado pelo CLI.
+
 ```java
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -124,8 +126,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-Path arquivo = Path.of("dados", "loja.xdb");
-Files.createDirectories(arquivo.getParent());
+Path arquivo = Path.of("C:/dados/loja.xdb");
 
 try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + arquivo.toAbsolutePath(), "dba", "dba")) {
     try (Statement statement = connection.createStatement()) {
@@ -476,7 +477,7 @@ Falha de SQL vira `SQLException`. Mensagem de sintaxe ou de regra do banco usa S
 
 ## Arquivo e tabelas internas
 
-O arquivo começa com a página 0, o cabeçalho, e o catálogo na página seguinte. Cada tabela é uma região de páginas inteiras; o `BLOB` continua na região da própria tabela. Não há pasta de tabelas, nem arquivo de lock ou de commit ao lado: o bloqueio e a recuperação ficam no `.xdb`. O tamanho da página é o escolhido em `create`; se o JDBC cria o arquivo, a página é 8192.
+O arquivo começa com a página 0, o cabeçalho, e o catálogo na página seguinte. Cada tabela é uma região de páginas inteiras; o `BLOB` continua na região da própria tabela. Não há pasta de tabelas, nem arquivo de lock ou de commit ao lado: o bloqueio e a recuperação ficam no `.xdb`. O tamanho da página é o escolhido em `create`.
 
 Treze tabelas nascem com o arquivo. Um arquivo antigo ganha, ao abrir, as que ainda não existirem, entre elas `NEX$SCHEMAS` com a linha `public`. `CREATE TABLE` acrescenta o dono em `NEX$PRIVILEGES`. O prefixo `NEX$` é reservado. `DROP`, `ALTER` e `CREATE INDEX` nelas falham. Identificadores podem usar `$`.
 

@@ -1,11 +1,13 @@
 package io.github.gabrielmmoraes1999.nexora.jdbc;
 
-import io.github.gabrielmmoraes1999.nexora.NexException;
 import io.github.gabrielmmoraes1999.nexora.Database;
+import io.github.gabrielmmoraes1999.nexora.DatabaseOptions;
+import io.github.gabrielmmoraes1999.nexora.NexException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -31,6 +33,10 @@ class NexDriverTest {
 
     private String url() {
         return "jdbc:nexora:" + dir.resolve("loja.xdb").toAbsolutePath();
+    }
+
+    private void criarBanco() {
+        Database.create(dir.resolve("loja.xdb"), DatabaseOptions.defaults());
     }
 
     @Test
@@ -66,6 +72,7 @@ class NexDriverTest {
 
     @Test
     void urlEmbeddedAbreOArquivo() throws Exception {
+        criarBanco();
         String url = "jdbc:nexora:embedded:" + dir.resolve("loja.xdb").toAbsolutePath();
         try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
             connection.createStatement().execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");
@@ -75,6 +82,7 @@ class NexDriverTest {
 
     @Test
     void consultaMetadadosEParametro() throws Exception {
+        criarBanco();
         String url = url();
         byte[] foto = new byte[]{1, 2, 3};
         try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
@@ -157,6 +165,7 @@ class NexDriverTest {
 
     @Test
     void variasConexoesCompartilhamOBanco() throws Exception {
+        criarBanco();
         String url = url();
         try (Connection primeira = DriverManager.getConnection(url, "dba", "dba");
              Connection segunda = DriverManager.getConnection(url, "dba", "dba")) {
@@ -188,6 +197,7 @@ class NexDriverTest {
 
     @Test
     void rollbackDesfazInsert() throws Exception {
+        criarBanco();
         String url = url();
         try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
             connection.createStatement().execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
@@ -210,7 +220,16 @@ class NexDriverTest {
     }
 
     @Test
+    void arquivoAusenteNaoECriado() throws Exception {
+        Path arquivo = dir.resolve("loja.xdb");
+        SQLException ausente = assertThrows(SQLException.class, () -> DriverManager.getConnection(url(), "dba", "dba"));
+        assertTrue(ausente.getMessage().contains("não existe"));
+        assertFalse(Files.exists(arquivo));
+    }
+
+    @Test
     void metadadosDeProcedure() throws Exception {
+        criarBanco();
         try (Connection connection = DriverManager.getConnection(url(), "dba", "dba")) {
             connection.createStatement().execute("""
                     CREATE PROCEDURE serie (ate INTEGER)

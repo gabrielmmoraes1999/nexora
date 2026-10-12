@@ -7,10 +7,8 @@ import java.util.List;
  * Nexora. O banco é um arquivo {@code .xdb}: tabelas, BLOB,
  * configuração, usuários e conexões ficam nesse mesmo arquivo.
  *
- * <p>A abertura exige usuário e senha. Um arquivo novo, aberto pelo JDBC,
- * nasce com página de 8192 bytes e DBA {@code dba} / {@code dba}.
- * {@link #create(Path, DatabaseOptions)} e o comando {@code create}
- * escolhem a página, a senha e o nome antes da primeira conexão.
+ * <p>A abertura exige usuário e senha e um arquivo que já existe.
+ * {@link #create(Path, DatabaseOptions)} escolhe a página, a senha e o nome.
  * A senha é gravada com bcrypt.
  *
  * <pre>{@code
@@ -86,8 +84,7 @@ public final class Database implements AutoCloseable {
 
     /**
      * Abre o arquivo sem autenticar. O motor de rede segura o {@code .xdb} assim
-     * e chama {@link #login} em cada cliente. Um arquivo que ainda não existe
-     * nasce com página de 8192 bytes e DBA {@code dba} / {@code dba}.
+     * e chama {@link #login} em cada cliente. O arquivo precisa já existir.
      */
     public static Database attach(Path file) {
         if (file == null) {

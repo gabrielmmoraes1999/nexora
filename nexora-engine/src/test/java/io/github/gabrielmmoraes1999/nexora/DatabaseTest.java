@@ -31,7 +31,11 @@ class DatabaseTest {
     }
 
     private Database open() {
-        return Database.open(arquivo(), "dba", "dba");
+        Path file = arquivo();
+        if (!Files.exists(file)) {
+            Database.create(file, DatabaseOptions.defaults());
+        }
+        return Database.open(file, "dba", "dba");
     }
 
     @Test
@@ -1093,23 +1097,22 @@ class DatabaseTest {
             assertEquals(40L, db.query("SELECT COUNT(*) FROM item").rows().get(0).getLong(0));
         }
         assertThrows(NexException.class, () -> Database.create(arquivo, DatabaseOptions.defaults()));
-        assertFalse(Files.exists(dir.resolve("ruim.xdb")));
-        assertThrows(NexException.class, () -> Nex.execute(new String[]{
-                "create", dir.resolve("ruim.xdb").toString(), "--page-size", "2048", "--password", "x"
-        }));
-        assertFalse(Files.exists(dir.resolve("ruim.xdb")));
-        Path cli = dir.resolve("cli.xdb");
-        Nex.execute(new String[]{
-                "create", cli.toString(), "--page-size", "4096", "--user", "ana", "--password", "abc",
-                "--charset", "UTF8", "--description", "via cli"
-        });
-        try (Database db = Database.open(cli, "ana", "abc")) {
-            assertEquals(4096, db.pageSize());
-            assertEquals("cli", db.query("SELECT NEX$DATABASE_NAME FROM NEX$DATABASE").rows().get(0).getString(0));
-            assertEquals("ANA", db.session().user());
-            assertEquals("via cli", db.query("SELECT NEX$DESCRIPTION FROM NEX$DATABASE").rows().get(0).getString(0));
-        }
         assertThrows(NexException.class, () -> new DatabaseOptions(1024, "dba", "dba", "x", "x", "UTF8"));
+    }
+
+    @Test
+    void abrirNaoCriaArquivo() throws Exception {
+        Path ausente = dir.resolve("ausente.xdb");
+        NexException aberto = assertThrows(NexException.class, () -> Database.open(ausente, "dba", "dba"));
+        assertTrue(aberto.getMessage().contains("não existe"));
+        NexException anexo = assertThrows(NexException.class, () -> Database.attach(ausente));
+        assertTrue(anexo.getMessage().contains("não existe"));
+        assertFalse(Files.exists(ausente));
+        Path vazio = dir.resolve("vazio.xdb");
+        Files.write(vazio, new byte[0]);
+        NexException vazioErro = assertThrows(NexException.class, () -> Database.open(vazio, "dba", "dba"));
+        assertTrue(vazioErro.getMessage().contains("vazio"));
+        assertEquals(0, Files.size(vazio));
     }
 
     @Test

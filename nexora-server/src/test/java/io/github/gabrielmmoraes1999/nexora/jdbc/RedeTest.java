@@ -1,6 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora.jdbc;
 
 import io.github.gabrielmmoraes1999.nexora.Database;
+import io.github.gabrielmmoraes1999.nexora.DatabaseOptions;
 import io.github.gabrielmmoraes1999.nexora.NexException;
 import io.github.gabrielmmoraes1999.nexora.server.MotorConfig;
 import io.github.gabrielmmoraes1999.nexora.server.MotorServer;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Date;
@@ -31,7 +33,14 @@ class RedeTest {
 
     @Test
     void jdbcNaRedeGravaELe() throws Exception {
+        Path ausente = dir.resolve("ausente.xdb");
+        NexException falta = assertThrows(NexException.class, () -> MotorServer.start(
+                new MotorConfig("127.0.0.1", 0, List.of(new MotorConfig.DatabaseSpec("loja", ausente)))));
+        assertTrue(falta.getMessage().contains("não existe"));
+        assertFalse(Files.exists(ausente));
+
         Path file = dir.resolve("loja.xdb");
+        Database.create(file, DatabaseOptions.defaults());
         MotorConfig config = new MotorConfig("127.0.0.1", 0, List.of(new MotorConfig.DatabaseSpec("loja", file)));
         byte[] foto = new byte[]{1, 2, 3};
         try (MotorServer server = MotorServer.start(config)) {

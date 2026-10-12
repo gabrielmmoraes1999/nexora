@@ -62,15 +62,24 @@ final class DatabaseFile implements AutoCloseable {
             throw new NexException("o banco é um arquivo .xdb, não um diretório");
         }
         try {
-            if (!existing && Files.exists(path) && Files.size(path) > 0) {
+            if (existing) {
+                if (!Files.isRegularFile(path)) {
+                    throw new NexException("o arquivo do banco não existe");
+                }
+                if (Files.size(path) == 0) {
+                    throw new NexException("o arquivo do banco está vazio");
+                }
+            } else if (Files.exists(path) && Files.size(path) > 0) {
                 throw new NexException("o arquivo do banco já existe");
             }
             Path parent = path.getParent();
-            if (parent != null) {
+            if (!existing && parent != null) {
                 Files.createDirectories(parent);
             }
-            boolean created = !Files.exists(path);
-            FileChannel channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            boolean created = !existing && !Files.exists(path);
+            FileChannel channel = existing
+                    ? FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                    : FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             DatabaseFile database = new DatabaseFile(path, channel);
             try {
                 database.lock();

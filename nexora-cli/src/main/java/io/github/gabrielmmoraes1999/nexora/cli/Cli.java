@@ -1,18 +1,23 @@
-package io.github.gabrielmmoraes1999.nexora;
+package io.github.gabrielmmoraes1999.nexora.cli;
+
+import io.github.gabrielmmoraes1999.nexora.Database;
+import io.github.gabrielmmoraes1999.nexora.DatabaseOptions;
+import io.github.gabrielmmoraes1999.nexora.NexException;
 
 import java.nio.file.Path;
 import java.util.Locale;
 
 /**
- * Linha de comando para criar um arquivo {@code .xdb}.
+ * Linha de comando do Nexora. Cria o arquivo {@code .xdb} e concentra as utilidades.
+ * O JDBC e o motor abrem um arquivo que já existe.
  *
  * <pre>{@code
- * java -jar nexora-jdbc-1.0.jar create loja.xdb --page-size 8192 --user DBA --password segredo
+ * java -jar nexora-cli-1.0.jar create loja.xdb --page-size 8192 --user DBA --password segredo
  * }</pre>
  */
-public final class Nex {
+public final class Cli {
 
-    private Nex() {
+    private Cli() {
     }
 
     public static void main(String[] args) {
@@ -32,9 +37,13 @@ public final class Nex {
         if (args == null || args.length == 0) {
             throw new NexException(uso());
         }
-        if (!args[0].equalsIgnoreCase("create")) {
-            throw new NexException("comando desconhecido: " + args[0] + "\n\n" + uso());
+        switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "create" -> create(args);
+            default -> throw new NexException("comando desconhecido: " + args[0] + "\n\n" + uso());
         }
+    }
+
+    private static void create(String[] args) {
         String arquivo = null;
         Integer pageSize = null;
         String user = null;
@@ -79,7 +88,7 @@ public final class Nex {
         }
         Path path = Path.of(arquivo);
         DatabaseOptions options = new DatabaseOptions(
-                pageSize == null ? Format.DEFAULT_PAGE_SIZE : pageSize,
+                pageSize == null ? DatabaseOptions.defaults().pageSize() : pageSize,
                 user == null ? "DBA" : user,
                 password == null ? "dba" : password,
                 name == null ? fileName(path) : name,
@@ -95,12 +104,15 @@ public final class Nex {
     static String uso() {
         return """
                 Uso:
-                  java -jar nexora-jdbc-1.0.jar create <arquivo.xdb> [opções]
+                  java -jar nexora-cli-1.0.jar <comando> [argumentos]
 
-                Cria o arquivo e o usuário DBA. A página não muda depois.
-                O motor de rede é o projeto nexora-server.
+                Comandos:
+                  create <arquivo.xdb>    cria o arquivo e o usuário DBA
 
-                Opções:
+                A página não muda depois da criação.
+                O JDBC e o motor abrem um arquivo que já existe.
+
+                Opções de create:
                   --page-size <n>          4096, 8192, 16384 ou 32768 (padrão 8192)
                   --user <nome>            usuário DBA (padrão DBA)
                   --password <senha>       senha do DBA (padrão dba)
@@ -109,7 +121,7 @@ public final class Nex {
                   --charset <conjunto>     padrão UTF8
 
                 Exemplo:
-                  java -jar nexora-jdbc-1.0.jar create C:/dados/loja.xdb --page-size 16384 --password segredo --name LOJA
+                  java -jar nexora-cli-1.0.jar create C:/dados/loja.xdb --page-size 16384 --password segredo --name LOJA
                 """;
     }
 
