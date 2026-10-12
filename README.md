@@ -4,7 +4,7 @@ Driver JDBC do Nexora. O banco é um arquivo `.xdb`: as tabelas, os `BLOB`, a co
 
 Java 21. O driver declara JDBC 4.2 e não é um driver certificado (`jdbcCompliant()` devolve `false`).
 
-São quatro projetos Maven. `nexora-engine` tem o arquivo `.xdb`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. `nexora-cli` cria o banco e reúne as utilidades de linha de comando. O driver, o motor e o CLI dependem do engine. O driver e o motor não dependem um do outro.
+São cinco projetos Maven. `nexora-engine` tem o arquivo `.xdb`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. `nexora-cli` cria o banco e reúne as utilidades de linha de comando. `nexora-studio` é a interface administrativa. O driver, o motor, o CLI e o studio dependem do engine. O driver e o motor não dependem um do outro. O studio depende do driver.
 
 ## Instalação
 
@@ -14,7 +14,7 @@ Na raiz, o Maven compila o engine e em seguida o driver, o motor e o CLI.
 mvn package
 ```
 
-O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dentro. Ele sobe com `java -jar`, como em [Rede](#rede). O CLI é o JAR `nexora-cli/target/nexora-cli-1.0.jar`, também com o engine dentro. Ele cria o banco, como em [Criar o banco](#criar-o-banco).
+O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dentro. Ele sobe com `java -jar`, como em [Rede](#rede). O CLI é o JAR `nexora-cli/target/nexora-cli-1.0.jar`, também com o engine dentro. Ele cria o banco, como em [Criar o banco](#criar-o-banco). O studio é o JAR `nexora-studio/target/nexora-studio-1.0.jar`, com o driver e o engine dentro. Ele abre a interface, como em [Studio](#studio).
 
 `mvn install` publica o driver no repositório local. Dependência da aplicação, só o driver:
 
@@ -103,6 +103,18 @@ try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
 ```
 
 O nome depois da porta é o do json, sem distinguir maiúsculas. Várias conexões no motor seguem a regra de uma transação por arquivo. Enquanto o motor segura o `.xdb`, outro processo que tentar abrir o mesmo arquivo recebe banco já aberto. Ctrl+C solta os arquivos.
+
+## Studio
+
+O studio é a tela administrativa, no espírito do IBExpert: explorador à esquerda, documentos no centro e a grade embaixo do SQL. Ele registra arquivo local e banco do motor, cria o `.xdb`, executa script, e abre tabela, view, procedure, trigger, gerador, papel, usuário, privilégio e conexão.
+
+```bash
+java -jar nexora-studio/target/nexora-studio-1.0.jar
+```
+
+F9 executa o script do editor. Ctrl+Enter faz o mesmo. Um `SELECT` precisa ser o último comando, como no JDBC. A grade grava nas tabelas que têm chave primária. Célula vazia vira `NULL`; em `CHAR` e `VARCHAR`, `''` grava texto vazio.
+
+A conexão embutida abre o `.xdb` neste processo. Se o motor já segura o arquivo, ela falha: registre o banco pela rede, `host`, porta e nome do json. O registro fica em `~/.nexora/studio.json`. A senha só entra nesse arquivo se "lembrar senha" estiver marcado.
 
 ## DBeaver
 

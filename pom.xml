@@ -9,13 +9,14 @@
     <version>1.0</version>
     <packaging>pom</packaging>
     <name>Nexora</name>
-    <description>Engine, driver JDBC, motor de rede e CLI do Nexora.</description>
+    <description>Engine, driver JDBC, motor de rede, CLI e interface administrativa do Nexora.</description>
 
     <modules>
         <module>nexora-engine</module>
         <module>nexora-jdbc</module>
         <module>nexora-server</module>
         <module>nexora-cli</module>
+        <module>nexora-studio</module>
     </modules>
 
     <properties>
