@@ -4,18 +4,19 @@ Driver JDBC do Nexora. O banco é um arquivo `.xdb`: as tabelas, os `BLOB`, a co
 
 Java 21. O driver declara JDBC 4.2 e não é um driver certificado (`jdbcCompliant()` devolve `false`).
 
-São dois projetos Maven, independentes. `nexora-server` tem o engine e o motor de rede. `nexora-jdbc` tem o próprio engine e o driver, com conexão embutida e conexão ao motor. Nenhum depende do outro.
+São três projetos Maven. `nexora-engine` tem o arquivo `.xdb`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. O driver e o motor dependem do engine e não dependem um do outro.
 
 ## Instalação
 
-O driver e o motor são projetos Maven próprios.
+Na raiz, o Maven compila o engine e em seguida o driver e o motor.
 
 ```bash
-mvn -f nexora-jdbc/pom.xml install
-mvn -f nexora-server/pom.xml install
+mvn package
 ```
 
-Dependência da aplicação, só o driver:
+O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dentro. Ele sobe com `java -jar`, como em [Rede](#rede).
+
+`mvn install` publica o driver no repositório local. Dependência da aplicação, só o driver:
 
 ```xml
 <dependency>
