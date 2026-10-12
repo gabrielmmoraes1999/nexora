@@ -213,6 +213,41 @@ class DatabaseTest {
     }
 
     @Test
+    void transacoesDeSessoesDiferentes() {
+        try (Database db = open()) {
+            Session uma = db.session();
+            Session outra = db.login("dba", "dba");
+            db.execute(uma, "CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute(uma, "INSERT INTO t VALUES (1, 'ana')");
+
+            db.execute(uma, "BEGIN");
+            db.execute(uma, "INSERT INTO t VALUES (2, 'dia')");
+            assertEquals("dia", db.execute(uma, "SELECT nome FROM t WHERE id = 2").rows().get(0).getString("nome"));
+            assertEquals(0, db.execute(outra, "SELECT nome FROM t WHERE id = 2").size());
+            db.execute(outra, "INSERT INTO t VALUES (3, 'eli')");
+            db.execute(uma, "COMMIT");
+            assertEquals(3, db.execute(outra, "SELECT id FROM t").size());
+
+            db.execute(uma, "BEGIN");
+            db.execute(uma, "UPDATE t SET nome = 'bia' WHERE id = 1");
+            db.execute(outra, "UPDATE t SET nome = 'caio' WHERE id = 1");
+            NexException conflito = assertThrows(NexException.class, () -> db.execute(uma, "COMMIT"));
+            assertTrue(conflito.getMessage().contains("outra transação"));
+            assertEquals("caio", db.execute(outra, "SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+            db.execute(uma, "ROLLBACK");
+
+            db.execute(uma, "BEGIN");
+            db.execute(uma, "UPDATE t SET nome = 'lia' WHERE id = 3");
+            NexException estrutura = assertThrows(NexException.class,
+                    () -> db.execute(outra, "CREATE INDEX ix_nome ON t (nome)"));
+            assertTrue(estrutura.getMessage().contains("usando a tabela"));
+            db.execute(uma, "COMMIT");
+            assertEquals("lia", db.execute(outra, "SELECT nome FROM t WHERE id = 3").rows().get(0).getString("nome"));
+            db.logout(outra);
+        }
+    }
+
+    @Test
     void erroDeIntegridadeNaoDesfazATransacaoInteira() {
         try (Database db = open()) {
             db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");

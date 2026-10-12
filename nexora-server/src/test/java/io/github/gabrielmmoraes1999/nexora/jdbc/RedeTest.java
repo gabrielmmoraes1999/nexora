@@ -105,17 +105,14 @@ class RedeTest {
                 assertEquals(1, segunda.createStatement().executeUpdate("INSERT INTO cliente (id, nome) VALUES (2, 'Bia')"));
                 primeira.setAutoCommit(false);
                 assertEquals(1, primeira.createStatement().executeUpdate("INSERT INTO cliente (id, nome) VALUES (3, 'Caio')"));
-                SQLException ocupada = assertThrows(SQLException.class,
-                        () -> segunda.createStatement().executeUpdate("INSERT INTO cliente (id, nome) VALUES (4, 'Duda')"));
-                assertTrue(ocupada.getMessage().contains("transação"));
+                assertEquals(1, segunda.createStatement().executeUpdate("INSERT INTO cliente (id, nome) VALUES (4, 'Duda')"));
                 try (ResultSet linhas = segunda.createStatement().executeQuery("SELECT nome FROM cliente WHERE id = 3")) {
-                    assertTrue(linhas.next());
-                    assertEquals("Caio", linhas.getString(1));
+                    assertFalse(linhas.next());
                 }
-                primeira.close();
+                primeira.commit();
                 try (ResultSet linhas = segunda.createStatement().executeQuery("SELECT COUNT(*) FROM cliente")) {
                     assertTrue(linhas.next());
-                    assertEquals(2, linhas.getLong(1));
+                    assertEquals(4, linhas.getLong(1));
                 }
             }
         }
@@ -126,6 +123,10 @@ class RedeTest {
             assertEquals("Ana", rows.getString(1));
             assertTrue(rows.next());
             assertEquals("Bia", rows.getString(1));
+            assertTrue(rows.next());
+            assertEquals("Caio", rows.getString(1));
+            assertTrue(rows.next());
+            assertEquals("Duda", rows.getString(1));
             assertFalse(rows.next());
         }
     }

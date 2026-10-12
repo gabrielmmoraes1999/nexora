@@ -39,12 +39,12 @@ final class LocalAccess implements DatabaseAccess {
 
     @Override
     public boolean transactionActive() {
-        return shared.database().transactionActive();
+        return shared.database().transactionActive(session);
     }
 
     @Override
     public boolean ownsTransaction() {
-        return shared.ownedBy(session);
+        return shared.database().transactionActive(session);
     }
 
     @Override
@@ -53,8 +53,6 @@ final class LocalAccess implements DatabaseAccess {
             return shared.database().execute(session, sql, params == null ? new Object[0] : params);
         } catch (NexException exception) {
             throw Jdbc.wrap(exception);
-        } finally {
-            shared.noteTransaction(session);
         }
     }
 

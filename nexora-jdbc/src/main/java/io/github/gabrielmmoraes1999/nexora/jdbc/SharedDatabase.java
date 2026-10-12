@@ -18,7 +18,6 @@ final class SharedDatabase {
     private final Path file;
     private final Database database;
     private int references;
-    private Session transactionOwner;
 
     private SharedDatabase(Path file, Database database) {
         this.file = file;
@@ -49,28 +48,13 @@ final class SharedDatabase {
         return database;
     }
 
-    boolean ownedBy(Session session) {
-        return transactionOwner == session;
-    }
-
-    void noteTransaction(Session session) {
-        if (!database.transactionActive()) {
-            transactionOwner = null;
-        } else if (transactionOwner == null) {
-            transactionOwner = session;
-        }
-    }
-
     void release(Session session) {
         synchronized (OPEN) {
             try {
-                if (session != null && transactionOwner == session && database.transactionActive()) {
+                if (session != null && database.transactionActive(session)) {
                     database.execute(session, "ROLLBACK");
                 }
             } finally {
-                if (transactionOwner == session) {
-                    transactionOwner = null;
-                }
                 if (session != null) {
                     database.logout(session);
                 }

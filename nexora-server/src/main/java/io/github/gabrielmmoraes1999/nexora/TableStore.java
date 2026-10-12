@@ -3,9 +3,11 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -68,6 +70,10 @@ final class TableStore implements AutoCloseable {
 
     long logicalSize() {
         return fileSize;
+    }
+
+    long nextRowId() {
+        return nextRowId;
     }
 
     void retarget(long base, long capacity) {
@@ -392,6 +398,185 @@ final class TableStore implements AutoCloseable {
         activeSlot = snapshot.activeSlot;
         dirty = snapshot.dirty;
         blobCache.clear();
+    }
+
+    /**
+     * Copia registros e índices para a memória. A transação deixa de depender
+     * dos deslocamentos do arquivo, que outra confirmação pode reescrever.
+     */
+    void materialize() {
+        TreeMap<Long, StoredRow> next = new TreeMap<>();
+        for (StoredRow row : rows.values()) {
+            Cell[] cells = new Cell[row.cells.length];
+            for (int i = 0; i < cells.length; i++) {
+                cells[i] = toCell(schema.columns.get(i), detached(value(row, i)));
+            }
+            next.put(row.id, new StoredRow(row.id, cells, -1, 0, true));
+        }
+        rows = next;
+        indexes = rebuild(schema, rows);
+        dirty = true;
+        blobCache.clear();
+    }
+
+    Map<Long, Object[]> freeze() {
+        Map<Long, Object[]> copy = new LinkedHashMap<>();
+        for (StoredRow row : rows.values()) {
+            copy.put(row.id, valuesOf(schema, row));
+        }
+        return copy;
+    }
+
+    void raiseAllocation(Schema other, long otherNext) {
+        if (otherNext > nextRowId) {
+            nextRowId = otherNext;
+        }
+        if (other == null || other.columns.size() != schema.columns.size()) {
+            return;
+        }
+        for (int i = 0; i < schema.columns.size(); i++) {
+            Column mine = schema.columns.get(i);
+            Column theirs = other.columns.get(i);
+            if (mine.autoIncrement && theirs.autoIncrement && theirs.nextIdentity > mine.nextIdentity) {
+                schema = schema.withIdentity(i, theirs.nextIdentity);
+            }
+        }
+    }
+
+    /**
+     * A tabela corrente é a cópia da transação. Publica só as linhas alteradas
+     * sobre {@code committed}. Linha confirmada por outra sessão desde {@code frozen}
+     * impede a publicação.
+     */
+    void publishChanges(Map<Long, Object[]> frozen, Snapshot committed) {
+        if (frozen == null || committed == null) {
+            throw new NexException("falha interna ao confirmar " + schema.name);
+        }
+        if (!sameShape(schema, committed.schema)) {
+            throw new NexException("outra transação alterou a estrutura de " + schema.name);
+        }
+        String name = schema.name;
+        List<Long> inserted = new ArrayList<>();
+        List<Long> updated = new ArrayList<>();
+        List<Long> deleted = new ArrayList<>();
+        Map<Long, Object[]> insertedValues = new LinkedHashMap<>();
+        Map<Long, Cell[]> updatedCells = new LinkedHashMap<>();
+        for (StoredRow row : rows.values()) {
+            Object[] before = frozen.get(row.id);
+            Object[] now = valuesOf(schema, row);
+            if (before == null) {
+                inserted.add(row.id);
+                insertedValues.put(row.id, now);
+            } else if (!Arrays.deepEquals(before, now)) {
+                updated.add(row.id);
+                Cell[] cells = new Cell[now.length];
+                for (int i = 0; i < now.length; i++) {
+                    cells[i] = toCell(schema.columns.get(i), now[i]);
+                }
+                updatedCells.put(row.id, cells);
+            }
+        }
+        for (Long id : frozen.keySet()) {
+            if (!rows.containsKey(id)) {
+                deleted.add(id);
+            }
+        }
+        blobCache.clear();
+        for (Long id : updated) {
+            StoredRow current = committed.rows.get(id);
+            if (current == null || !Arrays.deepEquals(frozen.get(id), valuesOf(committed.schema, current))) {
+                throw new NexException("outra transação alterou a mesma linha de " + name);
+            }
+        }
+        for (Long id : deleted) {
+            StoredRow current = committed.rows.get(id);
+            if (current == null || !Arrays.deepEquals(frozen.get(id), valuesOf(committed.schema, current))) {
+                throw new NexException("outra transação alterou a mesma linha de " + name);
+            }
+        }
+        for (Object[] values : insertedValues.values()) {
+            for (StoredRow current : committed.rows.values()) {
+                if (sameKey(schema, values, committed.schema, current)) {
+                    throw new NexException("outra transação gravou a mesma chave em " + name);
+                }
+            }
+        }
+        long privateNext = nextRowId;
+        Schema privateSchema = schema;
+        restore(committed);
+        raiseAllocation(privateSchema, privateNext);
+        if (inserted.isEmpty() && updated.isEmpty() && deleted.isEmpty()) {
+            return;
+        }
+        if (!deleted.isEmpty()) {
+            delete(deleted);
+        }
+        if (!updated.isEmpty()) {
+            try {
+                update(updatedCells);
+            } catch (NexException exception) {
+                if (exception.getMessage() != null && exception.getMessage().contains("duplicado")) {
+                    throw new NexException("outra transação gravou a mesma chave em " + name);
+                }
+                throw exception;
+            }
+        }
+        if (!inserted.isEmpty()) {
+            try {
+                insert(new ArrayList<>(insertedValues.values()));
+            } catch (NexException exception) {
+                if (exception.getMessage() != null && exception.getMessage().contains("duplicado")) {
+                    throw new NexException("outra transação gravou a mesma chave em " + name);
+                }
+                throw exception;
+            }
+        }
+    }
+
+    private static boolean sameShape(Schema left, Schema right) {
+        if (left.columns.size() != right.columns.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.columns.size(); i++) {
+            Column one = left.columns.get(i);
+            Column other = right.columns.get(i);
+            if (!Names.same(one.name, other.name) || one.type != other.type) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean sameKey(Schema leftShape, Object[] left, Schema rightShape, StoredRow right) {
+        if (leftShape.primaryKey.length == 0 || rightShape.primaryKey.length != leftShape.primaryKey.length) {
+            return false;
+        }
+        Object[] rightValues = valuesOf(rightShape, right);
+        for (int i = 0; i < leftShape.primaryKey.length; i++) {
+            int column = leftShape.primaryKey[i];
+            if (column >= left.length || column >= rightValues.length) {
+                return false;
+            }
+            if (!Arrays.deepEquals(new Object[]{left[column]}, new Object[]{rightValues[column]})) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Object[] valuesOf(Schema shape, StoredRow row) {
+        Object[] values = new Object[shape.columns.size()];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = detached(logical(row.cells[i], shape.columns.get(i)));
+        }
+        return values;
+    }
+
+    private static Object detached(Object value) {
+        if (value instanceof byte[] bytes) {
+            return bytes.clone();
+        }
+        return value;
     }
 
     Plan prepare() {

@@ -164,23 +164,24 @@ class NexDriverTest {
             assertEquals(1, segunda.createStatement().executeUpdate("INSERT INTO t VALUES (1, 'ana')"));
             primeira.setAutoCommit(false);
             assertEquals(1, primeira.createStatement().executeUpdate("INSERT INTO t VALUES (2, 'bia')"));
-            SQLException ocupada = assertThrows(SQLException.class,
-                    () -> segunda.createStatement().executeUpdate("INSERT INTO t VALUES (3, 'caio')"));
-            assertTrue(ocupada.getMessage().contains("transação"));
+            assertEquals(1, segunda.createStatement().executeUpdate("INSERT INTO t VALUES (3, 'caio')"));
             try (ResultSet linhas = segunda.createStatement().executeQuery("SELECT nome FROM t WHERE id = 2")) {
-                assertTrue(linhas.next());
-                assertEquals("bia", linhas.getString(1));
+                assertFalse(linhas.next());
             }
-            primeira.close();
+            primeira.commit();
             try (ResultSet linhas = segunda.createStatement().executeQuery("SELECT COUNT(*) FROM t")) {
                 assertTrue(linhas.next());
-                assertEquals(1, linhas.getInt(1));
+                assertEquals(3, linhas.getInt(1));
             }
         }
         try (Connection reaberta = DriverManager.getConnection(url, "dba", "dba");
-             ResultSet linhas = reaberta.createStatement().executeQuery("SELECT nome FROM t")) {
+             ResultSet linhas = reaberta.createStatement().executeQuery("SELECT nome FROM t ORDER BY id")) {
             assertTrue(linhas.next());
             assertEquals("ana", linhas.getString(1));
+            assertTrue(linhas.next());
+            assertEquals("bia", linhas.getString(1));
+            assertTrue(linhas.next());
+            assertEquals("caio", linhas.getString(1));
             assertFalse(linhas.next());
         }
     }

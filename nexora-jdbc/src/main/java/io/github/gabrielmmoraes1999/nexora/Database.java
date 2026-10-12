@@ -225,6 +225,16 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /**
+     * A sessão tem {@code BEGIN} sem {@code COMMIT} nem {@code ROLLBACK}.
+     * Outra sessão pode ter a sua própria transação ao mesmo tempo.
+     */
+    public boolean transactionActive(Session session) {
+        synchronized (engine) {
+            return engine.transactionActive(session);
+        }
+    }
+
     @Override
     public void close() {
         synchronized (engine) {

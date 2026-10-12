@@ -18,14 +18,14 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Publica os arquivos do {@link MotorConfig} numa porta TCP.
  * Cada cliente autentica e o SQL roda no processo do motor.
- * Uma transação por arquivo: as outras conexões leem e não gravam.
+ * Várias transações ficam abertas; cada uma grava numa cópia própria
+ * e o commit publica as linhas se ninguém confirmou as mesmas no meio.
  */
 public final class MotorServer implements AutoCloseable {
 
@@ -163,20 +163,23 @@ public final class MotorServer implements AutoCloseable {
                             require(session);
                             Wire.ExecuteRequest request = Wire.decodeExecute(frame.body());
                             Reply reply = current.execute(session, request.sql(), request.params());
+                            boolean open = current.transactionOpen(session);
                             Wire.writeFrame(out, Wire.OK, Wire.encodeExecuteOk(
-                                    reply.result(), reply.schema(), reply.transactionActive(), reply.ownsTransaction()));
+                                    reply.result(), reply.schema(), open, open));
                         }
                         case Wire.SET_SCHEMA -> {
                             require(session);
                             Wire.StateView state = current.setSchema(session, Wire.decodeSchema(frame.body()));
+                            boolean open = current.transactionOpen(session);
                             Wire.writeFrame(out, Wire.OK, Wire.encodeState(
-                                    state.schema(), state.transactionActive(), state.ownsTransaction()));
+                                    state.schema(), open, open));
                         }
                         case Wire.STATUS -> {
                             require(session);
                             Wire.StateView state = current.state(session);
+                            boolean open = current.transactionOpen(session);
                             Wire.writeFrame(out, Wire.OK, Wire.encodeState(
-                                    state.schema(), state.transactionActive(), state.ownsTransaction()));
+                                    state.schema(), open, open));
                         }
                         case Wire.SCHEMAS -> {
                             require(session);
@@ -246,47 +249,13 @@ public final class MotorServer implements AutoCloseable {
         }
     }
 
-    private static String firstKeyword(String sql) {
-        if (sql == null) {
-            return "";
-        }
-        int index = 0;
-        int length = sql.length();
-        while (index < length) {
-            char current = sql.charAt(index);
-            if (Character.isWhitespace(current)) {
-                index++;
-                continue;
-            }
-            if (current == '-' && index + 1 < length && sql.charAt(index + 1) == '-') {
-                index += 2;
-                while (index < length && sql.charAt(index) != '\n') {
-                    index++;
-                }
-                continue;
-            }
-            if (current == '/' && index + 1 < length && sql.charAt(index + 1) == '*') {
-                int close = sql.indexOf("*/", index + 2);
-                index = close < 0 ? length : close + 2;
-                continue;
-            }
-            break;
-        }
-        int start = index;
-        while (index < length && Character.isLetter(sql.charAt(index))) {
-            index++;
-        }
-        return sql.substring(start, index).toUpperCase(Locale.ROOT);
-    }
-
-    private record Reply(SqlResult result, String schema, boolean transactionActive, boolean ownsTransaction) {
+    private record Reply(SqlResult result, String schema) {
     }
 
     private static final class Published {
         private final String name;
         private final Database database;
         private final List<Session> sessions = new ArrayList<>();
-        private Session transactionOwner;
 
         private Published(String name, Database database) {
             this.name = name;
@@ -304,14 +273,8 @@ public final class MotorServer implements AutoCloseable {
         private Reply execute(Session session, String sql, Object[] params) {
             synchronized (database) {
                 ensure(session);
-                boolean active = database.transactionActive();
-                boolean owns = transactionOwner == session;
-                if (active && !owns && !"SELECT".equals(firstKeyword(sql))) {
-                    throw new NexException("outra conexão está com uma transação aberta");
-                }
                 SqlResult result = database.execute(session, sql, params == null ? new Object[0] : params);
-                note(session);
-                return new Reply(result, session.schema(), database.transactionActive(), transactionOwner == session);
+                return new Reply(result, session.schema());
             }
         }
 
@@ -354,15 +317,12 @@ public final class MotorServer implements AutoCloseable {
         private void detach(Session session) {
             synchronized (database) {
                 try {
-                    if (transactionOwner == session && database.transactionActive() && !session.closed()) {
+                    if (database.transactionActive(session) && !session.closed()) {
                         database.execute(session, "ROLLBACK");
                     }
                 } catch (RuntimeException ignored) {
                     // o logout ainda marca a conexão
                 } finally {
-                    if (transactionOwner == session) {
-                        transactionOwner = null;
-                    }
                     sessions.remove(session);
                     try {
                         database.logout(session);
@@ -377,14 +337,11 @@ public final class MotorServer implements AutoCloseable {
             synchronized (database) {
                 for (Session session : List.copyOf(sessions)) {
                     try {
-                        if (transactionOwner == session && database.transactionActive() && !session.closed()) {
+                        if (database.transactionActive(session) && !session.closed()) {
                             database.execute(session, "ROLLBACK");
                         }
                     } catch (RuntimeException ignored) {
                         // segue para soltar o arquivo
-                    }
-                    if (transactionOwner == session) {
-                        transactionOwner = null;
                     }
                     try {
                         database.logout(session);
@@ -393,21 +350,17 @@ public final class MotorServer implements AutoCloseable {
                     }
                 }
                 sessions.clear();
-                transactionOwner = null;
                 database.close();
             }
         }
 
-        private Wire.StateView view(Session session) {
-            return new Wire.StateView(session.schema(), database.transactionActive(), transactionOwner == session);
+        private boolean transactionOpen(Session session) {
+            return database.transactionActive(session);
         }
 
-        private void note(Session session) {
-            if (!database.transactionActive()) {
-                transactionOwner = null;
-            } else if (transactionOwner == null) {
-                transactionOwner = session;
-            }
+        private Wire.StateView view(Session session) {
+            boolean open = transactionOpen(session);
+            return new Wire.StateView(session.schema(), open, open);
         }
 
         private void ensure(Session session) {

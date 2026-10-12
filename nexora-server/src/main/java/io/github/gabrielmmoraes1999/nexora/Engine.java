@@ -29,9 +29,10 @@ final class Engine implements AutoCloseable {
     private final Map<Long, Session> attachments = new HashMap<>();
     private boolean inTransaction;
     private Session transactionSession;
-    private boolean holdTransaction;
     private long nextTransaction = 1;
     private Long transactionId;
+    private Session installed;
+    private final Map<Session, OpenTxn> transactions = new IdentityHashMap<>();
     private int contextDepth;
     private LocalDateTime contextNow;
     private Session connected;
@@ -112,8 +113,8 @@ final class Engine implements AutoCloseable {
         if (session == null || session.closed()) {
             return;
         }
-        if (session == transactionSession && inTransaction) {
-            rollback();
+        if (transactions.containsKey(session)) {
+            rollbackSession(session);
         }
         maintainConnections(
                 "UPDATE NEX$CONNECTIONS SET NEX$STATE = 'CLOSED', NEX$DISCONNECTED_AT = ? WHERE NEX$ATTACHMENT_ID = ?",
@@ -124,6 +125,7 @@ final class Engine implements AutoCloseable {
 
     void discardTransaction() {
         checkOpen();
+        discardAll();
         if (inTransaction) {
             rollback();
         }
@@ -143,17 +145,23 @@ final class Engine implements AutoCloseable {
         }
         Session previous = actor;
         actor = session;
+        if (outer && session != null && transactions.containsKey(session)) {
+            activate(session);
+        }
         try {
             return executeBody(sql, parameters);
         } finally {
             actor = previous;
             if (outer) {
+                if (session != null && transactions.containsKey(session)) {
+                    park(session);
+                    inTransaction = false;
+                    transactionSession = null;
+                }
+                transactionId = null;
                 contextDepth = 0;
                 contextNow = null;
                 connected = previousConnected;
-                if (!holdTransaction) {
-                    transactionId = null;
-                }
             }
         }
     }
@@ -177,7 +185,12 @@ final class Engine implements AutoCloseable {
 
     boolean transactionActive() {
         checkOpen();
-        return inTransaction;
+        return inTransaction || !transactions.isEmpty();
+    }
+
+    boolean transactionActive(Session session) {
+        checkOpen();
+        return session != null && transactions.containsKey(session);
     }
 
     List<String> tableNames() {
@@ -332,12 +345,13 @@ final class Engine implements AutoCloseable {
             return;
         }
         try {
-            if (inTransaction) {
-                try {
+            try {
+                discardAll();
+                if (inTransaction) {
                     rollback();
-                } catch (RuntimeException ignored) {
-                    // o fechamento descarta a transação aberta
                 }
+            } catch (RuntimeException ignored) {
+                // o fechamento descarta a transação aberta
             }
         } finally {
             closed = true;
@@ -356,31 +370,47 @@ final class Engine implements AutoCloseable {
         }
         return switch (statement) {
             case BeginTx ignored -> {
-                if (inTransaction) {
+                if (actor != null && transactions.containsKey(actor)) {
                     throw new NexException("já existe uma transação aberta");
                 }
+                if (actor == null && inTransaction) {
+                    throw new NexException("já existe uma transação aberta");
+                }
+                OpenTxn txn = new OpenTxn(nextTransaction++);
+                if (actor != null) {
+                    transactions.put(actor, txn);
+                }
                 inTransaction = true;
-                holdTransaction = true;
                 transactionSession = actor;
-                transactionId = nextTransaction++;
+                transactionId = txn.id;
+                installed = actor;
                 yield SqlResult.update(0);
             }
             case CommitTx ignored -> {
-                if (!inTransaction) {
-                    throw new NexException("não há transação aberta");
+                Session owner = transactionSession != null ? transactionSession : actor;
+                OpenTxn txn = owner == null ? null : transactions.get(owner);
+                if (txn == null) {
+                    if (!inTransaction) {
+                        throw new NexException("não há transação aberta");
+                    }
+                    flush();
+                    inTransaction = false;
+                    transactionSession = null;
+                    transactionId = null;
+                    yield SqlResult.update(0);
                 }
-                flush();
-                inTransaction = false;
-                holdTransaction = false;
-                transactionSession = null;
-                transactionId = null;
+                commitTxn(owner, txn);
                 yield SqlResult.update(0);
             }
             case RollbackTx ignored -> {
-                if (!inTransaction) {
+                Session owner = transactionSession != null ? transactionSession : actor;
+                if (owner != null && transactions.containsKey(owner)) {
+                    rollbackSession(owner);
+                } else if (inTransaction) {
+                    rollback();
+                } else {
                     throw new NexException("não há transação aberta");
                 }
-                rollback();
                 yield SqlResult.update(0);
             }
             case Select select -> query(select);
@@ -476,6 +506,7 @@ final class Engine implements AutoCloseable {
             }
             case AddColumn add -> {
                 guardDdl(add.table());
+                rejectBorrowed(require(add.table()));
                 mutating(add.table(), () -> {
                     require(add.table()).addColumn(column(add.column()), add.column().primaryKey(), add.column().unique());
                     return 0;
@@ -484,6 +515,7 @@ final class Engine implements AutoCloseable {
             }
             case DropColumn drop -> {
                 guardDdl(drop.table());
+                rejectBorrowed(require(drop.table()));
                 mutating(drop.table(), () -> {
                     require(drop.table()).dropColumn(drop.column());
                     return 0;
@@ -492,6 +524,7 @@ final class Engine implements AutoCloseable {
             }
             case AddPrimaryKey add -> {
                 guardDdl(add.table());
+                rejectBorrowed(require(add.table()));
                 mutating(add.table(), () -> {
                     TableStore table = require(add.table());
                     table.addPrimaryKey(resolve(table.schema().columns, add.columns(), "chave primária"));
@@ -549,6 +582,7 @@ final class Engine implements AutoCloseable {
         guardDdl(statement.name());
         String storedName = Relation.catalogName(table.namespace(), table.schema().name);
         ensureNoViewDepends(storedName);
+        rejectBorrowed(table);
         String key = rel.key();
         tables.remove(key);
         try {
@@ -566,6 +600,7 @@ final class Engine implements AutoCloseable {
         Names.checkName(statement.name(), "índice");
         guardDdl(statement.table());
         TableStore table = require(statement.table());
+        rejectBorrowed(table);
         if (reservedIndexName(statement.name())) {
             throw new NexException("nome de índice reservado: " + statement.name());
         }
@@ -585,6 +620,7 @@ final class Engine implements AutoCloseable {
     private void dropIndex(DropIndex statement) {
         guardDdl(statement.table());
         TableStore table = require(statement.table());
+        rejectBorrowed(table);
         if (reservedIndexName(statement.name())) {
             throw new NexException("DROP INDEX não remove PRIMARY KEY nem UNIQUE declarado na tabela");
         }
@@ -1304,6 +1340,7 @@ final class Engine implements AutoCloseable {
 
     private int mutating(String tableName, java.util.function.IntSupplier action) {
         TableStore table = require(tableName);
+        track(table);
         boolean boundary = statementDepth == 0 && procedureDepth == 0;
         if (boundary) {
             statementSnapshots = new IdentityHashMap<>();
@@ -1526,9 +1563,9 @@ final class Engine implements AutoCloseable {
     private void rollback() {
         reloadAll();
         inTransaction = false;
-        holdTransaction = false;
         transactionSession = null;
         transactionId = null;
+        installed = null;
     }
 
     private void reloadAll() {
@@ -3813,6 +3850,161 @@ final class Engine implements AutoCloseable {
     }
 
     private record ProcedureRows(List<ParamDef> outputs, List<Object[]> rows) {
+    }
+
+    private void track(TableStore table) {
+        Session owner = transactionSession != null ? transactionSession : actor;
+        if (owner == null) {
+            return;
+        }
+        OpenTxn txn = transactions.get(owner);
+        if (txn == null || txn.tables.containsKey(table)) {
+            return;
+        }
+        txn.layout.put(table, table.savepoint());
+        txn.baseline.put(table, table.freeze());
+        txn.tables.put(table, Boolean.TRUE);
+        table.materialize();
+        installed = owner;
+    }
+
+    private void rejectBorrowed(TableStore table) {
+        if (table == null) {
+            return;
+        }
+        for (Map.Entry<Session, OpenTxn> entry : transactions.entrySet()) {
+            if (entry.getKey() != actor && entry.getValue().tables.containsKey(table)) {
+                throw new NexException("outra transação está usando a tabela " + table.schema().name);
+            }
+        }
+    }
+
+    private void activate(Session session) {
+        OpenTxn txn = transactions.get(session);
+        if (txn == null) {
+            return;
+        }
+        installed = session;
+        inTransaction = true;
+        transactionSession = session;
+        transactionId = txn.id;
+        for (TableStore table : txn.tables.keySet()) {
+            TableStore.Snapshot latest = table.savepoint();
+            txn.held.put(table, latest);
+            TableStore.Snapshot workspace = txn.workspace.get(table);
+            if (workspace != null) {
+                table.restore(workspace);
+                table.raiseAllocation(latest.schema, latest.nextRowId);
+            }
+        }
+    }
+
+    private void park(Session session) {
+        OpenTxn txn = transactions.get(session);
+        if (txn == null) {
+            installed = null;
+            return;
+        }
+        for (TableStore table : txn.tables.keySet()) {
+            long next = table.nextRowId();
+            Schema schema = table.schema();
+            txn.workspace.put(table, table.savepoint());
+            TableStore.Snapshot back = txn.held.remove(table);
+            if (back == null) {
+                back = txn.layout.get(table);
+            }
+            if (back != null) {
+                table.restore(back);
+                table.raiseAllocation(schema, next);
+            }
+        }
+        installed = null;
+    }
+
+    private void rollbackSession(Session session) {
+        OpenTxn txn = transactions.remove(session);
+        if (txn == null) {
+            throw new NexException("não há transação aberta");
+        }
+        if (installed == session) {
+            for (TableStore table : txn.tables.keySet()) {
+                TableStore.Snapshot back = txn.held.get(table);
+                if (back == null) {
+                    back = txn.layout.get(table);
+                }
+                if (back != null) {
+                    table.restore(back);
+                }
+            }
+        }
+        if (installed == session || transactionSession == session) {
+            installed = null;
+            inTransaction = false;
+            transactionSession = null;
+            transactionId = null;
+        }
+    }
+
+    private void discardAll() {
+        if (installed != null && transactions.containsKey(installed)) {
+            rollbackSession(installed);
+        }
+        transactions.clear();
+        installed = null;
+    }
+
+    private void commitTxn(Session owner, OpenTxn txn) {
+        Map<TableStore, TableStore.Snapshot> safety = new IdentityHashMap<>();
+        for (TableStore table : txn.tables.keySet()) {
+            safety.put(table, table.savepoint());
+        }
+        try {
+            for (TableStore table : txn.tables.keySet()) {
+                TableStore.Snapshot onto = txn.held.get(table);
+                if (onto == null) {
+                    onto = txn.layout.get(table);
+                }
+                table.publishChanges(txn.baseline.get(table), onto);
+            }
+        } catch (RuntimeException exception) {
+            for (Map.Entry<TableStore, TableStore.Snapshot> entry : safety.entrySet()) {
+                entry.getKey().restore(entry.getValue());
+            }
+            throw exception;
+        }
+        try {
+            flush();
+        } catch (RuntimeException exception) {
+            transactions.clear();
+            installed = null;
+            inTransaction = false;
+            transactionSession = null;
+            transactionId = null;
+            try {
+                reloadAll();
+            } catch (RuntimeException ignored) {
+                // a falha do flush já explica o erro
+            }
+            throw exception;
+        }
+        transactions.remove(owner);
+        installed = null;
+        inTransaction = false;
+        transactionSession = null;
+        transactionId = null;
+    }
+
+    private static final class OpenTxn {
+        private final long id;
+        private final IdentityHashMap<TableStore, TableStore.Snapshot> layout = new IdentityHashMap<>();
+        private final IdentityHashMap<TableStore, TableStore.Snapshot> held = new IdentityHashMap<>();
+        private final IdentityHashMap<TableStore, TableStore.Snapshot> workspace = new IdentityHashMap<>();
+        private final IdentityHashMap<TableStore, Map<Long, Object[]>> baseline = new IdentityHashMap<>();
+        private final IdentityHashMap<TableStore, Boolean> tables = new IdentityHashMap<>();
+
+        private OpenTxn(long id) {
+            this.id = id;
+        }
     }
 
     private static final class OpenCursor {
