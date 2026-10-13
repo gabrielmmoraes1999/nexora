@@ -38,7 +38,11 @@ public record Node(Kind kind, String databaseId, String title, String schema, St
     }
 
     public static Node folder(String databaseId, String folder, String title) {
-        return new Node(Kind.FOLDER, databaseId, title, "", folder);
+        return folder(databaseId, "", folder, title);
+    }
+
+    public static Node folder(String databaseId, String schema, String folder, String title) {
+        return new Node(Kind.FOLDER, databaseId, title, schema, folder);
     }
 
     public enum Kind {

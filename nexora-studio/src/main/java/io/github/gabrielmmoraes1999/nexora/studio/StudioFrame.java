@@ -301,8 +301,11 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             return;
         }
         try {
-            Dialogs.Named created = Dialogs.table(this, session.connection, session.outline.schemas(),
-                    currentSchema(node.databaseId()));
+            String schema = node.schema();
+            if (schema == null || schema.isBlank()) {
+                schema = currentSchema(node.databaseId());
+            }
+            Dialogs.Named created = Dialogs.table(this, session.connection, session.outline.schemas(), schema);
             if (created != null) {
                 refreshOutline(node.databaseId());
                 openNode(new Node(Node.Kind.TABLE, node.databaseId(), created.name(), created.schema(), created.name()), false);

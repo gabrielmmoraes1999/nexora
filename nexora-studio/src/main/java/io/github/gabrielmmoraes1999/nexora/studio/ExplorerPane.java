@@ -165,7 +165,8 @@ final class ExplorerPane extends JPanel {
         this.focusId = focusId == null ? "" : focusId;
         if (!this.focusId.isBlank()) {
             expanded.add(Node.database(this.focusId, "").key());
-            expanded.add(Node.folder(this.focusId, Node.TABLES, "").key());
+            expanded.add(Node.folder(this.focusId, Node.SCHEMAS, "").key());
+            expanded.add(new Node(Node.Kind.SCHEMA, this.focusId, "public", "public", "public").key());
         }
         rebuild();
         if (!this.focusId.isBlank()) {
@@ -221,15 +222,12 @@ final class ExplorerPane extends JPanel {
             Node database = Node.database(entry.id(), entry.label());
             DefaultMutableTreeNode node = new DefaultMutableTreeNode(database);
             if (outline != null) {
-                addGroup(node, entry.id(), Node.TABLES, "Tabelas", outline.tables(), Node.Kind.TABLE, query);
-                addGroup(node, entry.id(), Node.VIEWS, "Visões", outline.views(), Node.Kind.VIEW, query);
+                addSchemas(node, entry.id(), outline, query);
                 addNames(node, entry.id(), Node.PROCEDURES, "Procedures", outline.procedures(), Node.Kind.PROCEDURE, query);
-                addTriggers(node, entry.id(), outline, query);
                 addGenerators(node, entry.id(), outline, query);
-                addNames(node, entry.id(), Node.SCHEMAS, "Esquemas", outline.schemas(), Node.Kind.SCHEMA, query);
                 addNames(node, entry.id(), Node.ROLES, "Papéis", outline.roles(), Node.Kind.ROLE, query);
                 addNames(node, entry.id(), Node.USERS, "Usuários", outline.users(), Node.Kind.USER, query);
-                addGroup(node, entry.id(), Node.SYSTEM, "Sistema", outline.systemTables(), Node.Kind.SYSTEM_TABLE, query);
+                addGroup(node, entry.id(), "", Node.SYSTEM, "Sistema", outline.systemTables(), Node.Kind.SYSTEM_TABLE, query);
                 addLeaf(node, new Node(Node.Kind.CONNECTIONS, entry.id(), "Conexões", "", "connections"), query);
                 addLeaf(node, new Node(Node.Kind.PRIVILEGES, entry.id(), "Privilégios", "", "privileges"), query);
                 addLeaf(node, new Node(Node.Kind.CONFIG, entry.id(), "Configuração", "", "config"), query);
@@ -247,13 +245,40 @@ final class ExplorerPane extends JPanel {
         empty.setVisible(entries.isEmpty());
     }
 
-    private void addGroup(DefaultMutableTreeNode parent, String databaseId, String folder, String title,
-                           List<Outline.RelationName> relations, Node.Kind kind, String query) {
-        DefaultMutableTreeNode group = new DefaultMutableTreeNode(Node.folder(databaseId, folder, title));
+    private void addSchemas(DefaultMutableTreeNode parent, String databaseId, Outline outline, String query) {
+        DefaultMutableTreeNode group = new DefaultMutableTreeNode(Node.folder(databaseId, Node.SCHEMAS, "Esquemas"));
+        for (String schema : outline.schemas()) {
+            DefaultMutableTreeNode schemaNode = new DefaultMutableTreeNode(
+                    new Node(Node.Kind.SCHEMA, databaseId, schema, schema, schema));
+            addGroup(schemaNode, databaseId, schema, Node.TABLES, "Tabelas",
+                    relationsIn(outline.tables(), schema), Node.Kind.TABLE, query);
+            addGroup(schemaNode, databaseId, schema, Node.VIEWS, "Visões",
+                    relationsIn(outline.views(), schema), Node.Kind.VIEW, query);
+            addTriggers(schemaNode, databaseId, schema, outline, query);
+            if (query.isBlank() || schema.toLowerCase(java.util.Locale.ROOT).contains(query) || schemaNode.getChildCount() > 0) {
+                group.add(schemaNode);
+            }
+        }
+        if (query.isBlank() || group.getChildCount() > 0 || "esquemas".contains(query)) {
+            parent.add(group);
+        }
+    }
+
+    private static List<Outline.RelationName> relationsIn(List<Outline.RelationName> relations, String schema) {
+        List<Outline.RelationName> found = new ArrayList<>();
         for (Outline.RelationName relation : relations) {
-            String label = relation.schema().equalsIgnoreCase("public")
-                    ? relation.name()
-                    : relation.schema() + "." + relation.name();
+            if (relation.schema().equalsIgnoreCase(schema)) {
+                found.add(relation);
+            }
+        }
+        return found;
+    }
+
+    private void addGroup(DefaultMutableTreeNode parent, String databaseId, String schema, String folder, String title,
+                           List<Outline.RelationName> relations, Node.Kind kind, String query) {
+        DefaultMutableTreeNode group = new DefaultMutableTreeNode(Node.folder(databaseId, schema, folder, title));
+        for (Outline.RelationName relation : relations) {
+            String label = relation.name();
             Node node = new Node(kind, databaseId, label, relation.schema(), relation.name());
             if (query.isBlank() || label.toLowerCase(java.util.Locale.ROOT).contains(query)) {
                 group.add(new DefaultMutableTreeNode(node));
@@ -278,18 +303,33 @@ final class ExplorerPane extends JPanel {
         }
     }
 
-    private void addTriggers(DefaultMutableTreeNode parent, String databaseId, Outline outline, String query) {
-        DefaultMutableTreeNode group = new DefaultMutableTreeNode(Node.folder(databaseId, Node.TRIGGERS, "Triggers"));
+    private void addTriggers(DefaultMutableTreeNode parent, String databaseId, String schema, Outline outline, String query) {
+        DefaultMutableTreeNode group = new DefaultMutableTreeNode(
+                Node.folder(databaseId, schema, Node.TRIGGERS, "Triggers"));
         for (Outline.TriggerRef trigger : outline.triggers()) {
+            if (!relationSchema(trigger.relation()).equalsIgnoreCase(schema)) {
+                continue;
+            }
             String label = trigger.inactive() ? trigger.name() + " (inativo)" : trigger.name();
             if (query.isBlank() || label.toLowerCase(java.util.Locale.ROOT).contains(query)
                     || trigger.relation().toLowerCase(java.util.Locale.ROOT).contains(query)) {
-                group.add(new DefaultMutableTreeNode(new Node(Node.Kind.TRIGGER, databaseId, label, "", trigger.name())));
+                group.add(new DefaultMutableTreeNode(new Node(Node.Kind.TRIGGER, databaseId, label, schema, trigger.name())));
             }
         }
         if (query.isBlank() || group.getChildCount() > 0) {
             parent.add(group);
         }
+    }
+
+    private static String relationSchema(String relation) {
+        if (relation == null || relation.isBlank()) {
+            return "public";
+        }
+        int dot = relation.indexOf('.');
+        if (dot <= 0) {
+            return "public";
+        }
+        return relation.substring(0, dot);
     }
 
     private void addGenerators(DefaultMutableTreeNode parent, String databaseId, Outline outline, String query) {
@@ -420,7 +460,7 @@ final class ExplorerPane extends JPanel {
             }
             case FOLDER -> {
                 if (Node.TABLES.equals(node.name())) {
-                    item(menu, "Nova tabela", () -> listener.newTable(database));
+                    item(menu, "Nova tabela", () -> listener.newTable(node));
                 }
                 if (Node.SCHEMAS.equals(node.name())) {
                     item(menu, "Novo esquema", () -> listener.newSchema(database));
@@ -438,7 +478,7 @@ final class ExplorerPane extends JPanel {
                 item(menu, "Dados", () -> listener.open(node, true));
                 item(menu, "DDL", () -> listener.extract(node));
                 if (node.kind() == Node.Kind.TABLE) {
-                    item(menu, "Nova tabela", () -> listener.newTable(database));
+                    item(menu, "Nova tabela", () -> listener.newTable(node));
                 }
                 item(menu, "Excluir", () -> listener.drop(node));
             }
@@ -449,6 +489,7 @@ final class ExplorerPane extends JPanel {
             }
             case SCHEMA -> {
                 item(menu, "Usar nesta conexão", () -> listener.useSchema(node));
+                item(menu, "Nova tabela", () -> listener.newTable(node));
                 if (!node.name().equalsIgnoreCase("public")) {
                     item(menu, "Excluir", () -> listener.drop(node));
                 }
