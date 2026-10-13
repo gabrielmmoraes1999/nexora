@@ -8,6 +8,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.util.List;
 import java.time.LocalDateTime;
@@ -27,7 +28,7 @@ class DatabaseTest {
     Path dir;
 
     private Path arquivo() {
-        return dir.resolve("banco.xdb");
+        return dir.resolve("banco.db");
     }
 
     private Database open() {
@@ -83,8 +84,9 @@ class DatabaseTest {
             assertEquals("Ana", row.getString("nome"));
             assertArrayEquals(foto, row.getBytes("foto"));
             try (var arquivos = Files.list(dir)) {
-                assertEquals(List.of("banco.xdb"), arquivos.map(path -> path.getFileName().toString()).sorted().toList());
+                assertEquals(List.of("banco.db", "banco.log"), arquivos.map(path -> path.getFileName().toString()).sorted().toList());
             }
+            assertTrue(Files.size(dir.resolve("banco.log")) > Format.LOG_HEADER_SIZE);
         }
     }
 
@@ -610,6 +612,13 @@ class DatabaseTest {
             assertTrue(hash.startsWith("$2a$"));
             assertEquals(60, hash.length());
             assertEquals(1, db.query("SELECT NEX$ATTACHMENT_ID FROM NEX$CONNECTIONS WHERE NEX$STATE = 'ACTIVE'").size());
+            Row origem = db.query("""
+                    SELECT NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$REMOTE_OS_USER
+                    FROM NEX$CONNECTIONS
+                    """).rows().get(0);
+            assertEquals("local", origem.getString("NEX$REMOTE_PROTOCOL"));
+            assertNull(origem.getString("NEX$REMOTE_ADDRESS"));
+            assertEquals(System.getProperty("user.name"), origem.getString("NEX$REMOTE_OS_USER"));
             assertThrows(NexException.class, () -> db.execute("DROP TABLE NEX$USERS"));
             assertThrows(NexException.class, () -> db.execute("DELETE FROM NEX$USERS"));
             db.execute("INSERT INTO NEX$USERS (NEX$USER_NAME, NEX$PASSWORD) VALUES ('ana', 'ana')");
@@ -620,8 +629,8 @@ class DatabaseTest {
         }
         assertThrows(NexException.class, () -> Database.open(arquivo(), "dba", "errada"));
         try (Database db = open()) {
-            assertEquals(2, db.query("SELECT NEX$STATE FROM NEX$CONNECTIONS WHERE NEX$STATE = 'CLOSED'").size());
-            assertEquals(1, db.query("SELECT NEX$STATE FROM NEX$CONNECTIONS WHERE NEX$STATE = 'ACTIVE'").size());
+            assertEquals(0, db.query("SELECT NEX$ATTACHMENT_ID FROM NEX$CONNECTIONS WHERE NEX$STATE = 'CLOSED'").size());
+            assertEquals(1, db.query("SELECT NEX$ATTACHMENT_ID FROM NEX$CONNECTIONS WHERE NEX$STATE = 'ACTIVE'").size());
         }
     }
 
@@ -1053,8 +1062,8 @@ class DatabaseTest {
             NexException derrubada = assertThrows(NexException.class,
                     () -> db.execute(anaVendas, "SELECT CURRENT_USER FROM NEX$DATABASE"));
             assertTrue(derrubada.getMessage().contains("encerrada"));
-            assertEquals("CLOSED", db.query(
-                    "SELECT NEX$STATE FROM NEX$CONNECTIONS WHERE NEX$ATTACHMENT_ID = " + id).rows().get(0).getString(0));
+            assertEquals(0, db.query(
+                    "SELECT NEX$ATTACHMENT_ID FROM NEX$CONNECTIONS WHERE NEX$ATTACHMENT_ID = " + id).size());
             assertThrows(NexException.class, () -> db.execute("DROP CONNECTION " + id));
             assertThrows(NexException.class, () -> db.execute(ana, "DROP CONNECTION " + db.session().attachmentId));
             db.execute("DROP ROLE vendas");
@@ -1066,7 +1075,7 @@ class DatabaseTest {
 
     @Test
     void criaBancoComPaginaESenhaDoDba() throws Exception {
-        Path arquivo = dir.resolve("loja.xdb");
+        Path arquivo = dir.resolve("loja.db");
         Database.create(arquivo, new DatabaseOptions(16384, "dba", "segredo", "Loja", "Loja central", "WIN1252"));
         assertEquals(0, Files.size(arquivo) % 16384);
         byte[] header = Files.readAllBytes(arquivo);
@@ -1102,13 +1111,13 @@ class DatabaseTest {
 
     @Test
     void abrirNaoCriaArquivo() throws Exception {
-        Path ausente = dir.resolve("ausente.xdb");
+        Path ausente = dir.resolve("ausente.db");
         NexException aberto = assertThrows(NexException.class, () -> Database.open(ausente, "dba", "dba"));
         assertTrue(aberto.getMessage().contains("não existe"));
         NexException anexo = assertThrows(NexException.class, () -> Database.attach(ausente));
         assertTrue(anexo.getMessage().contains("não existe"));
         assertFalse(Files.exists(ausente));
-        Path vazio = dir.resolve("vazio.xdb");
+        Path vazio = dir.resolve("vazio.db");
         Files.write(vazio, new byte[0]);
         NexException vazioErro = assertThrows(NexException.class, () -> Database.open(vazio, "dba", "dba"));
         assertTrue(vazioErro.getMessage().contains("vazio"));
@@ -1211,6 +1220,208 @@ class DatabaseTest {
         assertFalse(contains(depoisDoDrop, esquema));
         assertFalse(contains(depoisDoDrop, tabela));
         assertTrue(contains(depoisDoDrop, "TROCA-9f3c-NOVO"));
+    }
+
+    @Test
+    void logAusenteCriaUmNovoZerado() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'Ana')");
+        }
+        Path log = dir.resolve("loja.log");
+        long cheio = Files.size(log);
+        assertTrue(cheio > Format.LOG_HEADER_SIZE);
+        Files.delete(log);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            assertEquals("Ana", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+        }
+        long novo = Files.size(log);
+        assertTrue(novo >= Format.LOG_HEADER_SIZE && novo < cheio);
+        long marca = checkpoint(arquivo);
+        assertTrue(marca >= Format.LOG_HEADER_SIZE && marca <= novo);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("INSERT INTO t VALUES (2, 'Bia')");
+        }
+        assertTrue(Files.size(log) > novo);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            assertEquals("Bia", db.query("SELECT nome FROM t WHERE id = 2").rows().get(0).getString("nome"));
+        }
+
+        Files.write(log, new byte[0]);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            assertEquals(2L, db.query("SELECT COUNT(*) FROM t").rows().get(0).getLong(0));
+        }
+        assertTrue(Files.size(log) >= Format.LOG_HEADER_SIZE);
+
+        Database.create(dir.resolve("outro.db"), DatabaseOptions.defaults());
+        Files.copy(dir.resolve("outro.log"), log, StandardCopyOption.REPLACE_EXISTING);
+        NexException alheio = assertThrows(NexException.class, () -> Database.open(arquivo, "dba", "dba"));
+        assertTrue(alheio.getMessage().contains("não pertence"));
+        NexException extensao = assertThrows(NexException.class, () -> Database.open(dir.resolve("loja.xdb"), "dba", "dba"));
+        assertTrue(extensao.getMessage().contains(".db"));
+    }
+
+    @Test
+    void logAntigoNaoAbreDepoisDeOutraGeracao() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'Ana')");
+        }
+        Path log = dir.resolve("loja.log");
+        long geracao = epoch(arquivo);
+        assertEquals(geracao, epochLog(log));
+        assertEquals(Files.size(log), checkpoint(arquivo));
+        Path guardado = dir.resolve("loja.log.antigo");
+        Files.move(log, guardado);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            assertEquals("Ana", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+            db.execute("INSERT INTO t VALUES (2, 'Bia')");
+        }
+        assertEquals(geracao + 1, epoch(arquivo));
+        assertEquals(geracao + 1, epochLog(log));
+        assertEquals(Files.size(log), checkpoint(arquivo));
+        Files.delete(log);
+        Files.move(guardado, log);
+        long bytes = Files.size(log);
+        NexException perdido = assertThrows(NexException.class, () -> Database.open(arquivo, "dba", "dba"));
+        assertTrue(perdido.getMessage().contains("geração"));
+        assertEquals(bytes, Files.size(log));
+        assertEquals(geracao, epochLog(log));
+        Files.delete(log);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            assertEquals("Bia", db.query("SELECT nome FROM t WHERE id = 2").rows().get(0).getString("nome"));
+            assertEquals("Ana", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+        }
+        assertEquals(geracao + 2, epoch(arquivo));
+        assertEquals(Files.size(dir.resolve("loja.log")), checkpoint(arquivo));
+    }
+
+    @Test
+    void recuperaCommitInterrompidoAntesDoCheckpoint() throws Exception {
+        try (Database db = open()) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+        }
+        Database db = open();
+        TransactionLog.crashAfterRedo = true;
+        try {
+            NexException queda = assertThrows(NexException.class,
+                    () -> db.execute("INSERT INTO t (id, nome) VALUES (1, 'Ana')"));
+            assertTrue(queda.getMessage().contains("checkpoint"));
+        } finally {
+            TransactionLog.crashAfterRedo = false;
+            db.close();
+        }
+        try (Database deNovo = open()) {
+            assertEquals("Ana", deNovo.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+            assertEquals(1, deNovo.query("SELECT NEX$FORMAT FROM NEX$DATABASE").rows().get(0).getInt("NEX$FORMAT"));
+        }
+        assertTrue(Files.size(dir.resolve("banco.log")) > Format.LOG_HEADER_SIZE);
+    }
+
+    @Test
+    void backupGuardaOLogEApplyAvancaOBanco() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'antes')");
+        }
+        long logCheio = Files.size(dir.resolve("loja.log"));
+        assertTrue(logCheio > Format.LOG_HEADER_SIZE);
+
+        Path destino = dir.resolve("copia");
+        Database.backup(arquivo, destino);
+        assertEquals(Format.LOG_HEADER_SIZE, Files.size(dir.resolve("loja.log")));
+        assertEquals(logCheio, Files.size(destino.resolve("loja.log")));
+
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("INSERT INTO t VALUES (2, 'depois')");
+        }
+        assertTrue(Files.size(dir.resolve("loja.log")) > Format.LOG_HEADER_SIZE);
+        assertEquals(logCheio, Files.size(destino.resolve("loja.log")));
+        byte[] log = Files.readAllBytes(dir.resolve("loja.log"));
+        assertFalse(contains(log, "INSERT"));
+        assertFalse(contains(log, "depois"));
+        assertFalse(new String(Files.readAllBytes(destino.resolve("loja.db")), StandardCharsets.UTF_8).contains("depois"));
+
+        NexException anterior = assertThrows(NexException.class,
+                () -> Database.applyLog(arquivo, destino.resolve("loja.log")));
+        assertTrue(anterior.getMessage().contains("anterior"));
+
+        try (Database db = Database.open(destino.resolve("loja.db"), "dba", "dba")) {
+            assertEquals("antes", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+        }
+        Database.applyLog(destino.resolve("loja.db"), dir.resolve("loja.log"));
+        try (Database db = Database.open(destino.resolve("loja.db"), "dba", "dba")) {
+            assertEquals("depois", db.query("SELECT nome FROM t WHERE id = 2").rows().get(0).getString("nome"));
+            assertEquals("antes", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+            assertEquals(1, db.query("SELECT NEX$FORMAT FROM NEX$DATABASE").rows().get(0).getInt("NEX$FORMAT"));
+        }
+
+        Database.create(dir.resolve("outro.db"), DatabaseOptions.defaults());
+        NexException alheio = assertThrows(NexException.class,
+                () -> Database.applyLog(destino.resolve("loja.db"), dir.resolve("outro.log")));
+        assertTrue(alheio.getMessage().contains("não pertence"));
+    }
+
+    @Test
+    void backupDeModificacaoCopiaSoOLog() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'antes')");
+        }
+        Path completo = dir.resolve("completo");
+        Database.backup(arquivo, completo);
+        assertEquals(Format.LOG_HEADER_SIZE, Files.size(dir.resolve("loja.log")));
+        assertTrue(Files.exists(completo.resolve("loja.db")));
+
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("INSERT INTO t VALUES (2, 'depois')");
+        }
+        long vivo = Files.size(dir.resolve("loja.log"));
+        Path mods = dir.resolve("mods");
+        Database.backupLog(arquivo, mods);
+        assertEquals(vivo, Files.size(dir.resolve("loja.log")));
+        assertEquals(vivo, Files.size(mods.resolve("loja.log")));
+        assertFalse(Files.exists(mods.resolve("loja.db")));
+
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("INSERT INTO t VALUES (3, 'mais')");
+        }
+        assertTrue(Files.size(dir.resolve("loja.log")) > vivo);
+        assertEquals(vivo, Files.size(mods.resolve("loja.log")));
+
+        Database.applyLog(completo.resolve("loja.db"), mods.resolve("loja.log"));
+        try (Database db = Database.open(completo.resolve("loja.db"), "dba", "dba")) {
+            assertEquals("depois", db.query("SELECT nome FROM t WHERE id = 2").rows().get(0).getString("nome"));
+            assertEquals(0, db.query("SELECT nome FROM t WHERE id = 3").rows().size());
+        }
+        Database.applyLog(completo.resolve("loja.db"), dir.resolve("loja.log"));
+        try (Database db = Database.open(completo.resolve("loja.db"), "dba", "dba")) {
+            assertEquals("mais", db.query("SELECT nome FROM t WHERE id = 3").rows().get(0).getString("nome"));
+            assertEquals(1, db.query("SELECT NEX$FORMAT FROM NEX$DATABASE").rows().get(0).getInt("NEX$FORMAT"));
+        }
+    }
+
+    private static long checkpoint(Path database) throws Exception {
+        byte[] header = Files.readAllBytes(database);
+        return ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).getLong(Format.CHECKPOINT_LSN_OFFSET);
+    }
+
+    private static long epoch(Path database) throws Exception {
+        byte[] header = Files.readAllBytes(database);
+        return ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).getLong(Format.LOG_EPOCH_OFFSET);
+    }
+
+    private static long epochLog(Path log) throws Exception {
+        byte[] header = Files.readAllBytes(log);
+        return ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).getLong(Format.LOG_EPOCH_AT);
     }
 
     private static boolean contains(byte[] file, String text) {

@@ -1241,14 +1241,14 @@ final class TableStore implements AutoCloseable {
         if (logical < 0 || data.length < 0 || logical + data.length > capacity) {
             throw new NexException("gravação fora da área da tabela " + (schema == null ? "" : schema.name));
         }
-        Format.writeFully(file.channel, base + logical, data);
+        file.writeBytes(base + logical, data);
     }
 
     private byte[] readAt(long logical, int length) {
         if (logical < 0 || length < 0 || logical + length > capacity) {
             throw new NexException("leitura fora da área da tabela " + (schema == null ? "" : schema.name));
         }
-        return Format.readFully(file.channel, base + logical, length);
+        return file.readBytes(base + logical, length);
     }
 
     private void force() {

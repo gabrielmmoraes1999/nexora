@@ -70,7 +70,8 @@ public final class Wire {
     public record Frame(byte opcode, byte[] body) {
     }
 
-    public record Login(String database, String user, String password, String role) {
+    public record Login(String database, String user, String password, String role,
+                        String host, String osUser, String process) {
     }
 
     public record SessionView(String user, String schema, boolean transactionActive, boolean ownsTransaction) {
@@ -116,6 +117,11 @@ public final class Wire {
     }
 
     public static byte[] encodeLogin(String database, String user, String password, String role) {
+        return encodeLogin(database, user, password, role, null, null, null);
+    }
+
+    public static byte[] encodeLogin(String database, String user, String password, String role,
+                                     String host, String osUser, String process) {
         return bytes(out -> {
             out.writeInt(MAGIC);
             out.writeByte(VERSION);
@@ -123,6 +129,9 @@ public final class Wire {
             writeUtf(out, user);
             writeUtf(out, password);
             writeUtf(out, role == null ? "" : role);
+            writeUtf(out, host);
+            writeUtf(out, osUser);
+            writeUtf(out, process);
         });
     }
 
@@ -136,7 +145,18 @@ public final class Wire {
         if (version != VERSION) {
             throw new IOException("versão do protocolo não suportada: " + version);
         }
-        return new Login(readUtf(in), readUtf(in), readUtf(in), readUtf(in));
+        String database = readUtf(in);
+        String user = readUtf(in);
+        String password = readUtf(in);
+        String role = readUtf(in);
+        String host = in.available() > 0 ? readUtf(in) : "";
+        String osUser = in.available() > 0 ? readUtf(in) : "";
+        String process = in.available() > 0 ? readUtf(in) : "";
+        return new Login(database, user, password, role, blank(host), blank(osUser), blank(process));
+    }
+
+    private static String blank(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     public static byte[] encodeLoginOk(String user, String schema, boolean transactionActive, boolean ownsTransaction) {

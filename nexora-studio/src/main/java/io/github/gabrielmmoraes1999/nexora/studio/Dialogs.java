@@ -99,7 +99,7 @@ final class Dialogs {
     static DatabaseEntry registration(Component parent, DatabaseEntry existing) {
         boolean editing = existing != null;
         JTextField alias = new JTextField(editing ? existing.alias() : "", 22);
-        JRadioButton file = new JRadioButton("Arquivo .xdb", existing == null || existing.embedded());
+        JRadioButton file = new JRadioButton("Arquivo .db", existing == null || existing.embedded());
         JRadioButton network = new JRadioButton("Rede (motor)", existing != null && !existing.embedded());
         ButtonGroup group = new ButtonGroup();
         group.add(file);
@@ -149,7 +149,7 @@ final class Dialogs {
         form.add("Senha", password);
         form.add("Papel", role);
         form.span(remember);
-        JLabel hint = new JLabel("O arquivo já precisa existir. Para criar um .xdb, use Criar banco.");
+        JLabel hint = new JLabel("O arquivo já precisa existir. Para criar um .db, use Criar banco.");
         hint.setFont(Look.UI);
         hint.setForeground(Look.MUTED);
         form.span(hint);
@@ -162,7 +162,7 @@ final class Dialogs {
             String aliasText = alias.getText().trim();
             boolean embedded = file.isSelected();
             if (embedded && path.getText().isBlank()) {
-                throw new IllegalArgumentException("informe o arquivo .xdb");
+                throw new IllegalArgumentException("informe o arquivo .db");
             }
             if (!embedded && database.getText().isBlank()) {
                 throw new IllegalArgumentException("informe o nome do banco no motor");
@@ -209,8 +209,8 @@ final class Dialogs {
             Path chosen = chooseFile(parent, true);
             if (chosen != null) {
                 String text = chosen.toString();
-                if (!text.toLowerCase(java.util.Locale.ROOT).endsWith(".xdb")) {
-                    text = text + ".xdb";
+                if (!text.toLowerCase(java.util.Locale.ROOT).endsWith(".db")) {
+                    text = text + ".db";
                 }
                 path.setText(text);
                 if (alias.getText().isBlank()) {
@@ -237,7 +237,7 @@ final class Dialogs {
         }
         try {
             if (path.getText().isBlank()) {
-                throw new IllegalArgumentException("informe o arquivo .xdb");
+                throw new IllegalArgumentException("informe o arquivo .db");
             }
             Path file = Path.of(path.getText().trim()).toAbsolutePath().normalize();
             String databaseName = name.getText().isBlank() ? stripExtension(fileName(file)) : name.getText().trim();
@@ -599,7 +599,7 @@ final class Dialogs {
 
     private static Path chooseFile(Component parent, boolean save) {
         JFileChooser chooser = new JFileChooser();
-        chooser.setFileFilter(new FileNameExtensionFilter("Banco Nexora (*.xdb)", "xdb"));
+        chooser.setFileFilter(new FileNameExtensionFilter("Banco Nexora (*.db)", "db"));
         int result = save ? chooser.showSaveDialog(parent) : chooser.showOpenDialog(parent);
         if (result != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return null;

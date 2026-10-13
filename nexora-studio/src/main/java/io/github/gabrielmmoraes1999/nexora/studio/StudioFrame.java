@@ -720,7 +720,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                 Nexora Studio 1.0
 
                 Interface administrativa do Nexora, no espírito do IBExpert.
-                O banco é um arquivo .xdb. A conexão embutida abre o arquivo
+                O banco é um arquivo .db com o log .log ao lado. A conexão embutida abre o arquivo
                 neste processo. A conexão de rede fala com o nexora-server.
                 """, "Sobre", javax.swing.JOptionPane.INFORMATION_MESSAGE)));
         bar.add(file);

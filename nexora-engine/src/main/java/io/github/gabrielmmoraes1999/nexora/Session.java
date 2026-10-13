@@ -1,7 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Uma conexão autenticada no arquivo {@code .xdb}.
+ * Uma conexão autenticada no arquivo {@code .db}.
  * O nome do usuário fica em maiúsculas, como no Firebird.
  */
 public final class Session {

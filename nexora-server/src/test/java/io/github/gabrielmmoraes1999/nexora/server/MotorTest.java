@@ -31,36 +31,36 @@ class MotorTest {
 
         Path semPorta = dir.resolve("sem-porta.json");
         Files.writeString(semPorta, """
-                {"databases":[{"name":"loja","path":"loja.xdb"}]}
+                {"databases":[{"name":"loja","path":"loja.db"}]}
                 """);
         assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(semPorta)).getMessage().contains("porta"));
 
         Path zero = dir.resolve("zero.json");
         Files.writeString(zero, """
-                {"port":0,"databases":[{"name":"loja","path":"loja.xdb"}]}
+                {"port":0,"databases":[{"name":"loja","path":"loja.db"}]}
                 """);
         assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(zero)).getMessage().contains("porta"));
 
         Path repetido = dir.resolve("repetido.json");
         Files.writeString(repetido, """
-                {"port":1,"databases":[{"name":"Loja","path":"a.xdb"},{"name":"loja","path":"b.xdb"}]}
+                {"port":1,"databases":[{"name":"Loja","path":"a.db"},{"name":"loja","path":"b.db"}]}
                 """);
         assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(repetido)).getMessage().contains("repetido"));
 
         Path estranho = dir.resolve("estranho.json");
         Files.writeString(estranho, """
-                {"port":1,"databases":[{"name":"loja","path":"a.xdb","extra":"x"}]}
+                {"port":1,"databases":[{"name":"loja","path":"a.db","extra":"x"}]}
                 """);
         assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(estranho)).getMessage().contains("desconhecida"));
 
         Path relativo = dir.resolve("motor.json");
         Files.writeString(relativo, """
-                {"databases":[{"name":"loja","path":"dados/loja.xdb"}],"port":4580}
+                {"databases":[{"name":"loja","path":"dados/loja.db"}],"port":4580}
                 """);
         MotorConfig config = MotorConfig.read(relativo);
         assertEquals("0.0.0.0", config.host());
         assertEquals(4580, config.port());
-        assertEquals(dir.resolve("dados").resolve("loja.xdb").toAbsolutePath().normalize(), config.databases().get(0).path());
+        assertEquals(dir.resolve("dados").resolve("loja.db").toAbsolutePath().normalize(), config.databases().get(0).path());
         assertEquals("loja", config.databases().get(0).name());
     }
 }

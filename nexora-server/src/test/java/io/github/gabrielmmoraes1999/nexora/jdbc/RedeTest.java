@@ -33,13 +33,13 @@ class RedeTest {
 
     @Test
     void jdbcNaRedeGravaELe() throws Exception {
-        Path ausente = dir.resolve("ausente.xdb");
+        Path ausente = dir.resolve("ausente.db");
         NexException falta = assertThrows(NexException.class, () -> MotorServer.start(
                 new MotorConfig("127.0.0.1", 0, List.of(new MotorConfig.DatabaseSpec("loja", ausente)))));
         assertTrue(falta.getMessage().contains("não existe"));
         assertFalse(Files.exists(ausente));
 
-        Path file = dir.resolve("loja.xdb");
+        Path file = dir.resolve("loja.db");
         Database.create(file, DatabaseOptions.defaults());
         MotorConfig config = new MotorConfig("127.0.0.1", 0, List.of(new MotorConfig.DatabaseSpec("loja", file)));
         byte[] foto = new byte[]{1, 2, 3};
@@ -101,6 +101,16 @@ class RedeTest {
                     assertEquals("nome", columns.getString("COLUMN_NAME"));
                     assertEquals(40, columns.getInt("COLUMN_SIZE"));
                 }
+                try (ResultSet links = connection.createStatement().executeQuery("""
+                        SELECT NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$REMOTE_HOST, NEX$REMOTE_OS_USER
+                        FROM NEX$CONNECTIONS
+                        """)) {
+                    assertTrue(links.next());
+                    assertEquals("TCPv4", links.getString("NEX$REMOTE_PROTOCOL"));
+                    assertEquals("127.0.0.1", links.getString("NEX$REMOTE_ADDRESS"));
+                    assertEquals(System.getProperty("user.name"), links.getString("NEX$REMOTE_OS_USER"));
+                    assertFalse(links.next());
+                }
                 try (ResultSet schemas = connection.getMetaData().getSchemas()) {
                     assertTrue(schemas.next());
                     assertEquals("public", schemas.getString("TABLE_SCHEM"));
@@ -122,6 +132,10 @@ class RedeTest {
                 try (ResultSet linhas = segunda.createStatement().executeQuery("SELECT COUNT(*) FROM cliente")) {
                     assertTrue(linhas.next());
                     assertEquals(4, linhas.getLong(1));
+                }
+                try (ResultSet ativas = segunda.createStatement().executeQuery("SELECT COUNT(*) FROM NEX$CONNECTIONS")) {
+                    assertTrue(ativas.next());
+                    assertEquals(2, ativas.getLong(1));
                 }
             }
         }

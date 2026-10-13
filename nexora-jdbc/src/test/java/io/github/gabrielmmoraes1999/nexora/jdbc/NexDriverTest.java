@@ -32,23 +32,23 @@ class NexDriverTest {
     Path dir;
 
     private String url() {
-        return "jdbc:nexora:" + dir.resolve("loja.xdb").toAbsolutePath();
+        return "jdbc:nexora:" + dir.resolve("loja.db").toAbsolutePath();
     }
 
     private void criarBanco() {
-        Database.create(dir.resolve("loja.xdb"), DatabaseOptions.defaults());
+        Database.create(dir.resolve("loja.db"), DatabaseOptions.defaults());
     }
 
     @Test
     void urlEClasseDoDriver() throws Exception {
         Class.forName("io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver");
         NexDriver driver = new NexDriver();
-        assertTrue(driver.acceptsURL("jdbc:nexora:C:/dados/loja.xdb"));
-        assertTrue(driver.acceptsURL("jdbc:nexora:embedded:C:/dados/loja.xdb"));
+        assertTrue(driver.acceptsURL("jdbc:nexora:C:/dados/loja.db"));
+        assertTrue(driver.acceptsURL("jdbc:nexora:embedded:C:/dados/loja.db"));
         assertTrue(driver.acceptsURL("jdbc:nexora://127.0.0.1:4580/loja"));
         assertFalse(driver.acceptsURL("jdbc:sqlite:dados"));
-        assertEquals("C:/dados/loja.xdb", NexDriver.file("jdbc:nexora://C:/dados/loja.xdb"));
-        assertEquals("C:/dados/loja.xdb", NexDriver.file("jdbc:nexora:embedded:C:/dados/loja.xdb"));
+        assertEquals("C:/dados/loja.db", NexDriver.file("jdbc:nexora://C:/dados/loja.db"));
+        assertEquals("C:/dados/loja.db", NexDriver.file("jdbc:nexora:embedded:C:/dados/loja.db"));
         assertEquals("", NexDriver.file("jdbc:nexora://127.0.0.1:4580/loja"));
         NexTarget rede = NexTarget.parse("jdbc:nexora://[::1]:4580/loja");
         assertEquals("::1", rede.host());
@@ -62,9 +62,9 @@ class NexDriverTest {
         assertTrue(semArquivo.getMessage().contains("arquivo"));
         SQLException semPorta = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora://localhost/loja", null));
         assertTrue(semPorta.getMessage().contains("porta"));
-        SQLException semSenha = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:C:/dados/loja.xdb", null));
+        SQLException semSenha = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:C:/dados/loja.db", null));
         assertTrue(semSenha.getMessage().contains("senha"));
-        DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:nexora:C:/dados/loja.xdb", null);
+        DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:nexora:C:/dados/loja.db", null);
         assertEquals(3, properties.length);
         assertEquals("roleName", properties[2].name);
         assertFalse(properties[2].required);
@@ -73,7 +73,7 @@ class NexDriverTest {
     @Test
     void urlEmbeddedAbreOArquivo() throws Exception {
         criarBanco();
-        String url = "jdbc:nexora:embedded:" + dir.resolve("loja.xdb").toAbsolutePath();
+        String url = "jdbc:nexora:embedded:" + dir.resolve("loja.db").toAbsolutePath();
         try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
             connection.createStatement().execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");
             assertEquals(1, connection.createStatement().executeUpdate("INSERT INTO t VALUES (1)"));
@@ -154,7 +154,7 @@ class NexDriverTest {
                 assertTrue(nomes.next());
                 assertEquals("Ana", nomes.getString(1));
             }
-            assertThrows(NexException.class, () -> Database.open(dir.resolve("loja.xdb"), "dba", "dba"));
+            assertThrows(NexException.class, () -> Database.open(dir.resolve("loja.db"), "dba", "dba"));
         }
         try (Connection connection = DriverManager.getConnection(url, "dba", "dba");
              ResultSet rows = connection.createStatement().executeQuery("SELECT nome FROM cliente")) {
@@ -221,7 +221,7 @@ class NexDriverTest {
 
     @Test
     void arquivoAusenteNaoECriado() throws Exception {
-        Path arquivo = dir.resolve("loja.xdb");
+        Path arquivo = dir.resolve("loja.db");
         SQLException ausente = assertThrows(SQLException.class, () -> DriverManager.getConnection(url(), "dba", "dba"));
         assertTrue(ausente.getMessage().contains("não existe"));
         assertFalse(Files.exists(arquivo));

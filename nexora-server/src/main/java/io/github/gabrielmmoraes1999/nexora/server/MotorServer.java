@@ -2,6 +2,7 @@ package io.github.gabrielmmoraes1999.nexora.server;
 
 import io.github.gabrielmmoraes1999.nexora.Database;
 import io.github.gabrielmmoraes1999.nexora.NexException;
+import io.github.gabrielmmoraes1999.nexora.RemoteClient;
 import io.github.gabrielmmoraes1999.nexora.Session;
 import io.github.gabrielmmoraes1999.nexora.SqlResult;
 import io.github.gabrielmmoraes1999.nexora.TableDescription;
@@ -13,6 +14,8 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -155,7 +158,8 @@ public final class MotorServer implements AutoCloseable {
                             if (current == null) {
                                 throw new NexException("banco não encontrado: " + login.database());
                             }
-                            session = current.login(login.user(), login.password(), login.role());
+                            session = current.login(login.user(), login.password(), login.role(),
+                                    clientOf(socket, login));
                             Wire.writeFrame(out, Wire.OK, Wire.encodeLoginOk(
                                     session.user(), session.schema(), false, false));
                         }
@@ -231,6 +235,17 @@ public final class MotorServer implements AutoCloseable {
         }
     }
 
+    private static RemoteClient clientOf(Socket socket, Wire.Login login) {
+        InetAddress address = socket.getInetAddress();
+        String protocol = "TCP";
+        String textual = null;
+        if (address != null) {
+            textual = address.getHostAddress();
+            protocol = address instanceof Inet6Address ? "TCPv6" : "TCPv4";
+        }
+        return new RemoteClient(protocol, textual, login.host(), login.osUser(), login.process());
+    }
+
     private Published find(String name) {
         if (name == null || name.isBlank()) {
             return null;
@@ -262,9 +277,9 @@ public final class MotorServer implements AutoCloseable {
             this.database = database;
         }
 
-        private Session login(String user, String password, String role) {
+        private Session login(String user, String password, String role, RemoteClient remote) {
             synchronized (database) {
-                Session session = database.login(user, password, role);
+                Session session = database.login(user, password, role, remote);
                 sessions.add(session);
                 return session;
             }
@@ -321,7 +336,7 @@ public final class MotorServer implements AutoCloseable {
                         database.execute(session, "ROLLBACK");
                     }
                 } catch (RuntimeException ignored) {
-                    // o logout ainda marca a conexão
+                    // o logout ainda retira a conexão
                 } finally {
                     sessions.remove(session);
                     try {

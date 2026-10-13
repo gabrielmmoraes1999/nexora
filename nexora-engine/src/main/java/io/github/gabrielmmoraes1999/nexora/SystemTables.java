@@ -6,7 +6,7 @@ import java.util.List;
  * Tabelas internas do arquivo, no papel das {@code RDB$} e {@code MON$} do Firebird.
  * {@code NEX$USERS} guarda o login. {@code NEX$PRIVILEGES} guarda o que cada um pode
  * fazer em cada tabela. {@code NEX$CONFIG} guarda opções.
- * {@code NEX$CONNECTIONS} registra cada conexão. {@code NEX$DATABASE} descreve o arquivo.
+ * {@code NEX$CONNECTIONS} registra só as conexões abertas. {@code NEX$DATABASE} descreve o arquivo.
  * {@code NEX$GENERATORS}, {@code NEX$PROCEDURES}, {@code NEX$TRIGGERS}, {@code NEX$VIEWS},
  * {@code NEX$ROLES} e {@code NEX$SCHEMAS} guardam o catálogo de geradores, procedures,
  * triggers, views, papéis e esquemas.
@@ -92,13 +92,20 @@ final class SystemTables {
         ), new int[]{0, 1, 2}, List.of(), List.of());
     }
 
+    static Schema connectionsSchema() {
+        return connections();
+    }
+
     private static Schema connections() {
         return new Schema(CONNECTIONS, List.of(
                 new Column("NEX$ATTACHMENT_ID", DataType.INTEGER, 0, 0, true, true, 1L, false, null),
                 text("NEX$USER_NAME", 63, true),
                 column("NEX$CONNECTED_AT", DataType.TIMESTAMP, 0, true, false, null),
-                column("NEX$DISCONNECTED_AT", DataType.TIMESTAMP, 0, false, false, null),
                 text("NEX$STATE", 16, true),
+                text("NEX$REMOTE_PROTOCOL", 16, false),
+                text("NEX$REMOTE_ADDRESS", 255, false),
+                text("NEX$REMOTE_HOST", 255, false),
+                text("NEX$REMOTE_OS_USER", 255, false),
                 text("NEX$REMOTE_PROCESS", 255, false)
         ), new int[]{0}, List.of(), List.of());
     }

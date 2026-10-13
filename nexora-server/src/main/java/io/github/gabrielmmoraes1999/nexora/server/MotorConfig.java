@@ -13,14 +13,15 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Configuração do motor: onde escutar e quais arquivos {@code .xdb} publicar.
+ * Configuração do motor: onde escutar e quais arquivos {@code .db} publicar.
+ * O {@code .log} fica ao lado de cada arquivo e o motor o abre junto.
  *
  * <pre>{@code
  * {
  *   "host": "0.0.0.0",
  *   "port": 4580,
  *   "databases": [
- *     { "name": "loja", "path": "C:/dados/loja.xdb" }
+ *     { "name": "loja", "path": "C:/dados/loja.db" }
  *   ]
  * }
  * }</pre>
@@ -61,7 +62,7 @@ public record MotorConfig(String host, int port, List<DatabaseSpec> databases) {
 
     /**
      * @param name nome usado em {@code jdbc:nexora://host:porta/nome}
-     * @param path arquivo {@code .xdb}
+     * @param path arquivo {@code .db}
      */
     public record DatabaseSpec(String name, Path path) {
     }

@@ -10,15 +10,36 @@ final class Format {
 
     static final byte[] MAGIC = "NEXORANEX".getBytes(StandardCharsets.US_ASCII);
     static final byte[] DB_MAGIC = "NEXORADBF".getBytes(StandardCharsets.US_ASCII);
+    static final byte[] LOG_MAGIC = "NEXORALOG".getBytes(StandardCharsets.US_ASCII);
     static final int VERSION = 4;
     /** A partir desta versão o registro traz o tamanho declarado no bloco. */
     static final int VARIABLE_RECORDS = 3;
     static final int DB_VERSION = 1;
+    static final int LOG_VERSION = 1;
     static final int HEADER_SIZE = 64;
     static final int DB_HEADER_SIZE = 256;
+    static final int LOG_HEADER_SIZE = 64;
     static final int VERSION_OFFSET = MAGIC.length;
     static final int PAGE_SIZE_OFFSET = 64;
     static final int CATALOG_SPAN_OFFSET = 68;
+    /** Identificador compartilhado pelo .db e pelo .log. Zero não é um banco novo. */
+    static final int LOG_ID_OFFSET = 72;
+    /** Offset no log até onde as páginas do .db estão sincronizadas. */
+    static final int CHECKPOINT_LSN_OFFSET = 80;
+    /** Reservado. O checkpoint deixa o histórico no log e este byte fica em 0. */
+    static final int CHECKPOINT_STABLE_OFFSET = 88;
+    static final byte CHECKPOINT_STABLE = 1;
+    /** Geração do log. Sobe no backup completo e quando o log vivo falta e outro é criado. */
+    static final int LOG_EPOCH_OFFSET = 96;
+    /** Até onde um log externo já foi aplicado, no sistema de offsets desse log. */
+    static final int APPLIED_OFFSET = 104;
+    static final int LOG_ID_AT = 16;
+    static final int LOG_PAGE_AT = 24;
+    static final int LOG_EPOCH_AT = 32;
+    static final int RECORD_REDO = 1;
+    static final int RECORD_CHECKPOINT = 2;
+    /** SQL confirmado: as transações que o aplicador executa de novo. */
+    static final int RECORD_TRANSACTION = 3;
     static final int DEFAULT_PAGE_SIZE = 8192;
     static final int CATALOG_MAGIC = 0x43415441;
     static final int SLOT_A = 16;
@@ -46,6 +67,11 @@ final class Format {
 
     static long align8(long value) {
         return (value + 7L) & ~7L;
+    }
+
+    /** Geração 0 no arquivo antigo deste formato equivale à primeira geração. */
+    static long normalizeEpoch(long stored) {
+        return stored == 0L ? 1L : stored;
     }
 
     static int checkPageSize(int pageSize) {

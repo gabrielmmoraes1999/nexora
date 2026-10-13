@@ -1,10 +1,10 @@
 # Nexora — JDBC
 
-Driver JDBC do Nexora. O banco é um arquivo `.xdb`: as tabelas, os `BLOB`, a configuração, os usuários e o registro de conexões ficam nesse mesmo arquivo. A aplicação fala com ele por `java.sql`, com `DriverManager`, pool ou DBeaver.
+Driver JDBC do Nexora. O banco é um par de arquivos: o `.db` guarda as tabelas, os `BLOB`, a configuração, os usuários e o registro de conexões; o `.log` ao lado guarda as transações. A aplicação fala com ele por `java.sql`, com `DriverManager`, pool ou DBeaver.
 
 Java 21. O driver declara JDBC 4.2 e não é um driver certificado (`jdbcCompliant()` devolve `false`).
 
-São cinco projetos Maven. `nexora-engine` tem o arquivo `.xdb`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. `nexora-cli` cria o banco e reúne as utilidades de linha de comando. `nexora-studio` é a interface administrativa. O driver, o motor, o CLI e o studio dependem do engine. O driver e o motor não dependem um do outro. O studio depende do driver.
+São cinco projetos Maven. `nexora-engine` tem o arquivo `.db`, o log `.log`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. `nexora-cli` cria o banco e reúne as utilidades de linha de comando. `nexora-studio` é a interface administrativa. O driver, o motor, o CLI e o studio dependem do engine. O driver e o motor não dependem um do outro. O studio depende do driver.
 
 ## Instalação
 
@@ -28,25 +28,27 @@ O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dent
 
 O serviço `META-INF/services/java.sql.Driver` registra o driver. `DriverManager.getConnection` o encontra sem `Class.forName`.
 
-| | |
-|---|---|
-| Classe | `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver` |
-| URL embutida | `jdbc:nexora:embedded:<arquivo.xdb>` |
-| URL de rede | `jdbc:nexora://<host>:<porta>/<nome>` |
-| Usuário | `dba` |
-| Senha | `dba` |
-| Produto | Nexora 1.0 |
+
+|              |                                                      |
+| ------------ | ---------------------------------------------------- |
+| Classe       | `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver` |
+| URL embutida | `jdbc:nexora:embedded:<arquivo.db>`                  |
+| URL de rede  | `jdbc:nexora://<host>:<porta>/<nome>`                |
+| Usuário      | `dba`                                                |
+| Senha        | `dba`                                                |
+| Produto      | Nexora 1.0                                           |
+
 
 ```java
-String url = "jdbc:nexora:embedded:C:/dados/loja.xdb";
+String url = "jdbc:nexora:embedded:C:/dados/loja.db";
 try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
     // ...
 }
 ```
 
-`jdbc:nexora:C:/dados/loja.xdb` continua válido. `jdbc:nexora://C:/dados/loja.xdb` também: a barra antes da letra de unidade é ignorada. A URL sem arquivo (`jdbc:nexora:`) falha. Para outro processo, use a URL de rede descrita em [Rede](#rede). Usuário ou senha em branco falha com SQLSTATE `28000`. Senha errada falha com a mensagem de usuário ou senha inválidos.
+`jdbc:nexora:C:/dados/loja.db` continua válido. `jdbc:nexora://C:/dados/loja.db` também: a barra antes da letra de unidade é ignorada. A URL sem arquivo (`jdbc:nexora:`) falha. Para outro processo, use a URL de rede descrita em [Rede](#rede). Usuário ou senha em branco falha com SQLSTATE `28000`. Senha errada falha com a mensagem de usuário ou senha inválidos.
 
-O arquivo `.xdb` já existe. O JDBC e o motor não o criam. A página fica fixa, escolhida na criação pelo CLI.
+O arquivo `.db` já existe. O JDBC e o motor não o criam. A página fica fixa, escolhida na criação pelo CLI.
 
 A senha não fica em texto puro. Cada gravação usa bcrypt (`$2a$`, custo 10). `Connection.getMetaData().getUserName()` devolve o usuário autenticado, em maiúsculas.
 
@@ -54,35 +56,48 @@ A senha não fica em texto puro. Cada gravação usa bcrypt (`$2a$`, custo 10). 
 
 ## Criar o banco
 
-O comando `create` do CLI gera o `.xdb` e o usuário DBA. A página segue o Firebird: `4096`, `8192`, `16384` ou `32768`. O padrão é `8192`. Ela não muda depois da criação. A página 0 é o cabeçalho; o catálogo e as tabelas ocupam páginas inteiras.
+O comando `create` do CLI gera o `.db`, o `.log` ao lado e o usuário DBA. A página segue o Firebird: `4096`, `8192`, `16384` ou `32768`. O padrão é `8192`. Ela não muda depois da criação. A página 0 é o cabeçalho; o catálogo e as tabelas ocupam páginas inteiras. O commit grava o `.log` antes das páginas. O checkpoint sincroniza o `.db` e deixa o histórico no log. Se o processo cair antes disso, a abertura reaplica o que ficou depois do checkpoint. Cada abertura e cada fechamento gravam o checkpoint. Se o `.log` não estiver ao lado, ou estiver vazio, a abertura cria um log novo só com o cabeçalho, avança a geração e o banco segue com as páginas já gravadas. O log da geração anterior não abre o banco.
 
 ```bash
-java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/dados/loja.xdb --page-size 16384 --user DBA --password segredo --name LOJA --charset UTF8
+java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/dados/loja.db --page-size 16384 --user DBA --password segredo --name LOJA --charset UTF8
 ```
 
-| Opção | Padrão |
-|---|---|
-| `--page-size` | `8192` |
-| `--user` | `DBA` |
-| `--password` | `dba` |
-| `--name` | nome do arquivo, sem a extensão |
-| `--description` | `Nexora` |
-| `--charset` | `UTF8` |
 
-Um arquivo que já tem conteúdo não é reescrito. Sem argumentos, ou com `--help`, o comando mostra o uso. Na API, o mesmo efeito é `Database.create(arquivo, options)`.
+| Opção           | Padrão                          |
+| --------------- | ------------------------------- |
+| `--page-size`   | `8192`                          |
+| `--user`        | `DBA`                           |
+| `--password`    | `dba`                           |
+| `--name`        | nome do arquivo, sem a extensão |
+| `--description` | `Nexora`                        |
+| `--charset`     | `UTF8`                          |
+
+
+Um arquivo que já tem conteúdo não é reescrito, nem o `.log` correspondente. Sem argumentos, ou com `--help`, o comando mostra o uso. Na API, o mesmo efeito é `Database.create(arquivo, options)`.
+
+O log acumula as transações confirmadas desde a criação do banco ou o último backup completo. Cada commit grava o comando e os valores comprimidos, então o arquivo não mostra o SQL nem o conteúdo dos `INSERT`. `backup completo` copia o `.db` e o `.log` para outra pasta e, no banco vivo, o log passa a registrar só o que mudar depois dessa cópia. `backup modificacao` copia só o `.log` e o log vivo continua de onde está. `backup` sem o tipo faz o completo. `apply` descomprime essas transações e executa o SQL sobre um `.db`: a mesma geração continua do checkpoint, e a geração seguinte traz o que mudou depois do backup completo.
+
+```bash
+java -jar nexora-cli/target/nexora-cli-1.0.jar backup completo C:/dados/loja.db C:/dados/backup
+java -jar nexora-cli/target/nexora-cli-1.0.jar backup modificacao C:/dados/loja.db C:/dados/logs
+java -jar nexora-cli/target/nexora-cli-1.0.jar apply C:/dados/backup/loja.db C:/dados/logs/loja.log
+java -jar nexora-cli/target/nexora-cli-1.0.jar export C:/dados/loja.log C:/dados/loja.sql
+```
+
+Na API, `Database.backup(arquivo, pasta)` faz o completo, `Database.backupLog(arquivo, pasta)` copia só o log, `Database.applyLog(arquivo, log)` aplica e `Database.exportSql(log, arquivo.sql)` exporta. `export` também aceita o `.db` e lê o `.log` ao lado, e o comando mostra o percentual enquanto lê o arquivo. O `apply` só aceita o log do mesmo banco, inclusive a cópia do backup: o identificador gravado no log tem de ser o daquele `.db`. A pasta do backup fica fora da pasta do banco.
 
 `NEX$PAGE_SIZE` guarda o tamanho da página. `NEX$FORMAT` é `1`. `Default.CharacterSet` em `NEX$CONFIG` guarda o conjunto informado na criação.
 
 ## Rede
 
-O arquivo `.xdb` fica aberto num processo só. O projeto `nexora-server` é esse processo: lê um json com o nome e o caminho de cada banco, escuta numa porta e atende o JDBC. O driver, no projeto `nexora-jdbc`, fala com ele por `jdbc:nexora://host:porta/nome` e também abre o arquivo direto com `jdbc:nexora:embedded:`. A senha vai em claro no TCP, pensada para a rede local.
+O arquivo `.db` fica aberto num processo só, junto com o `.log`. O projeto `nexora-server` é esse processo: lê um json com o nome e o caminho de cada banco, escuta numa porta e atende o JDBC. O driver, no projeto `nexora-jdbc`, fala com ele por `jdbc:nexora://host:porta/nome` e também abre o arquivo direto com `jdbc:nexora:embedded:`. A senha vai em claro no TCP, pensada para a rede local.
 
 ```json
 {
   "host": "0.0.0.0",
   "port": 4580,
   "databases": [
-    { "name": "loja", "path": "C:/dados/loja.xdb" }
+    { "name": "loja", "path": "C:/dados/loja.db" }
   ]
 }
 ```
@@ -102,11 +117,11 @@ try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
 }
 ```
 
-O nome depois da porta é o do json, sem distinguir maiúsculas. Várias conexões no motor seguem a regra de uma transação por arquivo. Enquanto o motor segura o `.xdb`, outro processo que tentar abrir o mesmo arquivo recebe banco já aberto. Ctrl+C solta os arquivos.
+O nome depois da porta é o do json, sem distinguir maiúsculas. Várias conexões no motor seguem a regra de uma transação por arquivo. Enquanto o motor segura o `.db`, outro processo que tentar abrir o mesmo arquivo recebe banco já aberto. Ctrl+C solta os arquivos.
 
 ## Studio
 
-O studio é a tela administrativa, no espírito do IBExpert: explorador à esquerda, documentos no centro e a grade embaixo do SQL. Ele registra arquivo local e banco do motor, cria o `.xdb`, executa script, e abre tabela, view, procedure, trigger, gerador, papel, usuário, privilégio e conexão.
+O studio é a tela administrativa, no espírito do IBExpert: explorador à esquerda, documentos no centro e a grade embaixo do SQL. Ele registra arquivo local e banco do motor, cria o `.db`, executa script, e abre tabela, view, procedure, trigger, gerador, papel, usuário, privilégio e conexão.
 
 ```bash
 java -jar nexora-studio/target/nexora-studio-1.0.jar
@@ -114,19 +129,21 @@ java -jar nexora-studio/target/nexora-studio-1.0.jar
 
 F9 executa o script do editor. Ctrl+Enter faz o mesmo. Um `SELECT` precisa ser o último comando, como no JDBC. A grade grava nas tabelas que têm chave primária. Célula vazia vira `NULL`; em `CHAR` e `VARCHAR`, `''` grava texto vazio.
 
-A conexão embutida abre o `.xdb` neste processo. Se o motor já segura o arquivo, ela falha: registre o banco pela rede, `host`, porta e nome do json. O registro fica em `~/.nexora/studio.json`. A senha só entra nesse arquivo se "lembrar senha" estiver marcado.
+A conexão embutida abre o `.db` neste processo. Se o motor já segura o arquivo, ela falha: registre o banco pela rede, `host`, porta e nome do json. O registro fica em `~/.nexora/studio.json`. A senha só entra nesse arquivo se "lembrar senha" estiver marcado.
 
 ## DBeaver
 
 1. Nova conexão, driver personalizado.
 2. Classe: `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver`.
-3. URL: `jdbc:nexora:C:/dados/loja.xdb`.
+3. URL: `jdbc:nexora:C:/dados/loja.db`.
 4. Usuário `dba`, senha `dba`.
 5. Bibliotecas: o JAR do driver (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). O engine vai dentro desse JAR. No DBeaver, troque o JAR antigo por este. O JAR do motor não entra no DBeaver.
 
+
+
 ## Exemplo
 
-O arquivo `C:/dados/loja.xdb` já foi criado pelo CLI.
+O arquivo `C:/dados/loja.db` já foi criado pelo CLI.
 
 ```java
 import java.nio.file.Files;
@@ -138,7 +155,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-Path arquivo = Path.of("C:/dados/loja.xdb");
+Path arquivo = Path.of("C:/dados/loja.db");
 
 try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + arquivo.toAbsolutePath(), "dba", "dba")) {
     try (Statement statement = connection.createStatement()) {
@@ -178,6 +195,8 @@ try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + arquiv
 }
 ```
 
+
+
 ## SQL
 
 Vários comandos podem ir no mesmo `execute`, separados por `;`. Um `SELECT` precisa ser o último. Os `?` são posicionais e valem para o script inteiro. Comentários são `--` até o fim da linha e `/* ... */`.
@@ -186,21 +205,23 @@ Identificadores sem aspas não distinguem maiúsculas. Com aspas, as maiúsculas
 
 ### Tipos
 
-| SQL | JDBC `Types` | Literal / `PreparedStatement` |
-|---|---|---|
-| `SMALLINT` | `SMALLINT` | inteiro, `setShort` |
-| `INTEGER` ou `INT` | `INTEGER` | inteiro, `setInt` |
-| `BIGINT` | `BIGINT` | inteiro, `setLong` |
-| `FLOAT` ou `REAL` | `REAL` | `setFloat` |
-| `DOUBLE` ou `DOUBLE PRECISION` | `DOUBLE` | `setDouble` |
-| `DECIMAL(p, s)` ou `NUMERIC(p, s)` | `DECIMAL` | `12.50`, `setBigDecimal` |
-| `BOOLEAN` ou `BOOL` | `BOOLEAN` | `TRUE`, `FALSE`, `setBoolean` |
-| `CHAR(n)` ou `CHARACTER(n)` | `CHAR` | `'texto'`, `setString` |
-| `VARCHAR(n)` ou `CHARACTER VARYING(n)` | `VARCHAR` | `'texto'`, `setString` |
-| `DATE` | `DATE` | `'2026-10-07'`, `setDate` |
-| `TIME` | `TIME` | `'13:45'` ou `'13:45:01'`, `setTime` |
-| `TIMESTAMP` | `TIMESTAMP` | `'2026-10-07 13:45:01'` ou `'2026-10-07T13:45:01'`, `setTimestamp` |
-| `BLOB`, `BYTEA`, `BINARY` ou `VARBINARY` | `BLOB` | `X'0102'`, `X''`, `setBytes` |
+
+| SQL                                      | JDBC `Types` | Literal / `PreparedStatement`                                      |
+| ---------------------------------------- | ------------ | ------------------------------------------------------------------ |
+| `SMALLINT`                               | `SMALLINT`   | inteiro, `setShort`                                                |
+| `INTEGER` ou `INT`                       | `INTEGER`    | inteiro, `setInt`                                                  |
+| `BIGINT`                                 | `BIGINT`     | inteiro, `setLong`                                                 |
+| `FLOAT` ou `REAL`                        | `REAL`       | `setFloat`                                                         |
+| `DOUBLE` ou `DOUBLE PRECISION`           | `DOUBLE`     | `setDouble`                                                        |
+| `DECIMAL(p, s)` ou `NUMERIC(p, s)`       | `DECIMAL`    | `12.50`, `setBigDecimal`                                           |
+| `BOOLEAN` ou `BOOL`                      | `BOOLEAN`    | `TRUE`, `FALSE`, `setBoolean`                                      |
+| `CHAR(n)` ou `CHARACTER(n)`              | `CHAR`       | `'texto'`, `setString`                                             |
+| `VARCHAR(n)` ou `CHARACTER VARYING(n)`   | `VARCHAR`    | `'texto'`, `setString`                                             |
+| `DATE`                                   | `DATE`       | `'2026-10-07'`, `setDate`                                          |
+| `TIME`                                   | `TIME`       | `'13:45'` ou `'13:45:01'`, `setTime`                               |
+| `TIMESTAMP`                              | `TIMESTAMP`  | `'2026-10-07 13:45:01'` ou `'2026-10-07T13:45:01'`, `setTimestamp` |
+| `BLOB`, `BYTEA`, `BINARY` ou `VARBINARY` | `BLOB`       | `X'0102'`, `X''`, `setBytes`                                       |
+
 
 `CHAR` e `VARCHAR` pedem tamanho de 1 a 8192. `DECIMAL` pede precisão de 1 a 38, e a escala não passa da precisão. Uma tabela tem no máximo 1024 colunas.
 
@@ -415,7 +436,7 @@ COMMIT;
 
 No mesmo processo, várias conexões `jdbc:nexora:` do mesmo arquivo compartilham o banco. Cada conexão informa usuário e senha. A propriedade `roleName` (ou `role`) escolhe o papel; vazio ou `NONE` entra sem papel. Outro processo recebe erro de banco já aberto.
 
-`DROP CONNECTION n` derruba a conexão ativa de número `n`, o mesmo de `CURRENT_CONNECTION`. O DBA derruba qualquer uma. Outro usuário só derruba a própria. A conexão derrubada passa a `CLOSED` e o próximo comando nela falha. Se ela era a dona da transação aberta, o banco desfaz essa transação.
+`DROP CONNECTION n` derruba a conexão ativa de número `n`, o mesmo de `CURRENT_CONNECTION`. O DBA derruba qualquer uma. Outro usuário só derruba a própria. A conexão derrubada sai de `NEX$CONNECTIONS` e o próximo comando nela falha. Se ela era a dona da transação aberta, o banco desfaz essa transação.
 
 Só uma transação fica aberta. Enquanto ela existe, as outras conexões leem, inclusive o que ainda não foi confirmado, e não gravam. A tentativa de gravar falha com a mensagem de transação aberta.
 
@@ -489,35 +510,37 @@ Falha de SQL vira `SQLException`. Mensagem de sintaxe ou de regra do banco usa S
 
 ## Arquivo e tabelas internas
 
-O arquivo começa com a página 0, o cabeçalho, e o catálogo na página seguinte. Cada tabela é uma região de páginas inteiras; o `BLOB` continua na região da própria tabela. Não há pasta de tabelas, nem arquivo de lock ou de commit ao lado: o bloqueio e a recuperação ficam no `.xdb`. O tamanho da página é o escolhido em `create`.
+O banco é o arquivo `.db`: a página 0 é o cabeçalho, o catálogo vem em seguida e cada tabela ocupa páginas inteiras, com o `BLOB` na própria tabela. Ao lado fica o `.log`, com o mesmo nome e a extensão trocada (`loja.db` e `loja.log`). Cada transação confirmada fica nesse log, comprimida, e o commit grava o log antes das páginas. O checkpoint sincroniza o `.db` e conserva esse histórico, desde a criação ou o último backup completo. O backup de modificação só copia o `.log`. Se o processo cair no meio, a próxima abertura reaplica o que ficou depois do checkpoint. `apply` descomprime as transações e executa o SQL de novo sobre um `.db`. Não há pasta de tabelas. O tamanho da página é o escolhido em `create`. `NEX$FORMAT` continua `1`.
 
 Treze tabelas nascem com o arquivo. Um arquivo antigo ganha, ao abrir, as que ainda não existirem, entre elas `NEX$SCHEMAS` com a linha `public`. `CREATE TABLE` acrescenta o dono em `NEX$PRIVILEGES`. O prefixo `NEX$` é reservado. `DROP`, `ALTER` e `CREATE INDEX` nelas falham. Identificadores podem usar `$`.
 
-| Tabela | Papel | Gravação |
-|---|---|---|
-| `NEX$DATABASE` | nome, descrição, dono, data, versão do arquivo e `NEX$PAGE_SIZE` | somente leitura |
-| `NEX$CONFIG` | chave e valor (`Auth.Hash`, `Default.CharacterSet`) | DBA |
-| `NEX$USERS` | usuários, senha com sal, ativo e administrador | DBA |
-| `NEX$PRIVILEGES` | o que cada usuário pode fazer em cada tabela | `GRANT` e `REVOKE` |
-| `NEX$CONNECTIONS` | cada conexão: usuário, entrada, saída e estado | o próprio banco |
-| `NEX$GENERATORS` | geradores e sequences: valor atual, início, passo e dono | `CREATE` / `SET GENERATOR` |
-| `NEX$PROCEDURES` | nome, código e dono da procedure | `CREATE PROCEDURE` |
-| `NEX$PROCEDURE_PARAMETERS` | argumentos e retornos (`NEX$PARAMETER_TYPE` 0 = entrada, 1 = saída) | `CREATE PROCEDURE` |
-| `NEX$TRIGGERS` | nome, tabela, posição, fase, código, inativo e dono | `CREATE TRIGGER` |
-| `NEX$VIEWS` | nome, `SELECT`, relação de base, colunas e dono | `CREATE VIEW` |
-| `NEX$ROLES` | nome e dono do papel | `CREATE ROLE` |
-| `NEX$ROLE_MEMBERS` | quem recebeu o papel e se pode repassar | `GRANT papel TO usuário` |
-| `NEX$SCHEMAS` | nome e dono de cada esquema; `public` é o padrão | `CREATE SCHEMA` / `DROP SCHEMA` |
+
+| Tabela                     | Papel                                                               | Gravação                        |
+| -------------------------- | ------------------------------------------------------------------- | ------------------------------- |
+| `NEX$DATABASE`             | nome, descrição, dono, data, versão do arquivo e `NEX$PAGE_SIZE`    | somente leitura                 |
+| `NEX$CONFIG`               | chave e valor (`Auth.Hash`, `Default.CharacterSet`)                 | DBA                             |
+| `NEX$USERS`                | usuários, senha com sal, ativo e administrador                      | DBA                             |
+| `NEX$PRIVILEGES`           | o que cada usuário pode fazer em cada tabela                        | `GRANT` e `REVOKE`              |
+| `NEX$CONNECTIONS`          | conexões ativas: usuário, entrada, estado e origem remota           | o próprio banco                 |
+| `NEX$GENERATORS`           | geradores e sequences: valor atual, início, passo e dono            | `CREATE` / `SET GENERATOR`      |
+| `NEX$PROCEDURES`           | nome, código e dono da procedure                                    | `CREATE PROCEDURE`              |
+| `NEX$PROCEDURE_PARAMETERS` | argumentos e retornos (`NEX$PARAMETER_TYPE` 0 = entrada, 1 = saída) | `CREATE PROCEDURE`              |
+| `NEX$TRIGGERS`             | nome, tabela, posição, fase, código, inativo e dono                 | `CREATE TRIGGER`                |
+| `NEX$VIEWS`                | nome, `SELECT`, relação de base, colunas e dono                     | `CREATE VIEW`                   |
+| `NEX$ROLES`                | nome e dono do papel                                                | `CREATE ROLE`                   |
+| `NEX$ROLE_MEMBERS`         | quem recebeu o papel e se pode repassar                             | `GRANT papel TO usuário`        |
+| `NEX$SCHEMAS`              | nome e dono de cada esquema; `public` é o padrão                    | `CREATE SCHEMA` / `DROP SCHEMA` |
+
 
 O DBA inicial é `DBA`, senha `dba`, administrador e ativo. Outro usuário entra com `INSERT` em `NEX$USERS`; a coluna `NEX$PASSWORD` recebe a senha em texto e o banco grava bcrypt. `SELECT` devolve o hash, não a senha. Não dá para apagar ou desativar o último DBA.
 
 ```sql
 INSERT INTO NEX$USERS (NEX$USER_NAME, NEX$PASSWORD) VALUES ('ana', 'ana');
 UPDATE NEX$USERS SET NEX$PASSWORD = 'nova' WHERE NEX$USER_NAME = 'DBA';
-SELECT NEX$USER_NAME, NEX$STATE, NEX$CONNECTED_AT FROM NEX$CONNECTIONS;
+SELECT NEX$USER_NAME, NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$CONNECTED_AT FROM NEX$CONNECTIONS;
 ```
 
-`NEX$STATE` fica `ACTIVE` enquanto a conexão está aberta e `CLOSED` ao fechar. Se o processo cair, a próxima abertura marca as conexões ainda ativas como `CLOSED`.
+A linha só existe enquanto a conexão está aberta: `NEX$STATE` fica `ACTIVE`. Ao fechar, a linha é apagada. Se o processo cair, a próxima abertura apaga as que ficaram. `NEX$REMOTE_PROTOCOL` é `local` na conexão embutida e `TCPv4` ou `TCPv6` no motor. `NEX$REMOTE_ADDRESS` é o endereço do cliente. `NEX$REMOTE_HOST`, `NEX$REMOTE_OS_USER` e `NEX$REMOTE_PROCESS` vêm do processo cliente.
 
 ## Autorização
 
@@ -548,6 +571,8 @@ DROP ROLE vendas;
 ```java
 Session ana = db.login("ana", "ana", "vendas");
 ```
+
+
 
 ## Geradores, procedures e triggers
 
@@ -628,3 +653,4 @@ CREATE VIEW nomes AS SELECT pessoa FROM ativo;
 DROP VIEW nomes;
 DROP VIEW ativo;
 ```
+

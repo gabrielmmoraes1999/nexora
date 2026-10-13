@@ -17,7 +17,7 @@ class InsertScaleTest {
 
     @Test
     void cinquentaMilLinhasComChavePrimaria() {
-        Path file = dir.resolve("carga.xdb");
+        Path file = dir.resolve("carga.db");
         Database.create(file, DatabaseOptions.defaults());
         try (Database db = Database.open(file, "dba", "dba")) {
             db.execute("""

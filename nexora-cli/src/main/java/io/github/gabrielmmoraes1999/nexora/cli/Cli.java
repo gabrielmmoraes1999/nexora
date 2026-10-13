@@ -5,14 +5,19 @@ import io.github.gabrielmmoraes1999.nexora.DatabaseOptions;
 import io.github.gabrielmmoraes1999.nexora.NexException;
 
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.util.Locale;
 
 /**
- * Linha de comando do Nexora. Cria o arquivo {@code .xdb} e concentra as utilidades.
+ * Linha de comando do Nexora. Cria o {@code .db}, faz o backup do par e aplica um log.
  * O JDBC e o motor abrem um arquivo que já existe.
  *
  * <pre>{@code
- * java -jar nexora-cli-1.0.jar create loja.xdb --page-size 8192 --user DBA --password segredo
+ * java -jar nexora-cli-1.0.jar create loja.db --page-size 8192 --user DBA --password segredo
+ * java -jar nexora-cli-1.0.jar backup completo loja.db C:/dados/backup
+ * java -jar nexora-cli-1.0.jar backup modificacao loja.db C:/dados/logs
+ * java -jar nexora-cli-1.0.jar apply C:/dados/backup/loja.db loja.log
+ * java -jar nexora-cli-1.0.jar export loja.log C:/dados/loja.sql
  * }</pre>
  */
 public final class Cli {
@@ -39,6 +44,9 @@ public final class Cli {
         }
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "create" -> create(args);
+            case "backup" -> backup(args);
+            case "apply" -> apply(args);
+            case "export" -> export(args);
             default -> throw new NexException("comando desconhecido: " + args[0] + "\n\n" + uso());
         }
     }
@@ -84,7 +92,7 @@ public final class Cli {
             }
         }
         if (arquivo == null || arquivo.isBlank()) {
-            throw new NexException("informe o arquivo .xdb");
+            throw new NexException("informe o arquivo .db");
         }
         Path path = Path.of(arquivo);
         DatabaseOptions options = new DatabaseOptions(
@@ -101,16 +109,84 @@ public final class Cli {
         System.out.println("nome: " + options.name());
     }
 
+    private static void backup(String[] args) {
+        String kind = "completo";
+        int dbAt = 1;
+        if (args.length >= 2 && backupKind(args[1]) != null) {
+            kind = backupKind(args[1]);
+            dbAt = 2;
+        }
+        if (args.length != dbAt + 2 || args[dbAt].isBlank() || args[dbAt + 1].isBlank()) {
+            throw new NexException("""
+                    uso: backup completo <arquivo.db> <pasta>
+                    uso: backup modificacao <arquivo.db> <pasta>""");
+        }
+        Path database = Path.of(args[dbAt]);
+        Path directory = Path.of(args[dbAt + 1]);
+        if (kind.equals("modificacao")) {
+            Database.backupLog(database, directory);
+            System.out.println("backup de modificação gravado em: " + directory.toAbsolutePath().normalize());
+            return;
+        }
+        Database.backup(database, directory);
+        System.out.println("backup completo gravado em: " + directory.toAbsolutePath().normalize());
+    }
+
+    private static String backupKind(String text) {
+        String kind = Normalizer.normalize(text, Normalizer.Form.NFD).replaceAll("\\p{M}", "").toLowerCase(Locale.ROOT);
+        return switch (kind) {
+            case "completo", "modificacao" -> kind;
+            default -> null;
+        };
+    }
+
+    private static void apply(String[] args) {
+        if (args.length != 3 || args[1].isBlank() || args[2].isBlank()) {
+            throw new NexException("uso: apply <arquivo.db> <arquivo.log>");
+        }
+        Path database = Path.of(args[1]);
+        Path log = Path.of(args[2]);
+        Database.applyLog(database, log);
+        System.out.println("log aplicado em: " + database.toAbsolutePath().normalize());
+    }
+
+    private static void export(String[] args) {
+        if (args.length != 3 || args[1].isBlank() || args[2].isBlank()) {
+            throw new NexException("uso: export <arquivo.log> <arquivo.sql>");
+        }
+        Path source = Path.of(args[1]);
+        Path sql = Path.of(args[2]);
+        int[] shown = {-1};
+        Database.exportSql(source, sql, percent -> {
+            if (percent == shown[0]) {
+                return;
+            }
+            shown[0] = percent;
+            System.out.print("\rexportando: " + percent + "%");
+            System.out.flush();
+        });
+        System.out.println();
+        System.out.println("sql gravado em: " + sql.toAbsolutePath().normalize());
+    }
+
     static String uso() {
         return """
                 Uso:
                   java -jar nexora-cli-1.0.jar <comando> [argumentos]
 
                 Comandos:
-                  create <arquivo.xdb>    cria o arquivo e o usuário DBA
+                  create <arquivo.db>          cria o .db, o .log e o usuário DBA
+                  backup completo <arquivo.db> <pasta>     copia o .db e o .log e zera o log vivo
+                  backup modificacao <arquivo.db> <pasta>  copia só o .log
+                  backup <arquivo.db> <pasta>              o mesmo que completo
+                  apply <arquivo.db> <arquivo.log>  aplica o log sobre o .db
+                  export <arquivo.log> <arquivo.sql>  grava o SQL do log
 
                 A página não muda depois da criação.
                 O JDBC e o motor abrem um arquivo que já existe.
+                O log guarda as mudanças desde a criação ou o último backup completo.
+                O backup de modificação deixa o log vivo no lugar.
+                export também aceita o .db e usa o .log ao lado.
 
                 Opções de create:
                   --page-size <n>          4096, 8192, 16384 ou 32768 (padrão 8192)
@@ -121,7 +197,11 @@ public final class Cli {
                   --charset <conjunto>     padrão UTF8
 
                 Exemplo:
-                  java -jar nexora-cli-1.0.jar create C:/dados/loja.xdb --page-size 16384 --password segredo --name LOJA
+                  java -jar nexora-cli-1.0.jar create C:/dados/loja.db --page-size 16384 --password segredo --name LOJA
+                  java -jar nexora-cli-1.0.jar backup completo C:/dados/loja.db C:/dados/backup
+                  java -jar nexora-cli-1.0.jar backup modificacao C:/dados/loja.db C:/dados/logs
+                  java -jar nexora-cli-1.0.jar apply C:/dados/backup/loja.db C:/dados/loja.log
+                  java -jar nexora-cli-1.0.jar export C:/dados/loja.log C:/dados/loja.sql
                 """;
     }
 

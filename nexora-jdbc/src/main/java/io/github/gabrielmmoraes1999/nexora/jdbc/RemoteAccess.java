@@ -1,6 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora.jdbc;
 
 import io.github.gabrielmmoraes1999.nexora.NexException;
+import io.github.gabrielmmoraes1999.nexora.RemoteClient;
 import io.github.gabrielmmoraes1999.nexora.SqlResult;
 import io.github.gabrielmmoraes1999.nexora.TableDescription;
 import io.github.gabrielmmoraes1999.nexora.net.Wire;
@@ -45,7 +46,9 @@ final class RemoteAccess implements DatabaseAccess {
             socket.setTcpNoDelay(true);
             DataInputStream input = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
             DataOutputStream output = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-            Wire.writeFrame(output, Wire.LOGIN, Wire.encodeLogin(database, user, password, role));
+            RemoteClient local = RemoteClient.local();
+            Wire.writeFrame(output, Wire.LOGIN, Wire.encodeLogin(
+                    database, user, password, role, local.host(), local.osUser(), local.process()));
             Wire.Frame response = Wire.readFrame(input);
             if (response.opcode() == Wire.FAIL) {
                 throw new SQLException(Wire.decodeError(response.body()), "42000");

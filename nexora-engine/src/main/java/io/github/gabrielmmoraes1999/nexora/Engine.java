@@ -38,6 +38,9 @@ final class Engine implements AutoCloseable {
     private Session connected;
     private boolean closed;
     private boolean bypass;
+    private boolean suppressCapture;
+    private int captureDepth;
+    private final List<TransactionLog.Applied> pending = new ArrayList<>();
     private Session actor;
     private Object[] params = new Object[0];
     private RoutineScope scope;
@@ -66,6 +69,7 @@ final class Engine implements AutoCloseable {
             engine.close();
             try {
                 Files.deleteIfExists(storage.path());
+                Files.deleteIfExists(TransactionLog.beside(storage.path()));
             } catch (IOException ignored) {
                 // o arquivo incompleto fica para a próxima tentativa
             }
@@ -80,8 +84,10 @@ final class Engine implements AutoCloseable {
         try {
             engine.loadTables();
             engine.ensureSystem(DatabaseOptions.defaults());
+            engine.alignConnections();
             engine.closeStaleConnections();
             engine.upgradeStorage();
+            engine.storage.saveCheckpoint();
             return engine;
         } catch (RuntimeException exception) {
             engine.close();
@@ -89,11 +95,40 @@ final class Engine implements AutoCloseable {
         }
     }
 
+    void applyExternalLog(Path logFile) {
+        DatabaseFile.ApplyPlan plan = storage.planApply(logFile);
+        if (plan.idle()) {
+            return;
+        }
+        Session replay = new Session("DBA", true, 0);
+        boolean previousBypass = bypass;
+        boolean previousSuppress = suppressCapture;
+        bypass = true;
+        suppressCapture = false;
+        try {
+            for (TransactionLog.Batch batch : plan.batches) {
+                for (TransactionLog.Applied statement : batch.statements) {
+                    replay.schema(statement.schema);
+                    execute(replay, statement.sql, statement.params);
+                }
+                storage.noteApplied(batch.end);
+            }
+            storage.completeApply(plan);
+        } finally {
+            bypass = previousBypass;
+            suppressCapture = previousSuppress;
+        }
+    }
+
     Session login(String user, String password) {
-        return login(user, password, null);
+        return login(user, password, null, null);
     }
 
     Session login(String user, String password, String role) {
+        return login(user, password, role, null);
+    }
+
+    Session login(String user, String password, String role, RemoteClient remote) {
         checkOpen();
         Account account = authenticate(user, password);
         String active = normalizeRole(role);
@@ -105,7 +140,7 @@ final class Engine implements AutoCloseable {
                 throw new NexException("usuário " + account.user + " não tem o papel " + active);
             }
         }
-        return attach(account, active);
+        return attach(account, active, remote);
     }
 
     void detach(Session session) {
@@ -116,9 +151,14 @@ final class Engine implements AutoCloseable {
         if (transactions.containsKey(session)) {
             rollbackSession(session);
         }
+        if (storage.leaveForRecovery()) {
+            attachments.remove(session.attachmentId);
+            session.markClosed();
+            return;
+        }
         maintainConnections(
-                "UPDATE NEX$CONNECTIONS SET NEX$STATE = 'CLOSED', NEX$DISCONNECTED_AT = ? WHERE NEX$ATTACHMENT_ID = ?",
-                LocalDateTime.now().withNano(0), session.attachmentId);
+                "DELETE FROM NEX$CONNECTIONS WHERE NEX$ATTACHMENT_ID = ?",
+                session.attachmentId);
         attachments.remove(session.attachmentId);
         session.markClosed();
     }
@@ -148,8 +188,23 @@ final class Engine implements AutoCloseable {
         if (outer && session != null && transactions.containsKey(session)) {
             activate(session);
         }
+        int mark = pending.size();
         try {
-            return executeBody(sql, parameters);
+            if (!suppressCapture && captureDepth == 0) {
+                Object[] copy = copyParams(parameters);
+                pending.add(new TransactionLog.Applied(activeSchema(), sql, copy));
+            }
+            captureDepth++;
+            try {
+                return executeBody(sql, parameters);
+            } finally {
+                captureDepth--;
+            }
+        } catch (RuntimeException exception) {
+            if (pending.size() > mark) {
+                pending.subList(mark, pending.size()).clear();
+            }
+            throw exception;
         } finally {
             actor = previous;
             if (outer) {
@@ -1369,10 +1424,16 @@ final class Engine implements AutoCloseable {
     }
 
     private void flush() {
-        flushMatching(table -> true);
+        List<TransactionLog.Applied> transactions = List.copyOf(pending);
+        flushMatching(table -> true, transactions);
+        pending.clear();
     }
 
     private void flushMatching(Predicate<TableStore> include) {
+        flushMatching(include, List.of());
+    }
+
+    private void flushMatching(Predicate<TableStore> include, List<TransactionLog.Applied> transactions) {
         List<TableStore> dirty = new ArrayList<>();
         for (TableStore table : tables.values()) {
             if (table.isDirty() && include.test(table)) {
@@ -1384,7 +1445,7 @@ final class Engine implements AutoCloseable {
             return;
         }
         storage.ensureScrubbed();
-        storage.armScrub();
+        storage.beginCommit();
         Map<TableStore, Long> oldBase = new HashMap<>();
         Map<TableStore, Long> oldCapacity = new HashMap<>();
         Map<TableStore, TableStore.Plan> plans = new HashMap<>();
@@ -1395,6 +1456,7 @@ final class Engine implements AutoCloseable {
         boolean reclaimed = false;
         long committedSize = storage.fileSize();
         try {
+            storage.armScrub();
             for (TableStore table : tables.values()) {
                 if (!dirty.contains(table)) {
                     entries.add(stored(table, null));
@@ -1451,7 +1513,6 @@ final class Engine implements AutoCloseable {
             }
             draft.free(storage.catalogOffset(), storage.catalogSpan());
             storage.publish(entries, draft);
-            published = true;
             storage.scrubPending();
             for (TableStore table : dirty) {
                 TableStore.Plan plan = plans.get(table);
@@ -1465,7 +1526,13 @@ final class Engine implements AutoCloseable {
             clean.free(storage.catalogOffset(), storage.catalogSpan());
             storage.publish(snapshotTables(), clean);
             storage.scrubPending();
+            storage.finishCommit(transactions);
+            published = true;
         } catch (RuntimeException exception) {
+            storage.abortCommit();
+            if (storage.leaveForRecovery()) {
+                throw exception;
+            }
             if (published) {
                 try {
                     storage.recoverPending();
@@ -1561,6 +1628,7 @@ final class Engine implements AutoCloseable {
     }
 
     private void rollback() {
+        pending.clear();
         reloadAll();
         inTransaction = false;
         transactionSession = null;
@@ -1753,6 +1821,19 @@ final class Engine implements AutoCloseable {
         return parameters;
     }
 
+    private static Object[] copyParams(Object[] parameters) {
+        if (parameters == null) {
+            return new Object[0];
+        }
+        Object[] copy = parameters.clone();
+        for (int i = 0; i < copy.length; i++) {
+            if (copy[i] instanceof byte[] bytes) {
+                copy[i] = bytes.clone();
+            }
+        }
+        return copy;
+    }
+
     private void loadTables() {
         for (DatabaseFile.StoredTable region : storage.tables()) {
             TableStore store = TableStore.open(storage, region);
@@ -1803,21 +1884,27 @@ final class Engine implements AutoCloseable {
             throw new NexException("tabelas de sistema incompletas");
         }
         storage.ensureScrubbed();
-        storage.armScrub();
+        storage.beginCommit();
         DatabaseFile.Allocator draft = storage.draft();
-        for (Schema schema : SystemTables.schemas()) {
-            long capacity = DatabaseFile.capacityFor(Format.HEADER_SIZE + 1024, storage.pageSize());
-            long base = draft.allocate(capacity);
-            storage.zero(base, capacity);
-            TableStore store = TableStore.create(storage, base, capacity, schema);
-            store.namespace(Relation.PUBLIC);
-            tables.put(Relation.key(Relation.PUBLIC, schema.name), store);
-        }
-        draft.free(storage.catalogOffset(), storage.catalogSpan());
         try {
+            storage.armScrub();
+            for (Schema schema : SystemTables.schemas()) {
+                long capacity = DatabaseFile.capacityFor(Format.HEADER_SIZE + 1024, storage.pageSize());
+                long base = draft.allocate(capacity);
+                storage.zero(base, capacity);
+                TableStore store = TableStore.create(storage, base, capacity, schema);
+                store.namespace(Relation.PUBLIC);
+                tables.put(Relation.key(Relation.PUBLIC, schema.name), store);
+            }
+            draft.free(storage.catalogOffset(), storage.catalogSpan());
             storage.publish(snapshotTables(), draft);
             storage.scrubPending();
+            storage.finishCommit();
         } catch (RuntimeException exception) {
+            storage.abortCommit();
+            if (storage.leaveForRecovery()) {
+                throw exception;
+            }
             tables.clear();
             storage.ensureScrubbed();
             storage.truncate(storage.fileSize());
@@ -1855,10 +1942,29 @@ final class Engine implements AutoCloseable {
         }
     }
 
+    private void alignConnections() {
+        TableStore table = systemTable(SystemTables.CONNECTIONS);
+        if (table == null) {
+            return;
+        }
+        boolean changed = false;
+        if (table.schema().indexOf("NEX$DISCONNECTED_AT") >= 0) {
+            table.dropColumn("NEX$DISCONNECTED_AT");
+            changed = true;
+        }
+        for (Column column : SystemTables.connectionsSchema().columns) {
+            if (table.schema().indexOf(column.name) < 0) {
+                table.addColumn(column, false, false);
+                changed = true;
+            }
+        }
+        if (changed) {
+            flushMatching(candidate -> Names.same(candidate.schema().name, SystemTables.CONNECTIONS));
+        }
+    }
+
     private void closeStaleConnections() {
-        maintainConnections(
-                "UPDATE NEX$CONNECTIONS SET NEX$STATE = 'CLOSED', NEX$DISCONNECTED_AT = ? WHERE NEX$STATE = 'ACTIVE'",
-                LocalDateTime.now().withNano(0));
+        maintainConnections("DELETE FROM NEX$CONNECTIONS");
     }
 
     private Account authenticate(String user, String password) {
@@ -1880,10 +1986,17 @@ final class Engine implements AutoCloseable {
         return new Account(name, Boolean.TRUE.equals(row.getBoolean("NEX$ADMIN")));
     }
 
-    private Session attach(Account account, String role) {
-        maintainConnections(
-                "INSERT INTO NEX$CONNECTIONS (NEX$USER_NAME, NEX$CONNECTED_AT, NEX$STATE) VALUES (?, ?, 'ACTIVE')",
-                account.user, LocalDateTime.now().withNano(0));
+    private Session attach(Account account, String role, RemoteClient remote) {
+        RemoteClient origin = remote == null ? RemoteClient.local() : remote;
+        maintainConnections("""
+                INSERT INTO NEX$CONNECTIONS (
+                    NEX$USER_NAME, NEX$CONNECTED_AT, NEX$STATE,
+                    NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$REMOTE_HOST,
+                    NEX$REMOTE_OS_USER, NEX$REMOTE_PROCESS
+                ) VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?, ?)
+                """, account.user, LocalDateTime.now().withNano(0),
+                clip(origin.protocol(), 16), clip(origin.address(), 255), clip(origin.host(), 255),
+                clip(origin.osUser(), 255), clip(origin.process(), 255));
         TableStore table = require(SystemTables.CONNECTIONS);
         Column id = table.schema().columns.get(table.schema().indexOf("NEX$ATTACHMENT_ID"));
         Session session = new Session(account.user, account.admin, id.nextIdentity - 1, role);
@@ -1897,8 +2010,10 @@ final class Engine implements AutoCloseable {
         long oldBase = table.base();
         long oldCapacity = table.capacity();
         boolean previousBypass = bypass;
+        boolean previousSuppress = suppressCapture;
         boolean previousTx = inTransaction;
         bypass = true;
+        suppressCapture = true;
         inTransaction = true;
         try {
             execute(null, sql, params);
@@ -1909,18 +2024,22 @@ final class Engine implements AutoCloseable {
             throw exception;
         } finally {
             bypass = previousBypass;
+            suppressCapture = previousSuppress;
             inTransaction = previousTx;
         }
     }
 
     private SqlResult systemExecute(String sql, Object... params) {
         boolean previous = bypass;
+        boolean previousSuppress = suppressCapture;
         Object[] previousParams = this.params;
         bypass = true;
+        suppressCapture = true;
         try {
             return execute(null, sql, params);
         } finally {
             bypass = previous;
+            suppressCapture = previousSuppress;
             this.params = previousParams;
         }
     }
@@ -1931,27 +2050,27 @@ final class Engine implements AutoCloseable {
 
     private void createStored(Schema schema, String namespace) {
         storage.ensureScrubbed();
-        storage.armScrub();
-        DatabaseFile.Allocator draft = storage.draft();
-        long capacity = DatabaseFile.capacityFor(Format.HEADER_SIZE + 1024, storage.pageSize());
-        long base = draft.allocate(capacity);
-        storage.zero(base, capacity);
-        TableStore store = TableStore.create(storage, base, capacity, schema);
-        store.namespace(namespace);
-        String key = Relation.key(namespace, schema.name);
-        tables.put(key, store);
-        draft.free(storage.catalogOffset(), storage.catalogSpan());
-        boolean published = false;
+        storage.beginCommit();
         try {
+            storage.armScrub();
+            DatabaseFile.Allocator draft = storage.draft();
+            long capacity = DatabaseFile.capacityFor(Format.HEADER_SIZE + 1024, storage.pageSize());
+            long base = draft.allocate(capacity);
+            storage.zero(base, capacity);
+            TableStore store = TableStore.create(storage, base, capacity, schema);
+            store.namespace(namespace);
+            String key = Relation.key(namespace, schema.name);
+            tables.put(key, store);
+            draft.free(storage.catalogOffset(), storage.catalogSpan());
             storage.publish(snapshotTables(), draft);
-            published = true;
             storage.scrubPending();
+            storage.finishCommit();
         } catch (RuntimeException exception) {
-            if (published) {
-                storage.ensureScrubbed();
-                return;
+            storage.abortCommit();
+            if (storage.leaveForRecovery()) {
+                throw exception;
             }
-            tables.remove(key);
+            tables.remove(Relation.key(namespace, schema.name));
             storage.ensureScrubbed();
             storage.truncate(storage.fileSize());
             throw exception;
@@ -1960,13 +2079,20 @@ final class Engine implements AutoCloseable {
 
     private void publishLayout(long freedOffset, long freedLength) {
         storage.ensureScrubbed();
-        storage.armScrub();
-        DatabaseFile.Allocator draft = storage.draft();
-        storage.retire(freedOffset, freedLength);
-        draft.free(freedOffset, freedLength);
-        draft.free(storage.catalogOffset(), storage.catalogSpan());
-        storage.publish(snapshotTables(), draft);
-        storage.scrubPending();
+        storage.beginCommit();
+        try {
+            storage.armScrub();
+            DatabaseFile.Allocator draft = storage.draft();
+            storage.retire(freedOffset, freedLength);
+            draft.free(freedOffset, freedLength);
+            draft.free(storage.catalogOffset(), storage.catalogSpan());
+            storage.publish(snapshotTables(), draft);
+            storage.scrubPending();
+            storage.finishCommit();
+        } catch (RuntimeException exception) {
+            storage.abortCommit();
+            throw exception;
+        }
         compactFile();
     }
 
@@ -2363,9 +2489,18 @@ final class Engine implements AutoCloseable {
             detach(target);
             return;
         }
-        maintainConnections(
-                "UPDATE NEX$CONNECTIONS SET NEX$STATE = 'CLOSED', NEX$DISCONNECTED_AT = ? WHERE NEX$ATTACHMENT_ID = ?",
-                LocalDateTime.now().withNano(0), id);
+        maintainConnections("DELETE FROM NEX$CONNECTIONS WHERE NEX$ATTACHMENT_ID = ?", id);
+    }
+
+    private static String clip(String value, int length) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        return text.length() <= length ? text : text.substring(0, length);
     }
 
     private String requireRole(String name) {
@@ -3922,6 +4057,7 @@ final class Engine implements AutoCloseable {
     }
 
     private void rollbackSession(Session session) {
+        pending.clear();
         OpenTxn txn = transactions.remove(session);
         if (txn == null) {
             throw new NexException("não há transação aberta");

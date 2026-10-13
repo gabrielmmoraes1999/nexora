@@ -15,11 +15,11 @@ import java.util.logging.Logger;
  * Driver JDBC para abrir um arquivo do Nexora no DBeaver e em {@link DriverManager}.
  *
  * <p>Classe: {@code io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver}<br>
- * Embutido: {@code jdbc:nexora:embedded:C:/dados/loja.xdb}<br>
+ * Embutido: {@code jdbc:nexora:embedded:C:/dados/loja.db}<br>
  * Rede: {@code jdbc:nexora://192.168.0.10:4580/loja}<br>
  * Usuário inicial: {@code dba}<br>
  * Senha inicial: {@code dba}<br>
- * O arquivo {@code .xdb} já existe. Quem o cria é o CLI do Nexora.
+ * O arquivo {@code .db} já existe. Quem o cria é o CLI do Nexora. Sem o {@code .log} ao lado, a abertura grava um log novo, só com o cabeçalho, e o log antigo deixa de servir.
  */
 public final class NexDriver implements Driver {
 
@@ -48,7 +48,7 @@ public final class NexDriver implements Driver {
             throw new SQLException(exception.getMessage(), "08001", exception);
         }
         if (target.embedded() && target.path().isEmpty()) {
-            throw new SQLException("informe o arquivo na URL jdbc:nexora:<arquivo.xdb>", "08001");
+            throw new SQLException("informe o arquivo na URL jdbc:nexora:<arquivo.db>", "08001");
         }
         String user = property(info, "user");
         String password = property(info, "password");

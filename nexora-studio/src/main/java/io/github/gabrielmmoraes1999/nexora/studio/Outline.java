@@ -77,7 +77,8 @@ public record Outline(
     public record UserInfo(String name, String first, String middle, String last, boolean active, boolean admin) {
     }
 
-    public record LinkInfo(long id, String user, String state, String connectedAt, String disconnectedAt, String process) {
+    public record LinkInfo(long id, String user, String state, String connectedAt, String protocol,
+                           String address, String host, String osUser, String process) {
     }
 
     public record ConfigInfo(String key, String value) {
@@ -342,11 +343,13 @@ public record Outline(
     public static List<LinkInfo> connections(Connection connection) throws SQLException {
         List<LinkInfo> list = new ArrayList<>();
         for (Row row : query(connection, """
-                SELECT NEX$ATTACHMENT_ID, NEX$USER_NAME, NEX$STATE, NEX$CONNECTED_AT, NEX$DISCONNECTED_AT, NEX$REMOTE_PROCESS
+                SELECT NEX$ATTACHMENT_ID, NEX$USER_NAME, NEX$STATE, NEX$CONNECTED_AT,
+                       NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$REMOTE_HOST, NEX$REMOTE_OS_USER, NEX$REMOTE_PROCESS
                 FROM NEX$CONNECTIONS
                 """)) {
             list.add(new LinkInfo(row.number("NEX$ATTACHMENT_ID"), row.text("NEX$USER_NAME"), row.text("NEX$STATE"),
-                    row.text("NEX$CONNECTED_AT"), row.text("NEX$DISCONNECTED_AT"), row.text("NEX$REMOTE_PROCESS")));
+                    row.text("NEX$CONNECTED_AT"), row.text("NEX$REMOTE_PROTOCOL"), row.text("NEX$REMOTE_ADDRESS"),
+                    row.text("NEX$REMOTE_HOST"), row.text("NEX$REMOTE_OS_USER"), row.text("NEX$REMOTE_PROCESS")));
         }
         list.sort(Comparator.comparingLong(LinkInfo::id).reversed());
         return list;

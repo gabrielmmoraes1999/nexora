@@ -26,12 +26,12 @@ class StudioTest {
     void registroGuardaSenhaSoQuandoPedido() throws Exception {
         Path file = dir.resolve("studio.json");
         assertTrue(Registry.load(file).isEmpty());
-        DatabaseEntry entry = new DatabaseEntry("id-1", "Loja", true, "C:\\dados\\loja.xdb", "localhost", 4580,
+        DatabaseEntry entry = new DatabaseEntry("id-1", "Loja", true, "C:\\dados\\loja.db", "localhost", 4580,
                 "", "DBA", "a\"b\\c", "vendas", false);
         Registry.save(file, List.of(entry));
         DatabaseEntry loaded = Registry.load(file).get(0);
         assertEquals("id-1", loaded.id());
-        assertEquals("C:\\dados\\loja.xdb", loaded.path());
+        assertEquals("C:\\dados\\loja.db", loaded.path());
         assertEquals("", loaded.password());
         assertFalse(loaded.rememberPassword());
         Registry.save(file, List.of(new DatabaseEntry(entry.id(), entry.alias(), false, "", "db.local", 4580,
@@ -45,7 +45,7 @@ class StudioTest {
 
     @Test
     void ddlECatalogoEnxergamOBanco() throws Exception {
-        Path file = dir.resolve("loja.xdb");
+        Path file = dir.resolve("loja.db");
         Database.create(file, new DatabaseOptions(8192, "DBA", "dba", "LOJA", "Nexora", "UTF8"));
         String created = Ddl.create("public", "nota", List.of(
                 new Ddl.ColumnDraft("id", "INTEGER", 0, 0, false, true, false, true, ""),

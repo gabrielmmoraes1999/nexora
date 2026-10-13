@@ -444,9 +444,10 @@ final class ObjectPane extends JPanel {
                 List<List<Object>> rows = new ArrayList<>();
                 for (Outline.LinkInfo link : Outline.connections(connection)) {
                     rows.add(List.of(link.id(), link.user(), link.state(), link.connectedAt(),
-                            link.disconnectedAt(), link.process()));
+                            link.protocol(), link.address(), link.host(), link.osUser(), link.process()));
                 }
-                Tables.show(table, List.of("Id", "Usuário", "Estado", "Entrada", "Saída", "Processo"), rows);
+                Tables.show(table, List.of("Id", "Usuário", "Estado", "Entrada", "Protocolo", "Endereço", "Host",
+                        "Usuário SO", "Processo"), rows);
             } catch (SQLException exception) {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }

@@ -12,7 +12,7 @@
 
     <artifactId>nexora-cli</artifactId>
     <name>Nexora CLI</name>
-    <description>Linha de comando do Nexora. Cria o arquivo .xdb e reúne as utilidades. O JAR leva o engine dentro.</description>
+    <description>Linha de comando do Nexora. Cria o .db, faz backup e aplica o log. O JAR leva o engine dentro.</description>
 
     <dependencies>
         <dependency>

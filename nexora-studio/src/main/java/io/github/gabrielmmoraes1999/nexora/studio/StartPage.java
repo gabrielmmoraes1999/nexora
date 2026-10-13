@@ -30,7 +30,7 @@ final class StartPage extends JPanel {
 
         JLabel text = new JLabel("""
                 <html><body style='width:460px'>
-                Interface administrativa do arquivo <b>.xdb</b>, no espírito do IBExpert.
+                Interface administrativa do arquivo <b>.db</b>, no espírito do IBExpert.
                 O explorador fica à esquerda. O SQL e os objetos abrem no centro.
                 A grade grava nas tabelas que têm chave primária.
                 <br><br>
