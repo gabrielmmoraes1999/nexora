@@ -1,6 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora.jdbc;
 
 import io.github.gabrielmmoraes1999.nexora.DataType;
+import io.github.gabrielmmoraes1999.nexora.ReferentialAction;
 import io.github.gabrielmmoraes1999.nexora.Row;
 import io.github.gabrielmmoraes1999.nexora.SqlResult;
 import io.github.gabrielmmoraes1999.nexora.TableDescription;
@@ -1493,8 +1494,8 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
                             child.name(),
                             key.columns().get(i),
                             (short) (i + 1),
-                            (short) importedKeyRestrict,
-                            (short) importedKeyRestrict,
+                            ruleCode(key.onUpdate()),
+                            ruleCode(key.onDelete()),
                             key.name(),
                             parentKey,
                             (short) importedKeyNotDeferrable
@@ -1503,6 +1504,16 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
             }
         }
         return grid(columns, rows);
+    }
+
+    private static short ruleCode(ReferentialAction action) {
+        return switch (action) {
+            case CASCADE -> (short) importedKeyCascade;
+            case RESTRICT -> (short) importedKeyRestrict;
+            case SET_NULL -> (short) importedKeySetNull;
+            case SET_DEFAULT -> (short) importedKeySetDefault;
+            case NO_ACTION -> (short) importedKeyNoAction;
+        };
     }
 
     private static String parentKeyName(List<TableDescription> described, TableDescription.ForeignKey key) {

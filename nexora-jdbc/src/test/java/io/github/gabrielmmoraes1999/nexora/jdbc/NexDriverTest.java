@@ -276,4 +276,28 @@ class NexDriverTest {
             }
         }
     }
+
+    @Test
+    void metadataInformaRegraDaChaveEstrangeira() throws Exception {
+        criarBanco();
+        try (Connection connection = DriverManager.getConnection(url(), "dba", "dba")) {
+            Statement statement = connection.createStatement();
+            statement.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY)");
+            statement.execute("""
+                    CREATE TABLE item (
+                        id INTEGER PRIMARY KEY,
+                        pedido_id INTEGER,
+                        CONSTRAINT FK_item FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+                            ON UPDATE CASCADE ON DELETE SET NULL
+                    )
+                    """);
+            try (ResultSet keys = connection.getMetaData().getImportedKeys(null, "public", "item")) {
+                assertTrue(keys.next());
+                assertEquals("FK_item", keys.getString("FK_NAME"));
+                assertEquals(DatabaseMetaData.importedKeyCascade, keys.getShort("UPDATE_RULE"));
+                assertEquals(DatabaseMetaData.importedKeySetNull, keys.getShort("DELETE_RULE"));
+                assertFalse(keys.next());
+            }
+        }
+    }
 }

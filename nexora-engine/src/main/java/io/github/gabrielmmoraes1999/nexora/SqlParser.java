@@ -362,9 +362,10 @@ final class SqlParser {
             expectKeyword("REFERENCES");
             String refTable = expectRelation();
             List<String> refColumns = peekSymbol("(") ? columnList() : List.of();
-            referentialActions();
+            Actions actions = referentialActions();
             Using using = usingIndex();
-            keys.foreignKeys.add(new ForeignClause(name, columns, using.name, using.descending, refTable, refColumns));
+            keys.foreignKeys.add(new ForeignClause(name, columns, using.name, using.descending, refTable, refColumns,
+                    actions.onUpdate, actions.onDelete));
             return;
         }
         expectKeyword("UNIQUE");
@@ -388,21 +389,61 @@ final class SqlParser {
         return new Using(expectIdent(), descending);
     }
 
-    private void referentialActions() {
+    private Actions referentialActions() {
+        ReferentialAction onDelete = ReferentialAction.NO_ACTION;
+        ReferentialAction onUpdate = ReferentialAction.NO_ACTION;
+        boolean sawDelete = false;
+        boolean sawUpdate = false;
         while (peekKeyword("ON")) {
             consumeKeyword("ON");
-            if (!consumeKeyword("DELETE") && !consumeKeyword("UPDATE")) {
+            boolean delete;
+            if (consumeKeyword("DELETE")) {
+                delete = true;
+            } else if (consumeKeyword("UPDATE")) {
+                delete = false;
+            } else {
                 throw error("ON espera DELETE ou UPDATE");
             }
-            if (consumeKeyword("CASCADE") || consumeKeyword("SET")) {
-                throw error("chave estrangeira só aceita NO ACTION ou RESTRICT");
+            if (delete && sawDelete) {
+                throw error("ON DELETE repetido");
             }
-            if (consumeKeyword("NO")) {
-                expectKeyword("ACTION");
-                continue;
+            if (!delete && sawUpdate) {
+                throw error("ON UPDATE repetido");
             }
-            expectKeyword("RESTRICT");
+            ReferentialAction action = referentialAction();
+            if (delete) {
+                onDelete = action;
+                sawDelete = true;
+            } else {
+                onUpdate = action;
+                sawUpdate = true;
+            }
         }
+        return new Actions(onUpdate, onDelete);
+    }
+
+    private ReferentialAction referentialAction() {
+        if (consumeKeyword("CASCADE")) {
+            return ReferentialAction.CASCADE;
+        }
+        if (consumeKeyword("RESTRICT")) {
+            return ReferentialAction.RESTRICT;
+        }
+        if (consumeKeyword("SET")) {
+            if (consumeKeyword("NULL")) {
+                return ReferentialAction.SET_NULL;
+            }
+            expectKeyword("DEFAULT");
+            return ReferentialAction.SET_DEFAULT;
+        }
+        if (consumeKeyword("NO")) {
+            expectKeyword("ACTION");
+            return ReferentialAction.NO_ACTION;
+        }
+        throw error("ação referencial espera NO ACTION, RESTRICT, CASCADE, SET NULL ou SET DEFAULT");
+    }
+
+    private record Actions(ReferentialAction onUpdate, ReferentialAction onDelete) {
     }
 
     private static final class TableKeys {
@@ -515,9 +556,10 @@ final class SqlParser {
             expectKeyword("REFERENCES");
             String refTable = expectRelation();
             List<String> refColumns = peekSymbol("(") ? columnList() : List.of();
-            referentialActions();
+            Actions actions = referentialActions();
             Using using = usingIndex();
-            return new AddForeignKey(table, columns, name, using.name, using.descending, refTable, refColumns);
+            return new AddForeignKey(table, columns, name, using.name, using.descending, refTable, refColumns,
+                    actions.onUpdate, actions.onDelete);
         }
         throw error("ADD CONSTRAINT espera PRIMARY KEY ou FOREIGN KEY");
     }

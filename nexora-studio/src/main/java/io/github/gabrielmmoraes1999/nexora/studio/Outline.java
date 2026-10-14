@@ -256,7 +256,9 @@ public record Outline(
                 index != null && index.descending(),
                 null,
                 null,
-                List.of()));
+                List.of(),
+                null,
+                null));
     }
 
     public static List<Ddl.ConstraintInfo> foreignKeys(Connection connection, String schema, String table,
@@ -274,7 +276,9 @@ public record Outline(
                         result.getString("FKCOLUMN_NAME"),
                         result.getString("PKTABLE_SCHEM"),
                         result.getString("PKTABLE_NAME"),
-                        result.getString("PKCOLUMN_NAME")));
+                        result.getString("PKCOLUMN_NAME"),
+                        result.getShort("UPDATE_RULE"),
+                        result.getShort("DELETE_RULE")));
             }
         }
         List<Ddl.ConstraintInfo> keys = new ArrayList<>();
@@ -296,7 +300,9 @@ public record Outline(
                     index != null && index.descending(),
                     first.referencedSchema,
                     first.referencedTable,
-                    referenced));
+                    referenced,
+                    ruleText(first.updateRule),
+                    ruleText(first.deleteRule)));
         }
         keys.sort(Comparator.comparing(Ddl.ConstraintInfo::name, String.CASE_INSENSITIVE_ORDER));
         return keys;
@@ -311,7 +317,7 @@ public record Outline(
                 continue;
             }
             keys.add(new Ddl.ConstraintInfo(index.name(), index.columns(), index.name(), index.descending(),
-                    null, null, List.of()));
+                    null, null, List.of(), null, null));
         }
         return keys;
     }
@@ -347,8 +353,24 @@ public record Outline(
         return true;
     }
 
+    private static String ruleText(short code) {
+        if (code == DatabaseMetaData.importedKeyCascade) {
+            return "CASCADE";
+        }
+        if (code == DatabaseMetaData.importedKeySetNull) {
+            return "SET NULL";
+        }
+        if (code == DatabaseMetaData.importedKeySetDefault) {
+            return "SET DEFAULT";
+        }
+        if (code == DatabaseMetaData.importedKeyRestrict) {
+            return "RESTRICT";
+        }
+        return "NO ACTION";
+    }
+
     private record ForeignColumn(int sequence, String column, String referencedSchema, String referencedTable,
-                                 String referencedColumn) {
+                                 String referencedColumn, short updateRule, short deleteRule) {
     }
 
     public static List<TriggerInfo> triggers(Connection connection) throws SQLException {

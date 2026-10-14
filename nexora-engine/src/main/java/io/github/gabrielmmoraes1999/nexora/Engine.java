@@ -52,6 +52,8 @@ final class Engine implements AutoCloseable {
     private int routineDepth;
     private int viewDepth;
     private Map<TableStore, TableStore.Snapshot> statementSnapshots;
+    private IdentityHashMap<TableStore, Set<Long>> deletingRows;
+    private IdentityHashMap<TableStore, Set<Long>> rewritingRows;
     private String pinnedSchema;
 
     private Engine(DatabaseFile storage) {
@@ -362,7 +364,9 @@ final class Engine implements AutoCloseable {
                     key.referencedTable,
                     List.of(key.referencedColumns),
                     key.indexName,
-                    key.descending));
+                    key.descending,
+                    key.onUpdate,
+                    key.onDelete));
         }
         return new TableDescription(namespace, schema.name, List.copyOf(columns), List.copyOf(indexes),
                 schema.primaryConstraint, schema.primaryIndex, schema.primaryDescending, foreignKeys);
@@ -612,7 +616,7 @@ final class Engine implements AutoCloseable {
                 mutating(add.table(), () -> {
                     TableStore table = require(add.table());
                     ForeignKey key = buildForeignKey(table.schema(), table.namespace(), add.constraint(), add.columns(),
-                            add.index(), add.descending(), add.refTable(), add.refColumns());
+                            add.index(), add.descending(), add.refTable(), add.refColumns(), add.onUpdate(), add.onDelete());
                     checkForeignRows(table, key);
                     table.addForeignKey(key);
                     return 0;
@@ -661,7 +665,8 @@ final class Engine implements AutoCloseable {
         }
         for (ForeignClause clause : statement.foreignKeys()) {
             ForeignKey foreign = buildForeignKey(schema, rel.schema(), clause.constraint(), clause.columns(),
-                    clause.index(), clause.descending(), clause.refTable(), clause.refColumns());
+                    clause.index(), clause.descending(), clause.refTable(), clause.refColumns(),
+                    clause.onUpdate(), clause.onDelete());
             schema = schema.withIndex(new IndexDef(foreign.indexName, foreign.columns, false, foreign.descending))
                     .withForeignKey(foreign);
         }
@@ -815,7 +820,8 @@ final class Engine implements AutoCloseable {
     }
 
     private ForeignKey buildForeignKey(Schema child, String childNamespace, String constraint, List<String> columnNames,
-                                       String index, boolean descending, String refTable, List<String> refColumnNames) {
+                                       String index, boolean descending, String refTable, List<String> refColumnNames,
+                                       ReferentialAction onUpdate, ReferentialAction onDelete) {
         int[] columns = resolve(child.columns, columnNames, "chave estrangeira");
         for (int column : columns) {
             if (child.columns.get(column).type == DataType.BLOB) {
@@ -871,7 +877,34 @@ final class Engine implements AutoCloseable {
         String constraintName = constraint == null || constraint.isBlank() ? freshForeignName(child, columns) : constraint;
         String indexName = index == null || index.isBlank() ? constraintName : index;
         claim(child, constraintName, indexName, false);
-        return new ForeignKey(constraintName, columns, referencedSchema, referencedTable, referencedColumns, indexName, descending);
+        ReferentialAction updateAction = onUpdate == null ? ReferentialAction.NO_ACTION : onUpdate;
+        ReferentialAction deleteAction = onDelete == null ? ReferentialAction.NO_ACTION : onDelete;
+        checkAction(child, columns, updateAction, "ON UPDATE");
+        checkAction(child, columns, deleteAction, "ON DELETE");
+        return new ForeignKey(constraintName, columns, referencedSchema, referencedTable, referencedColumns, indexName, descending,
+                updateAction, deleteAction);
+    }
+
+    private static void checkAction(Schema child, int[] columns, ReferentialAction action, String clause) {
+        if (action == ReferentialAction.SET_NULL) {
+            for (int index : columns) {
+                Column column = child.columns.get(index);
+                if (column.notNull) {
+                    throw new NexException(clause + " SET NULL exige coluna anulável: " + column.name);
+                }
+            }
+        }
+        if (action == ReferentialAction.SET_DEFAULT) {
+            for (int index : columns) {
+                Column column = child.columns.get(index);
+                if (!column.hasDefault) {
+                    throw new NexException(clause + " SET DEFAULT exige valor padrão em " + column.name);
+                }
+                if (column.notNull && column.defaultValue == null) {
+                    throw new NexException(clause + " SET DEFAULT não pode ser NULL em " + column.name);
+                }
+            }
+        }
     }
 
     private static void ensureReferencedKey(Schema schema, int[] columns) {
@@ -901,18 +934,165 @@ final class Engine implements AutoCloseable {
     }
 
     private void enforceOutgoing(TableStore child, Object[] values) {
+        enforceOutgoingExcept(child, values, null, -1L);
+    }
+
+    private void enforceOutgoingExcept(TableStore child, Object[] values, TableStore excluded, long excludedId) {
         for (ForeignKey key : child.schema().foreignKeys) {
             if (anyNull(values, key.columns)) {
                 continue;
             }
             TableStore parent = parentOf(key);
-            if (!keyExists(parent, referencedIndexes(parent.schema(), key), values, key.columns)) {
+            if (!keyExists(parent, referencedIndexes(parent.schema(), key), values, key.columns, excluded, excludedId)) {
                 throw new NexException("chave estrangeira " + key.name + " não encontra o registro em " + referencedLabel(key));
             }
         }
     }
 
-    private void enforceIncoming(TableStore parent, Object[] values, long exceptId) {
+    private void blockReferentialUpdate(TableStore parent, Object[] oldValues, Object[] newValues, long exceptId) {
+        for (ReferenceHit hit : incoming(parent, oldValues, exceptId)) {
+            if (hit.key.onUpdate.restricts() && keyChanged(oldValues, newValues, hit.parentColumns)) {
+                throw new NexException("chave estrangeira " + hit.key.name + " em " + hit.child.schema().name
+                        + " ainda aponta para este registro");
+            }
+        }
+    }
+
+    private void cascadeReferentialUpdate(TableStore parent, Object[] oldValues, Object[] newValues, long exceptId) {
+        List<Planned> planned = new ArrayList<>();
+        collectUpdatePlans(parent, oldValues, newValues, exceptId, planned);
+        for (Planned plan : planned) {
+            applyPlan(plan);
+        }
+    }
+
+    private void collectUpdatePlans(TableStore parent, Object[] oldValues, Object[] newValues, long exceptId,
+                                    List<Planned> planned) {
+        for (ReferenceHit hit : incoming(parent, oldValues, exceptId)) {
+            if (hit.key.onUpdate.restricts() || !keyChanged(oldValues, newValues, hit.parentColumns)) {
+                continue;
+            }
+            Object[] replacement = actionValues(hit, hit.key.onUpdate, newValues);
+            for (StoredRow row : hit.rows) {
+                planned.add(new Planned(hit.child, row.id, hit.key.columns, replacement, null, -1L));
+            }
+        }
+    }
+
+    private void applyReferentialDelete(TableStore parent, Object[] values, long exceptId) {
+        List<ReferenceHit> hits = incoming(parent, values, exceptId);
+        for (ReferenceHit hit : hits) {
+            if (hit.key.onDelete.restricts()) {
+                throw new NexException("chave estrangeira " + hit.key.name + " em " + hit.child.schema().name
+                        + " ainda aponta para este registro");
+            }
+        }
+        List<Planned> planned = new ArrayList<>();
+        for (ReferenceHit hit : hits) {
+            if (hit.key.onDelete == ReferentialAction.CASCADE) {
+                for (StoredRow row : hit.rows) {
+                    deleteOne(hit.child, row.id);
+                }
+                continue;
+            }
+            if (hit.key.onDelete != ReferentialAction.SET_NULL && hit.key.onDelete != ReferentialAction.SET_DEFAULT) {
+                continue;
+            }
+            Object[] replacement = actionValues(hit, hit.key.onDelete, values);
+            for (StoredRow row : hit.rows) {
+                planned.add(new Planned(hit.child, row.id, hit.key.columns, replacement, parent, exceptId));
+            }
+        }
+        for (Planned plan : planned) {
+            applyPlan(plan);
+        }
+    }
+
+    private void applyPlan(Planned plan) {
+        if (rewritingRows == null) {
+            rewritingRows = new IdentityHashMap<>();
+        }
+        Set<Long> busy = rewritingRows.computeIfAbsent(plan.child, key -> new HashSet<>());
+        if (!busy.add(plan.rowId)) {
+            return;
+        }
+        try {
+            StoredRow current = plan.child.row(plan.rowId);
+            if (current == null) {
+                return;
+            }
+            Object[] old = logical(plan.child, current);
+            Object[] neu = old.clone();
+            for (int i = 0; i < plan.columns.length; i++) {
+                neu[plan.columns[i]] = plan.values[i];
+            }
+            if (!changed(old, neu)) {
+                return;
+            }
+            blockReferentialUpdate(plan.child, old, neu, current.id);
+            note(plan.child);
+            boolean routines = !SystemTables.isSystem(plan.child.schema().name);
+            if (routines) {
+                fireTriggers(plan.child, "BEFORE", "UPDATE", old, neu);
+                current = plan.child.row(plan.rowId);
+                if (current == null) {
+                    return;
+                }
+            }
+            Cell[] cells = current.copyCells();
+            for (int i = 0; i < neu.length; i++) {
+                if (!sameValue(old[i], neu[i])) {
+                    cells[i] = TableStore.toCell(plan.child.schema().columns.get(i), neu[i]);
+                }
+            }
+            plan.child.update(Map.of(current.id, cells));
+            enforceOutgoingExcept(plan.child, neu, plan.excluded, plan.excludedId);
+            if (routines) {
+                fireTriggers(plan.child, "AFTER", "UPDATE", old, neu);
+            }
+            cascadeReferentialUpdate(plan.child, old, neu, current.id);
+        } finally {
+            busy.remove(plan.rowId);
+        }
+    }
+
+    private boolean deleteOne(TableStore table, long id) {
+        if (deletingRows == null) {
+            deletingRows = new IdentityHashMap<>();
+        }
+        Set<Long> busy = deletingRows.computeIfAbsent(table, key -> new HashSet<>());
+        if (!busy.add(id)) {
+            return false;
+        }
+        try {
+            StoredRow row = table.row(id);
+            if (row == null) {
+                return false;
+            }
+            note(table);
+            Object[] old = logical(table, row);
+            boolean routines = !SystemTables.isSystem(table.schema().name);
+            if (routines) {
+                fireTriggers(table, "BEFORE", "DELETE", old, null);
+                row = table.row(id);
+                if (row == null) {
+                    return false;
+                }
+                old = logical(table, row);
+            }
+            applyReferentialDelete(table, old, id);
+            boolean removed = table.delete(List.of(id)) > 0;
+            if (routines && removed) {
+                fireTriggers(table, "AFTER", "DELETE", old, null);
+            }
+            return removed;
+        } finally {
+            busy.remove(id);
+        }
+    }
+
+    private List<ReferenceHit> incoming(TableStore parent, Object[] values, long exceptId) {
+        List<ReferenceHit> hits = new ArrayList<>();
         for (TableStore child : tables.values()) {
             for (ForeignKey key : child.schema().foreignKeys) {
                 if (!pointsAt(key, parent)) {
@@ -922,36 +1102,93 @@ final class Engine implements AutoCloseable {
                 if (anyNull(values, parentColumns)) {
                     continue;
                 }
-                Map<Integer, Object> equals = new LinkedHashMap<>();
-                for (int i = 0; i < key.columns.length; i++) {
-                    equals.put(key.columns[i], values[parentColumns[i]]);
-                }
-                List<StoredRow> found = child.lookup(equals);
-                if (found == null) {
-                    found = new ArrayList<>();
-                    for (StoredRow row : child.scan()) {
-                        Object[] current = logical(child, row);
-                        boolean same = true;
-                        for (int i = 0; i < key.columns.length; i++) {
-                            if (!sameValue(current[key.columns[i]], values[parentColumns[i]])) {
-                                same = false;
-                                break;
-                            }
-                        }
-                        if (same) {
-                            found.add(row);
-                        }
-                    }
-                }
-                for (StoredRow row : found) {
-                    if (child == parent && row.id == exceptId) {
-                        continue;
-                    }
-                    throw new NexException("chave estrangeira " + key.name + " em " + child.schema().name
-                            + " ainda aponta para este registro");
+                List<StoredRow> found = referencingRows(child, key.columns, values, parentColumns, parent, exceptId);
+                if (!found.isEmpty()) {
+                    hits.add(new ReferenceHit(child, key, found, parentColumns));
                 }
             }
         }
+        return hits;
+    }
+
+    private List<StoredRow> referencingRows(TableStore child, int[] childColumns, Object[] parentValues,
+                                            int[] parentColumns, TableStore parent, long exceptId) {
+        Map<Integer, Object> equals = new LinkedHashMap<>();
+        for (int i = 0; i < childColumns.length; i++) {
+            equals.put(childColumns[i], parentValues[parentColumns[i]]);
+        }
+        List<StoredRow> found = child.lookup(equals);
+        if (found == null) {
+            found = new ArrayList<>();
+            for (StoredRow row : child.scan()) {
+                Object[] current = logical(child, row);
+                boolean same = true;
+                for (int i = 0; i < childColumns.length; i++) {
+                    if (!sameValue(current[childColumns[i]], parentValues[parentColumns[i]])) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
+                    found.add(row);
+                }
+            }
+        } else {
+            found = new ArrayList<>(found);
+        }
+        if (child == parent) {
+            found.removeIf(row -> row.id == exceptId);
+        }
+        return found;
+    }
+
+    private static Object[] actionValues(ReferenceHit hit, ReferentialAction action, Object[] parentValues) {
+        Object[] values = new Object[hit.key.columns.length];
+        for (int i = 0; i < hit.key.columns.length; i++) {
+            values[i] = switch (action) {
+                case CASCADE -> copyValue(parentValues[hit.parentColumns[i]]);
+                case SET_NULL -> null;
+                case SET_DEFAULT -> copyValue(hit.child.schema().columns.get(hit.key.columns[i]).defaultValue);
+                default -> null;
+            };
+        }
+        return values;
+    }
+
+    private static Object copyValue(Object value) {
+        return value instanceof byte[] bytes ? bytes.clone() : value;
+    }
+
+    private boolean changed(Object[] oldValues, Object[] newValues) {
+        for (int i = 0; i < oldValues.length; i++) {
+            if (!sameValue(oldValues[i], newValues[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean keyChanged(Object[] oldValues, Object[] newValues, int[] columns) {
+        for (int column : columns) {
+            if (!sameValue(oldValues[column], newValues[column])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void note(TableStore table) {
+        track(table);
+        if (statementSnapshots != null && !Names.same(table.schema().name, SystemTables.GENERATORS)) {
+            statementSnapshots.computeIfAbsent(table, key -> key.savepoint());
+        }
+    }
+
+    private record ReferenceHit(TableStore child, ForeignKey key, List<StoredRow> rows, int[] parentColumns) {
+    }
+
+    private record Planned(TableStore child, long rowId, int[] columns, Object[] values,
+                           TableStore excluded, long excludedId) {
     }
 
     private boolean referencedValuesChanged(TableStore parent, Object[] oldValues, Object[] newValues) {
@@ -972,15 +1209,29 @@ final class Engine implements AutoCloseable {
     }
 
     private boolean keyExists(TableStore parent, int[] parentColumns, Object[] childValues, int[] childColumns) {
+        return keyExists(parent, parentColumns, childValues, childColumns, null, -1L);
+    }
+
+    private boolean keyExists(TableStore parent, int[] parentColumns, Object[] childValues, int[] childColumns,
+                              TableStore excluded, long excludedId) {
         Map<Integer, Object> equals = new LinkedHashMap<>();
         for (int i = 0; i < parentColumns.length; i++) {
             equals.put(parentColumns[i], childValues[childColumns[i]]);
         }
         List<StoredRow> found = parent.lookup(equals);
         if (found != null) {
-            return !found.isEmpty();
+            for (StoredRow row : found) {
+                if (parent == excluded && row.id == excludedId) {
+                    continue;
+                }
+                return true;
+            }
+            return false;
         }
         for (StoredRow row : parent.scan()) {
+            if (parent == excluded && row.id == excludedId) {
+                continue;
+            }
             Object[] values = logical(parent, row);
             boolean same = true;
             for (int i = 0; i < parentColumns.length; i++) {
@@ -1139,6 +1390,15 @@ final class Engine implements AutoCloseable {
             List<Object[]> before = new ArrayList<>();
             List<Object[]> after = new ArrayList<>();
             boolean routines = !SystemTables.isSystem(schema.name);
+            boolean ownDeletes = deletingRows == null;
+            boolean ownRewrites = rewritingRows == null;
+            if (ownDeletes) {
+                deletingRows = new IdentityHashMap<>();
+            }
+            if (ownRewrites) {
+                rewritingRows = new IdentityHashMap<>();
+            }
+            try {
             for (StoredRow row : matched) {
                 evaluator.bind(row);
                 Object[] old = logical(table, row);
@@ -1162,13 +1422,20 @@ final class Engine implements AutoCloseable {
                 before.add(old);
                 after.add(neu);
                 if (referencedValuesChanged(table, old, neu)) {
-                    enforceIncoming(table, old, row.id);
+                    blockReferentialUpdate(table, old, neu, row.id);
                 }
             }
             if (Names.same(schema.name, SystemTables.USERS)) {
                 guardLastAdmin(table, List.of(), replacements);
             }
             table.update(replacements);
+            List<Planned> planned = new ArrayList<>();
+            for (int i = 0; i < matched.size(); i++) {
+                collectUpdatePlans(table, before.get(i), after.get(i), matched.get(i).id, planned);
+            }
+            for (Planned plan : planned) {
+                applyPlan(plan);
+            }
             for (Object[] neu : after) {
                 enforceOutgoing(table, neu);
             }
@@ -1178,6 +1445,14 @@ final class Engine implements AutoCloseable {
                 }
             }
             return matched.size();
+            } finally {
+                if (ownDeletes) {
+                    deletingRows = null;
+                }
+                if (ownRewrites) {
+                    rewritingRows = null;
+                }
+            }
         }));
     }
 
@@ -1195,21 +1470,34 @@ final class Engine implements AutoCloseable {
             if (Names.same(table.schema().name, SystemTables.USERS)) {
                 guardLastAdmin(table, ids, null);
             }
-            boolean routines = !SystemTables.isSystem(table.schema().name);
-            int count = 0;
-            for (StoredRow row : matched) {
-                Object[] old = logical(table, row);
-                enforceIncoming(table, old, row.id);
-                if (routines) {
-                    fireTriggers(table, "BEFORE", "DELETE", old, null);
+            boolean ownDeletes = deletingRows == null;
+            boolean ownRewrites = rewritingRows == null;
+            if (ownDeletes) {
+                deletingRows = new IdentityHashMap<>();
+            }
+            if (ownRewrites) {
+                rewritingRows = new IdentityHashMap<>();
+            }
+            try {
+                int count = 0;
+                for (Long id : ids) {
+                    if (table.row(id) == null) {
+                        count++;
+                        continue;
+                    }
+                    if (deleteOne(table, id)) {
+                        count++;
+                    }
                 }
-                int removed = table.delete(List.of(row.id));
-                count += removed;
-                if (routines && removed > 0) {
-                    fireTriggers(table, "AFTER", "DELETE", old, null);
+                return count;
+            } finally {
+                if (ownDeletes) {
+                    deletingRows = null;
+                }
+                if (ownRewrites) {
+                    rewritingRows = null;
                 }
             }
-            return count;
         }));
     }
 

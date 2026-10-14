@@ -50,7 +50,9 @@ public final class Ddl {
             boolean descending,
             String referencedSchema,
             String referencedTable,
-            List<String> referencedColumns) {
+            List<String> referencedColumns,
+            String onUpdate,
+            String onDelete) {
         public ConstraintInfo {
             columns = List.copyOf(columns);
             referencedColumns = referencedColumns == null ? List.of() : List.copyOf(referencedColumns);
@@ -180,6 +182,8 @@ public final class Ddl {
                         .append(" FOREIGN KEY (").append(quotedList(foreign.columns))
                         .append(") REFERENCES ").append(SqlNames.qualify(foreign.referencedSchema, foreign.referencedTable))
                         .append(" (").append(quotedList(foreign.referencedColumns)).append(')');
+                appendAction(sql, "DELETE", foreign.onDelete);
+                appendAction(sql, "UPDATE", foreign.onUpdate);
                 if (foreign.descending || (foreign.index != null && !foreign.index.equalsIgnoreCase(foreign.name))) {
                     sql.append(" USING ");
                     if (foreign.descending) {
@@ -205,6 +209,13 @@ public final class Ddl {
             sql.append(";\n\n").append(createIndex(index.unique, index.name, schema, name, index.columns));
         }
         return sql.toString();
+    }
+
+    private static void appendAction(StringBuilder sql, String event, String rule) {
+        if (rule == null || rule.isBlank() || rule.equalsIgnoreCase("NO ACTION")) {
+            return;
+        }
+        sql.append(" ON ").append(event).append(' ').append(rule);
     }
 
     private static boolean foreignIndex(List<ConstraintInfo> foreignKeys, String name) {

@@ -441,6 +441,8 @@ class DatabaseTest {
             assertFalse(item.foreignKeys().get(0).descending());
             assertEquals(List.of("pedido_id"), item.foreignKeys().get(0).columns());
             assertEquals(List.of("id"), item.foreignKeys().get(0).referencedColumns());
+            assertEquals(ReferentialAction.NO_ACTION, item.foreignKeys().get(0).onUpdate());
+            assertEquals(ReferentialAction.NO_ACTION, item.foreignKeys().get(0).onDelete());
             assertTrue(item.indexes().stream().anyMatch(index -> index.name().equals("FK_item") && !index.descending()));
             assertTrue(item.indexes().stream().anyMatch(index -> index.name().equals("ix_item") && index.descending() && index.unique()));
 
@@ -469,6 +471,100 @@ class DatabaseTest {
             assertEquals(List.of("FK_item", "FK_item_extra"),
                     item.foreignKeys().stream().map(TableDescription.ForeignKey::name).toList());
             assertEquals(0, db.query("SELECT id FROM item WHERE id = 1").size());
+        }
+    }
+
+    @Test
+    void regrasDeUpdateEDeleteNaChaveEstrangeira() {
+        try (Database db = open()) {
+            db.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY)");
+            db.execute("""
+                    CREATE TABLE item (
+                        id INTEGER PRIMARY KEY,
+                        pedido_id INTEGER,
+                        extra INTEGER DEFAULT 2,
+                        CONSTRAINT FK_item FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+                            ON UPDATE CASCADE ON DELETE SET NULL
+                    )
+                    """);
+            TableDescription item = table(db, "item");
+            assertEquals(ReferentialAction.CASCADE, item.foreignKeys().get(0).onUpdate());
+            assertEquals(ReferentialAction.SET_NULL, item.foreignKeys().get(0).onDelete());
+            db.execute("INSERT INTO pedido VALUES (1)");
+            db.execute("INSERT INTO pedido VALUES (2)");
+            db.execute("INSERT INTO item VALUES (1, 1, 2)");
+            db.execute("UPDATE pedido SET id = 5 WHERE id = 1");
+            assertEquals(5, db.query("SELECT pedido_id FROM item WHERE id = 1").rows().get(0).getInt("pedido_id"));
+            db.execute("DELETE FROM pedido WHERE id = 5");
+            assertNull(db.query("SELECT pedido_id FROM item WHERE id = 1").rows().get(0).get("pedido_id"));
+
+            db.execute("""
+                    ALTER TABLE item ADD CONSTRAINT FK_extra FOREIGN KEY (extra) REFERENCES pedido (id)
+                    ON DELETE SET DEFAULT
+                    """);
+            db.execute("INSERT INTO pedido VALUES (3)");
+            db.execute("INSERT INTO item VALUES (2, NULL, 3)");
+            db.execute("DELETE FROM pedido WHERE id = 3");
+            assertEquals(2, db.query("SELECT extra FROM item WHERE id = 2").rows().get(0).getInt("extra"));
+
+            NexException semNulo = assertThrows(NexException.class, () -> db.execute("""
+                    ALTER TABLE item ADD CONSTRAINT FK_id FOREIGN KEY (id) REFERENCES pedido (id) ON DELETE SET NULL
+                    """));
+            assertTrue(semNulo.getMessage().contains("SET NULL"));
+            NexException semPadrao = assertThrows(NexException.class, () -> db.execute("""
+                    ALTER TABLE item ADD CONSTRAINT FK_pedido FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+                    ON UPDATE SET DEFAULT
+                    """));
+            assertTrue(semPadrao.getMessage().contains("SET DEFAULT"));
+        }
+        try (Database db = open()) {
+            TableDescription item = table(db, "item");
+            assertEquals(ReferentialAction.CASCADE, item.foreignKeys().get(0).onUpdate());
+            assertEquals(ReferentialAction.SET_NULL, item.foreignKeys().get(0).onDelete());
+            assertEquals(ReferentialAction.NO_ACTION, item.foreignKeys().get(1).onUpdate());
+            assertEquals(ReferentialAction.SET_DEFAULT, item.foreignKeys().get(1).onDelete());
+        }
+        try (Database db = open()) {
+            db.execute("CREATE TABLE detalhe (id INTEGER PRIMARY KEY, item_id INTEGER)");
+            db.execute("""
+                    ALTER TABLE detalhe ADD FOREIGN KEY (item_id) REFERENCES item (id) ON DELETE CASCADE
+                    """);
+            db.execute("INSERT INTO item (id, pedido_id) VALUES (3, NULL)");
+            db.execute("INSERT INTO detalhe VALUES (1, 3)");
+            db.execute("DELETE FROM item WHERE id = 3");
+            assertEquals(0, db.query("SELECT id FROM detalhe").size());
+
+            db.execute("CREATE TABLE no (id INTEGER PRIMARY KEY, pai INTEGER)");
+            db.execute("""
+                    ALTER TABLE no ADD FOREIGN KEY (pai) REFERENCES no (id) ON DELETE CASCADE ON UPDATE CASCADE
+                    """);
+            db.execute("INSERT INTO no VALUES (1, NULL)");
+            db.execute("INSERT INTO no VALUES (2, 1)");
+            db.execute("INSERT INTO no VALUES (3, 2)");
+            db.execute("UPDATE no SET id = 8 WHERE id = 1");
+            assertEquals(8, db.query("SELECT pai FROM no WHERE id = 2").rows().get(0).getInt("pai"));
+            db.execute("DELETE FROM no WHERE id = 8");
+            assertEquals(0, db.query("SELECT id FROM no").size());
+
+            db.execute("INSERT INTO pedido VALUES (4)");
+            db.execute("INSERT INTO item VALUES (4, 4, 2)");
+            db.execute("BEGIN");
+            db.execute("DELETE FROM pedido WHERE id = 4");
+            assertNull(db.query("SELECT pedido_id FROM item WHERE id = 4").rows().get(0).get("pedido_id"));
+            db.execute("ROLLBACK");
+            assertEquals(1, db.query("SELECT id FROM pedido WHERE id = 4").size());
+            assertEquals(4, db.query("SELECT pedido_id FROM item WHERE id = 4").rows().get(0).getInt("pedido_id"));
+
+            db.execute("CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER)");
+            db.execute("CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER)");
+            db.execute("ALTER TABLE a ADD FOREIGN KEY (b_id) REFERENCES b (id) ON DELETE CASCADE");
+            db.execute("ALTER TABLE b ADD FOREIGN KEY (a_id) REFERENCES a (id) ON DELETE CASCADE");
+            db.execute("INSERT INTO a VALUES (1, NULL)");
+            db.execute("INSERT INTO b VALUES (1, 1)");
+            db.execute("UPDATE a SET b_id = 1 WHERE id = 1");
+            db.execute("DELETE FROM a WHERE id = 1");
+            assertEquals(0, db.query("SELECT id FROM a").size());
+            assertEquals(0, db.query("SELECT id FROM b").size());
         }
     }
 

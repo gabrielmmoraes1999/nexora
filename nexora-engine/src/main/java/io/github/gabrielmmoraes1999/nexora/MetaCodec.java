@@ -207,6 +207,8 @@ final class MetaCodec {
             }
             writer.utf(key.indexName);
             writer.u8(key.descending ? 1 : 0);
+            writer.u8(key.onUpdate.ordinal());
+            writer.u8(key.onDelete.ordinal());
         }
     }
 
@@ -314,8 +316,14 @@ final class MetaCodec {
                 }
                 String indexName = reader.utf();
                 boolean descending = reader.u8() != 0;
+                ReferentialAction onUpdate = ReferentialAction.NO_ACTION;
+                ReferentialAction onDelete = ReferentialAction.NO_ACTION;
+                if (version >= 6) {
+                    onUpdate = ReferentialAction.stored(reader.u8());
+                    onDelete = ReferentialAction.stored(reader.u8());
+                }
                 foreignKeys.add(new ForeignKey(foreignName, local, referencedSchema, referencedTable,
-                        referenced, indexName, descending));
+                        referenced, indexName, descending, onUpdate, onDelete));
             }
         } else if (primary.length > 0) {
             primaryConstraint = "PK_" + name;

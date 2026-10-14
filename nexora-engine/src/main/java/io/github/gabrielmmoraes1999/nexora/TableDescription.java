@@ -54,10 +54,14 @@ public record TableDescription(
             String referencedTable,
             List<String> referencedColumns,
             String indexName,
-            boolean descending) {
+            boolean descending,
+            ReferentialAction onUpdate,
+            ReferentialAction onDelete) {
         public ForeignKey {
             columns = List.copyOf(columns);
             referencedColumns = List.copyOf(referencedColumns);
+            onUpdate = onUpdate == null ? ReferentialAction.NO_ACTION : onUpdate;
+            onDelete = onDelete == null ? ReferentialAction.NO_ACTION : onDelete;
         }
     }
 }

@@ -46,7 +46,7 @@ record CreateTable(boolean ifNotExists, String name, List<ColDef> columns, List<
 }
 
 record ForeignClause(String constraint, List<String> columns, String index, boolean descending,
-                     String refTable, List<String> refColumns) {
+                     String refTable, List<String> refColumns, ReferentialAction onUpdate, ReferentialAction onDelete) {
 }
 
 record CreateIndex(boolean unique, boolean ifNotExists, String name, String table, List<String> columns) implements Stmt {
@@ -68,7 +68,7 @@ record AddPrimaryKey(String table, List<String> columns, String constraint, Stri
 }
 
 record AddForeignKey(String table, List<String> columns, String constraint, String index, boolean descending,
-                     String refTable, List<String> refColumns) implements Stmt {
+                     String refTable, List<String> refColumns, ReferentialAction onUpdate, ReferentialAction onDelete) implements Stmt {
 }
 
 record Insert(String table, List<String> columns, List<List<Expr>> rows) implements Stmt {

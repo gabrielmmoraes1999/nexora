@@ -76,9 +76,12 @@ final class ForeignKey {
     final String[] referencedColumns;
     final String indexName;
     final boolean descending;
+    final ReferentialAction onUpdate;
+    final ReferentialAction onDelete;
 
     ForeignKey(String name, int[] columns, String referencedSchema, String referencedTable,
-               String[] referencedColumns, String indexName, boolean descending) {
+               String[] referencedColumns, String indexName, boolean descending,
+               ReferentialAction onUpdate, ReferentialAction onDelete) {
         this.name = name;
         this.columns = columns.clone();
         this.referencedSchema = referencedSchema;
@@ -86,10 +89,13 @@ final class ForeignKey {
         this.referencedColumns = referencedColumns.clone();
         this.indexName = indexName;
         this.descending = descending;
+        this.onUpdate = onUpdate == null ? ReferentialAction.NO_ACTION : onUpdate;
+        this.onDelete = onDelete == null ? ReferentialAction.NO_ACTION : onDelete;
     }
 
     ForeignKey withColumns(int[] columns) {
-        return new ForeignKey(name, columns, referencedSchema, referencedTable, referencedColumns, indexName, descending);
+        return new ForeignKey(name, columns, referencedSchema, referencedTable, referencedColumns, indexName, descending,
+                onUpdate, onDelete);
     }
 }
 
@@ -132,7 +138,7 @@ final class Schema {
         }
         this.foreignKeys = foreignKeys.stream()
                 .map(key -> new ForeignKey(key.name, key.columns, key.referencedSchema, key.referencedTable,
-                        key.referencedColumns, key.indexName, key.descending))
+                        key.referencedColumns, key.indexName, key.descending, key.onUpdate, key.onDelete))
                 .toList();
     }
 

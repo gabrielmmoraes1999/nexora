@@ -3,6 +3,7 @@ package io.github.gabrielmmoraes1999.nexora.net;
 import io.github.gabrielmmoraes1999.nexora.ColumnMeta;
 import io.github.gabrielmmoraes1999.nexora.DataType;
 import io.github.gabrielmmoraes1999.nexora.NexException;
+import io.github.gabrielmmoraes1999.nexora.ReferentialAction;
 import io.github.gabrielmmoraes1999.nexora.Row;
 import io.github.gabrielmmoraes1999.nexora.SqlResult;
 import io.github.gabrielmmoraes1999.nexora.TableDescription;
@@ -398,6 +399,8 @@ public final class Wire {
             }
             writeUtf(out, key.indexName());
             out.writeBoolean(key.descending());
+            writeUtf(out, key.onUpdate().name());
+            writeUtf(out, key.onDelete().name());
         }
     }
 
@@ -472,8 +475,11 @@ public final class Wire {
             }
             String indexName = readUtf(in);
             boolean descending = in.readBoolean();
+            ReferentialAction onUpdate = readAction(in);
+            ReferentialAction onDelete = readAction(in);
             foreignKeys.add(new TableDescription.ForeignKey(
-                    foreignName, local, referencedSchema, referencedTable, referenced, indexName, descending));
+                    foreignName, local, referencedSchema, referencedTable, referenced, indexName, descending,
+                    onUpdate, onDelete));
         }
         return new TableDescription(schema, name, columns, indexes,
                 primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
@@ -579,6 +585,15 @@ public final class Wire {
         }
         out.writeInt(bytes.length);
         out.write(bytes);
+    }
+
+    private static ReferentialAction readAction(DataInputStream in) throws IOException {
+        String name = readUtf(in);
+        try {
+            return ReferentialAction.valueOf(name);
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("ação referencial desconhecida: " + name);
+        }
     }
 
     private static String readUtf(DataInputStream in) throws IOException {

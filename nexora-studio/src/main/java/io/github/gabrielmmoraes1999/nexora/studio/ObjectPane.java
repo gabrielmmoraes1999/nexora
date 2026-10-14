@@ -813,6 +813,10 @@ final class ObjectPane extends JPanel {
                 Outline.foreignKeys(connection, node.schema(), node.name(), indexes));
     }
 
+    private static String rule(String value) {
+        return value == null || value.isBlank() ? "NO ACTION" : value;
+    }
+
     private static void fillKeys(JTable table, List<Ddl.ConstraintInfo> keys, boolean reference) {
         List<List<Object>> rows = new ArrayList<>();
         for (Ddl.ConstraintInfo key : keys) {
@@ -823,13 +827,15 @@ final class ObjectPane extends JPanel {
                         : key.referencedSchema() + "." + key.referencedTable();
                 rows.add(List.of(key.name(), String.join(", ", key.columns()),
                         target + " (" + String.join(", ", key.referencedColumns()) + ")",
+                        rule(key.onUpdate()), rule(key.onDelete()),
                         key.index(), sorting));
             } else {
                 rows.add(List.of(key.name(), String.join(", ", key.columns()), key.index(), sorting));
             }
         }
         if (reference) {
-            Tables.show(table, List.of("Constraint Name", "On Field", "Referência", "Index Name", "Index Sorting"), rows);
+            Tables.show(table, List.of("Constraint Name", "On Field", "Referência", "Update Rule", "Delete Rule",
+                    "Index Name", "Index Sorting"), rows);
         } else {
             Tables.show(table, List.of("Constraint Name", "On Field", "Index Name", "Index Sorting"), rows);
         }
