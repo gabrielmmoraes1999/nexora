@@ -359,6 +359,8 @@ class DatabaseTest {
             assertFalse(pedido.columns().get(0).nullable());
             assertTrue(pedido.columns().get(1).nullable());
             assertEquals(List.of("id"), pedido.indexes().get(0).columns());
+            assertEquals("PK_pedido", pedido.indexes().get(0).name());
+            assertEquals("PK_pedido", pedido.primaryConstraint());
             assertThrows(NexException.class, () -> db.execute("INSERT INTO pedido VALUES (1, 11, 'c')"));
             assertThrows(NexException.class, () -> db.execute("INSERT INTO pedido (id, cliente_id) VALUES (NULL, 11)"));
             assertThrows(NexException.class, () -> db.execute("UPDATE pedido SET id = NULL WHERE id = 1"));
@@ -377,7 +379,7 @@ class DatabaseTest {
             assertThrows(NexException.class, () -> db.execute("INSERT INTO item VALUES (1, 1, 'z')"));
             TableDescription item = db.describeTables().stream()
                     .filter(table -> table.name().equals("item")).findFirst().orElseThrow();
-            assertEquals(List.of("PRIMARY"), item.indexes().stream().map(TableDescription.TableIndex::name).toList());
+            assertEquals(List.of("pk_item"), item.indexes().stream().map(TableDescription.TableIndex::name).toList());
             assertEquals(2, item.columns().get(1).primaryKeyPosition());
 
             db.execute("CREATE TABLE dup (id INTEGER, nome VARCHAR(10))");
@@ -413,6 +415,60 @@ class DatabaseTest {
             assertEquals(1, item.columns().get(0).primaryKeyPosition());
             assertEquals(2, item.columns().get(1).primaryKeyPosition());
             assertFalse(item.columns().get(0).nullable());
+            assertEquals(List.of("pk_item"), item.indexes().stream().map(TableDescription.TableIndex::name).toList());
+        }
+    }
+
+    @Test
+    void chavePrimariaEEstrangeiraCriamIndice() {
+        try (Database db = open()) {
+            db.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY)");
+            db.execute("""
+                    CREATE TABLE item (
+                        id INTEGER,
+                        pedido_id INTEGER,
+                        extra INTEGER,
+                        CONSTRAINT FK_item FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+                    )
+                    """);
+            db.execute("ALTER TABLE item ADD CONSTRAINT PK_item PRIMARY KEY (id) USING DESCENDING INDEX ix_item");
+            TableDescription item = table(db, "item");
+            assertEquals("PK_item", item.primaryConstraint());
+            assertEquals("ix_item", item.primaryIndex());
+            assertTrue(item.primaryDescending());
+            assertEquals("FK_item", item.foreignKeys().get(0).name());
+            assertEquals("FK_item", item.foreignKeys().get(0).indexName());
+            assertFalse(item.foreignKeys().get(0).descending());
+            assertEquals(List.of("pedido_id"), item.foreignKeys().get(0).columns());
+            assertEquals(List.of("id"), item.foreignKeys().get(0).referencedColumns());
+            assertTrue(item.indexes().stream().anyMatch(index -> index.name().equals("FK_item") && !index.descending()));
+            assertTrue(item.indexes().stream().anyMatch(index -> index.name().equals("ix_item") && index.descending() && index.unique()));
+
+            db.execute("INSERT INTO pedido VALUES (1)");
+            db.execute("INSERT INTO item VALUES (1, 1, NULL)");
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO item VALUES (2, 9, NULL)"));
+            assertThrows(NexException.class, () -> db.execute("DELETE FROM pedido WHERE id = 1"));
+            db.execute("INSERT INTO item (id) VALUES (2)");
+            db.execute("ALTER TABLE item ADD FOREIGN KEY (extra) REFERENCES pedido (id)");
+            TableDescription segunda = table(db, "item");
+            assertEquals("FK_item_extra", segunda.foreignKeys().get(1).name());
+            assertEquals("FK_item_extra", segunda.foreignKeys().get(1).indexName());
+            assertFalse(segunda.foreignKeys().get(1).descending());
+            assertThrows(NexException.class, () -> db.execute("DROP INDEX FK_item ON item"));
+            assertThrows(NexException.class, () -> db.execute("DROP INDEX ix_item ON item"));
+            assertThrows(NexException.class, () -> db.execute("DROP TABLE pedido"));
+            db.execute("DELETE FROM item WHERE id = 2");
+            assertThrows(NexException.class, () -> db.execute("DELETE FROM pedido WHERE id = 1"));
+            db.execute("DELETE FROM item WHERE id = 1");
+            db.execute("DELETE FROM pedido");
+        }
+        try (Database db = open()) {
+            TableDescription item = table(db, "item");
+            assertEquals("ix_item", item.primaryIndex());
+            assertTrue(item.primaryDescending());
+            assertEquals(List.of("FK_item", "FK_item_extra"),
+                    item.foreignKeys().stream().map(TableDescription.ForeignKey::name).toList());
+            assertEquals(0, db.query("SELECT id FROM item WHERE id = 1").size());
         }
     }
 
@@ -523,7 +579,7 @@ class DatabaseTest {
             db.execute("CREATE INDEX idx_nome_email ON pessoa (nome, email)");
             assertEquals(1, db.query("SELECT id FROM pessoa WHERE nome = 'Ana' AND email = 'a@x'").rows().get(0).getInt("id"));
             List<TableDescription.TableIndex> indexes = db.describeTables().get(0).indexes();
-            assertEquals(List.of("PRIMARY", "idx_nome", "idx_email", "idx_nome_email"),
+            assertEquals(List.of("PK_pessoa", "idx_nome", "idx_email", "idx_nome_email"),
                     indexes.stream().map(TableDescription.TableIndex::name).toList());
             assertFalse(indexes.get(1).unique());
             assertTrue(indexes.get(2).unique());
@@ -543,7 +599,7 @@ class DatabaseTest {
             db.execute("ALTER TABLE pessoa DROP COLUMN nome");
             List<String> restantes = db.describeTables().get(0).indexes().stream()
                     .map(TableDescription.TableIndex::name).toList();
-            assertEquals(List.of("PRIMARY", "idx_email"), restantes);
+            assertEquals(List.of("PK_pessoa", "idx_email"), restantes);
             assertEquals(1, db.query("SELECT id FROM pessoa WHERE email = 'a@x'").rows().get(0).getInt("id"));
         }
     }
@@ -1442,5 +1498,9 @@ class DatabaseTest {
             }
         }
         return false;
+    }
+
+    private static TableDescription table(Database db, String name) {
+        return db.describeTables().stream().filter(table -> table.name().equals(name)).findFirst().orElseThrow();
     }
 }

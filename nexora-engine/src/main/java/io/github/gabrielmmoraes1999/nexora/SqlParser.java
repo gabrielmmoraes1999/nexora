@@ -279,11 +279,13 @@ final class SqlParser {
         List<ColDef> columns = new ArrayList<>();
         List<String> primary = new ArrayList<>();
         List<List<String>> uniques = new ArrayList<>();
+        TableKeys keys = new TableKeys();
         if (!peekSymbol(")")) {
             do {
                 if (peekKeyword("CONSTRAINT") || (peekKeyword("PRIMARY") && peekKeyword(1, "KEY"))
+                        || (peekKeyword("FOREIGN") && peekKeyword(1, "KEY"))
                         || (peekKeyword("UNIQUE") && peekSymbol(1, "("))) {
-                    tableConstraint(primary, uniques);
+                    tableConstraint(primary, uniques, keys);
                 } else {
                     columns.add(column());
                 }
@@ -293,7 +295,8 @@ final class SqlParser {
         if (columns.isEmpty()) {
             throw error("CREATE TABLE precisa de ao menos uma coluna");
         }
-        return new CreateTable(ifNotExists, name, columns, primary, uniques);
+        return new CreateTable(ifNotExists, name, columns, primary, uniques,
+                keys.primaryConstraint, keys.primaryIndex, keys.primaryDescending, List.copyOf(keys.foreignKeys));
     }
 
     private Stmt createView() {
@@ -336,9 +339,10 @@ final class SqlParser {
         return new CreateIndex(unique, ifNotExists, name, table, columnList());
     }
 
-    private void tableConstraint(List<String> primary, List<List<String>> uniques) {
+    private void tableConstraint(List<String> primary, List<List<String>> uniques, TableKeys keys) {
+        String name = null;
         if (consumeKeyword("CONSTRAINT")) {
-            expectIdent();
+            name = expectIdent();
         }
         if (consumeKeyword("PRIMARY")) {
             expectKeyword("KEY");
@@ -346,10 +350,69 @@ final class SqlParser {
                 throw error("a tabela só pode ter uma chave primária");
             }
             primary.addAll(columnList());
+            Using using = usingIndex();
+            keys.primaryConstraint = name;
+            keys.primaryIndex = using.name;
+            keys.primaryDescending = using.descending;
+            return;
+        }
+        if (consumeKeyword("FOREIGN")) {
+            expectKeyword("KEY");
+            List<String> columns = columnList();
+            expectKeyword("REFERENCES");
+            String refTable = expectRelation();
+            List<String> refColumns = peekSymbol("(") ? columnList() : List.of();
+            referentialActions();
+            Using using = usingIndex();
+            keys.foreignKeys.add(new ForeignClause(name, columns, using.name, using.descending, refTable, refColumns));
             return;
         }
         expectKeyword("UNIQUE");
         uniques.add(columnList());
+        if (peekKeyword("USING")) {
+            throw error("USING INDEX vale para PRIMARY KEY e FOREIGN KEY");
+        }
+    }
+
+    private Using usingIndex() {
+        if (!consumeKeyword("USING")) {
+            return new Using(null, false);
+        }
+        boolean descending = false;
+        if (consumeKeyword("DESCENDING") || consumeKeyword("DESC")) {
+            descending = true;
+        } else if (consumeKeyword("ASCENDING") || consumeKeyword("ASC")) {
+            descending = false;
+        }
+        expectKeyword("INDEX");
+        return new Using(expectIdent(), descending);
+    }
+
+    private void referentialActions() {
+        while (peekKeyword("ON")) {
+            consumeKeyword("ON");
+            if (!consumeKeyword("DELETE") && !consumeKeyword("UPDATE")) {
+                throw error("ON espera DELETE ou UPDATE");
+            }
+            if (consumeKeyword("CASCADE") || consumeKeyword("SET")) {
+                throw error("chave estrangeira só aceita NO ACTION ou RESTRICT");
+            }
+            if (consumeKeyword("NO")) {
+                expectKeyword("ACTION");
+                continue;
+            }
+            expectKeyword("RESTRICT");
+        }
+    }
+
+    private static final class TableKeys {
+        private String primaryConstraint;
+        private String primaryIndex;
+        private boolean primaryDescending;
+        private final List<ForeignClause> foreignKeys = new ArrayList<>();
+    }
+
+    private record Using(String name, boolean descending) {
     }
 
     private Stmt drop() {
@@ -422,15 +485,8 @@ final class SqlParser {
         expectKeyword("TABLE");
         String table = expectRelation();
         if (consumeKeyword("ADD")) {
-            if (consumeKeyword("CONSTRAINT")) {
-                expectIdent();
-                expectKeyword("PRIMARY");
-                expectKeyword("KEY");
-                return new AddPrimaryKey(table, columnList());
-            }
-            if (consumeKeyword("PRIMARY")) {
-                expectKeyword("KEY");
-                return new AddPrimaryKey(table, columnList());
+            if (peekKeyword("CONSTRAINT") || peekKeyword("PRIMARY") || peekKeyword("FOREIGN")) {
+                return addTableConstraint(table);
             }
             optionalKeyword("COLUMN");
             return new AddColumn(table, column());
@@ -439,7 +495,31 @@ final class SqlParser {
             optionalKeyword("COLUMN");
             return new DropColumn(table, expectIdent());
         }
-        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN e ADD PRIMARY KEY");
+        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN, ADD PRIMARY KEY e ADD FOREIGN KEY");
+    }
+
+    private Stmt addTableConstraint(String table) {
+        String name = null;
+        if (consumeKeyword("CONSTRAINT")) {
+            name = expectIdent();
+        }
+        if (consumeKeyword("PRIMARY")) {
+            expectKeyword("KEY");
+            List<String> columns = columnList();
+            Using using = usingIndex();
+            return new AddPrimaryKey(table, columns, name, using.name, using.descending);
+        }
+        if (consumeKeyword("FOREIGN")) {
+            expectKeyword("KEY");
+            List<String> columns = columnList();
+            expectKeyword("REFERENCES");
+            String refTable = expectRelation();
+            List<String> refColumns = peekSymbol("(") ? columnList() : List.of();
+            referentialActions();
+            Using using = usingIndex();
+            return new AddForeignKey(table, columns, name, using.name, using.descending, refTable, refColumns);
+        }
+        throw error("ADD CONSTRAINT espera PRIMARY KEY ou FOREIGN KEY");
     }
 
     private Stmt setGenerator() {

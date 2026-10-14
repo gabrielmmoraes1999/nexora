@@ -944,7 +944,8 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
                 if (column.primaryKeyPosition() > 0) {
                     rows.add(new Object[]{
                             null, found.schema(), column.table(), column.name(),
-                            (short) column.primaryKeyPosition(), "PRIMARY"
+                            (short) column.primaryKeyPosition(),
+                            found.primaryConstraint().isBlank() ? "PK_" + found.name() : found.primaryConstraint()
                     });
                 }
             }
@@ -954,19 +955,19 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
     }
 
     @Override
-    public ResultSet getImportedKeys(String catalog, String schema, String table) {
-        return keys();
+    public ResultSet getImportedKeys(String catalog, String schema, String table) throws SQLException {
+        return foreignKeys(schema, table, null, null);
     }
 
     @Override
-    public ResultSet getExportedKeys(String catalog, String schema, String table) {
-        return keys();
+    public ResultSet getExportedKeys(String catalog, String schema, String table) throws SQLException {
+        return foreignKeys(null, null, schema, table);
     }
 
     @Override
     public ResultSet getCrossReference(String parentCatalog, String parentSchema, String parentTable,
-                                       String foreignCatalog, String foreignSchema, String foreignTable) {
-        return keys();
+                                       String foreignCatalog, String foreignSchema, String foreignTable) throws SQLException {
+        return foreignKeys(foreignSchema, foreignTable, parentSchema, parentTable);
     }
 
     @Override
@@ -1045,7 +1046,7 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
                         tableIndexOther,
                         (short) position++,
                         column,
-                        "A",
+                        index.descending() ? "D" : "A",
                         null,
                         null,
                         null
@@ -1446,6 +1447,106 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
 
     private static ResultSet grid(List<JdbcColumn> columns, List<Object[]> rows) {
         return NexResultSet.metadata(columns, rows);
+    }
+
+    private ResultSet foreignKeys(String foreignSchema, String foreignTable, String primarySchema, String primaryTable)
+            throws SQLException {
+        List<JdbcColumn> columns = List.of(
+                JdbcColumn.text("PKTABLE_CAT"),
+                JdbcColumn.text("PKTABLE_SCHEM"),
+                JdbcColumn.text("PKTABLE_NAME"),
+                JdbcColumn.text("PKCOLUMN_NAME"),
+                JdbcColumn.text("FKTABLE_CAT"),
+                JdbcColumn.text("FKTABLE_SCHEM"),
+                JdbcColumn.text("FKTABLE_NAME"),
+                JdbcColumn.text("FKCOLUMN_NAME"),
+                JdbcColumn.smallint("KEY_SEQ"),
+                JdbcColumn.smallint("UPDATE_RULE"),
+                JdbcColumn.smallint("DELETE_RULE"),
+                JdbcColumn.text("FK_NAME"),
+                JdbcColumn.text("PK_NAME"),
+                JdbcColumn.smallint("DEFERRABILITY"));
+        if (foreignTable == null && primaryTable == null) {
+            return grid(columns, List.of());
+        }
+        List<TableDescription> described = descriptions();
+        List<Object[]> rows = new ArrayList<>();
+        for (TableDescription child : described) {
+            if (foreignTable != null && (!child.name().equalsIgnoreCase(foreignTable) || !matchesSchema(foreignSchema, child.schema()))) {
+                continue;
+            }
+            for (TableDescription.ForeignKey key : child.foreignKeys()) {
+                if (primaryTable != null && (!key.referencedTable().equalsIgnoreCase(primaryTable)
+                        || !matchesSchema(primarySchema, key.referencedSchema()))) {
+                    continue;
+                }
+                String parentKey = parentKeyName(described, key);
+                for (int i = 0; i < key.columns().size(); i++) {
+                    String referenced = i < key.referencedColumns().size() ? key.referencedColumns().get(i) : null;
+                    rows.add(new Object[]{
+                            null,
+                            key.referencedSchema(),
+                            key.referencedTable(),
+                            referenced,
+                            null,
+                            child.schema(),
+                            child.name(),
+                            key.columns().get(i),
+                            (short) (i + 1),
+                            (short) importedKeyRestrict,
+                            (short) importedKeyRestrict,
+                            key.name(),
+                            parentKey,
+                            (short) importedKeyNotDeferrable
+                    });
+                }
+            }
+        }
+        return grid(columns, rows);
+    }
+
+    private static String parentKeyName(List<TableDescription> described, TableDescription.ForeignKey key) {
+        for (TableDescription parent : described) {
+            if (!parent.name().equalsIgnoreCase(key.referencedTable()) || !parent.schema().equalsIgnoreCase(key.referencedSchema())) {
+                continue;
+            }
+            if (sameNames(parentKeyColumns(parent), key.referencedColumns())) {
+                return parent.primaryConstraint().isBlank() ? "PK_" + parent.name() : parent.primaryConstraint();
+            }
+            for (TableDescription.TableIndex index : parent.indexes()) {
+                if (index.unique() && sameNames(index.columns(), key.referencedColumns())) {
+                    return index.name();
+                }
+            }
+            return parent.primaryConstraint();
+        }
+        return "PK_" + key.referencedTable();
+    }
+
+    private static List<String> parentKeyColumns(TableDescription parent) {
+        List<String> names = new ArrayList<>();
+        for (TableDescription.TableColumn column : parent.columns()) {
+            if (column.primaryKeyPosition() > 0) {
+                while (names.size() < column.primaryKeyPosition()) {
+                    names.add("");
+                }
+                names.set(column.primaryKeyPosition() - 1, column.name());
+            }
+        }
+        names.removeIf(String::isBlank);
+        return names;
+    }
+
+    private static boolean sameNames(List<String> left, List<String> right) {
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.size(); i++) {
+            if (!left.get(i).equalsIgnoreCase(right.get(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static ResultSet keys() {

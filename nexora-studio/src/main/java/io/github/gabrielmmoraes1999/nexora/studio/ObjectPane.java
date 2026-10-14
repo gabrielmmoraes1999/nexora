@@ -21,6 +21,9 @@ final class ObjectPane extends JPanel {
     private final Node node;
     private JTabbedPane tabs;
     private DataPane data;
+    private JTable primaryKeys;
+    private JTable foreignKeys;
+    private JTable uniqueKeys;
 
     ObjectPane(Hub hub, Node node, boolean dataFirst) {
         super(new BorderLayout());
@@ -114,6 +117,11 @@ final class ObjectPane extends JPanel {
                         hub.refreshOutline(node.databaseId());
                         reloadColumns(columns);
                         reloadDdl(ddl);
+                        try {
+                            refreshConstraints(connection);
+                        } catch (SQLException exception) {
+                            Dialogs.error(hub.owner(), Dialogs.message(exception));
+                        }
                     }
                 }, editableShape),
                 button("Excluir coluna", () -> dropColumn(columns, ddl), editableShape))));
@@ -121,6 +129,14 @@ final class ObjectPane extends JPanel {
         tabs.addTab("Índices", wrap(indexes, buttons(
                 button("Novo índice", () -> newIndex(indexes, ddl), editableShape),
                 button("Excluir índice", () -> dropIndex(indexes, ddl), editableShape))));
+        JTabbedPane constraints = new JTabbedPane();
+        primaryKeys = Tables.create();
+        foreignKeys = Tables.create();
+        uniqueKeys = Tables.create();
+        constraints.addTab("Primary key", Look.scroll(primaryKeys));
+        constraints.addTab("Foreign keys", Look.scroll(foreignKeys));
+        constraints.addTab("Uniques", Look.scroll(uniqueKeys));
+        tabs.addTab("Constraints", constraints);
         tabs.addTab("Triggers", Look.scroll(triggers));
         tabs.addTab("Privilégios", wrap(grants, buttons(
                 button("Conceder", () -> {
@@ -153,6 +169,7 @@ final class ObjectPane extends JPanel {
         try {
             fillColumns(columns, Outline.columns(connection, node.schema(), node.name()));
             fillIndexes(indexes, Outline.indexes(connection, node.schema(), node.name()));
+            refreshConstraints(connection);
             String catalog = SqlNames.catalog(node.schema(), node.name());
             List<List<Object>> triggerRows = new ArrayList<>();
             for (Outline.TriggerInfo trigger : Outline.triggers(connection)) {
@@ -163,9 +180,7 @@ final class ObjectPane extends JPanel {
             }
             Tables.show(triggers, List.of("Nome", "Quando", "Posição", "Ativo", "Dono"), triggerRows);
             fillGrants(grants, connection, catalog);
-            ddl.setText(Ddl.table(node.schema(), node.name(),
-                    Outline.columns(connection, node.schema(), node.name()),
-                    Outline.indexes(connection, node.schema(), node.name())));
+            ddl.setText(script(connection));
             ddl.setCaretPosition(0);
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
@@ -618,9 +633,7 @@ final class ObjectPane extends JPanel {
             return;
         }
         try {
-            ddl.setText(Ddl.table(node.schema(), node.name(),
-                    Outline.columns(connection, node.schema(), node.name()),
-                    Outline.indexes(connection, node.schema(), node.name())));
+            ddl.setText(script(connection));
             ddl.setCaretPosition(0);
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
@@ -639,6 +652,7 @@ final class ObjectPane extends JPanel {
             }
             if (Dialogs.index(hub.owner(), connection, node.schema(), node.name(), names)) {
                 fillIndexes(indexes, Outline.indexes(connection, node.schema(), node.name()));
+                refreshConstraints(connection);
                 reloadDdl(ddl);
                 hub.refreshOutline(node.databaseId());
             }
@@ -666,6 +680,7 @@ final class ObjectPane extends JPanel {
         try {
             Commands.run(connection, Ddl.dropIndex(node.schema(), node.name(), name));
             fillIndexes(indexes, Outline.indexes(connection, node.schema(), node.name()));
+            refreshConstraints(connection);
             reloadDdl(ddl);
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
@@ -687,6 +702,7 @@ final class ObjectPane extends JPanel {
         try {
             Commands.run(connection, Ddl.dropColumn(node.schema(), node.name(), name));
             reloadColumns(columns);
+            refreshConstraints(connection);
             reloadDdl(ddl);
             hub.refreshOutline(node.databaseId());
         } catch (SQLException exception) {
@@ -766,6 +782,50 @@ final class ObjectPane extends JPanel {
             Tables.show(table, List.of("Usuário", "Tabela", "Privilégio", "Repasse", "Concedido por"), rows);
         } else {
             Tables.show(table, List.of("Usuário", "Privilégio", "Repasse", "Concedido por"), rows);
+        }
+    }
+
+    private void refreshConstraints(Connection connection) throws SQLException {
+        if (primaryKeys == null) {
+            return;
+        }
+        List<Ddl.IndexInfo> indexes = Outline.indexes(connection, node.schema(), node.name());
+        List<Ddl.ConstraintInfo> primary = Outline.primaryKeys(connection, node.schema(), node.name(), indexes);
+        List<Ddl.ConstraintInfo> foreign = Outline.foreignKeys(connection, node.schema(), node.name(), indexes);
+        fillKeys(primaryKeys, primary, false);
+        fillKeys(foreignKeys, foreign, true);
+        fillKeys(uniqueKeys, Outline.uniques(indexes, primary), false);
+    }
+
+    private String script(Connection connection) throws SQLException {
+        List<Ddl.IndexInfo> indexes = Outline.indexes(connection, node.schema(), node.name());
+        List<Ddl.ConstraintInfo> primary = Outline.primaryKeys(connection, node.schema(), node.name(), indexes);
+        return Ddl.table(node.schema(), node.name(),
+                Outline.columns(connection, node.schema(), node.name()),
+                indexes,
+                primary.isEmpty() ? null : primary.get(0),
+                Outline.foreignKeys(connection, node.schema(), node.name(), indexes));
+    }
+
+    private static void fillKeys(JTable table, List<Ddl.ConstraintInfo> keys, boolean reference) {
+        List<List<Object>> rows = new ArrayList<>();
+        for (Ddl.ConstraintInfo key : keys) {
+            String sorting = key.descending() ? "Descending" : "Ascending";
+            if (reference) {
+                String target = key.referencedSchema() == null || SqlNames.same(key.referencedSchema(), "public")
+                        ? key.referencedTable()
+                        : key.referencedSchema() + "." + key.referencedTable();
+                rows.add(List.of(key.name(), String.join(", ", key.columns()),
+                        target + " (" + String.join(", ", key.referencedColumns()) + ")",
+                        key.index(), sorting));
+            } else {
+                rows.add(List.of(key.name(), String.join(", ", key.columns()), key.index(), sorting));
+            }
+        }
+        if (reference) {
+            Tables.show(table, List.of("Constraint Name", "On Field", "Referência", "Index Name", "Index Sorting"), rows);
+        } else {
+            Tables.show(table, List.of("Constraint Name", "On Field", "Index Name", "Index Sorting"), rows);
         }
     }
 

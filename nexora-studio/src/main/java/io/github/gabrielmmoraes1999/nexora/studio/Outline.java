@@ -193,6 +193,7 @@ public record Outline(
         DatabaseMetaData meta = connection.getMetaData();
         Map<String, List<IndexColumn>> grouped = new LinkedHashMap<>();
         Map<String, Boolean> unique = new LinkedHashMap<>();
+        Map<String, Boolean> descending = new LinkedHashMap<>();
         try (ResultSet result = meta.getIndexInfo(null, SqlNames.likeExact(schema), SqlNames.likeExact(table), false, false)) {
             while (result.next()) {
                 if (!SqlNames.same(table, result.getString("TABLE_NAME"))) {
@@ -204,6 +205,12 @@ public record Outline(
                     continue;
                 }
                 unique.putIfAbsent(name, !result.getBoolean("NON_UNIQUE"));
+                String order = result.getString("ASC_OR_DESC");
+                if ("D".equalsIgnoreCase(order)) {
+                    descending.put(name, true);
+                } else {
+                    descending.putIfAbsent(name, false);
+                }
                 grouped.computeIfAbsent(name, key -> new ArrayList<>())
                         .add(new IndexColumn(result.getShort("ORDINAL_POSITION"), column));
             }
@@ -216,10 +223,132 @@ public record Outline(
             for (IndexColumn part : parts) {
                 names.add(part.name);
             }
-            indexes.add(new Ddl.IndexInfo(entry.getKey(), unique.getOrDefault(entry.getKey(), false), names));
+            indexes.add(new Ddl.IndexInfo(entry.getKey(), unique.getOrDefault(entry.getKey(), false), names,
+                    descending.getOrDefault(entry.getKey(), false)));
         }
         indexes.sort(Comparator.comparing(Ddl.IndexInfo::name, String.CASE_INSENSITIVE_ORDER));
         return indexes;
+    }
+
+    public static List<Ddl.ConstraintInfo> primaryKeys(Connection connection, String schema, String table,
+                                                       List<Ddl.IndexInfo> indexes) throws SQLException {
+        DatabaseMetaData meta = connection.getMetaData();
+        Map<Integer, String> columns = new java.util.TreeMap<>();
+        String name = null;
+        try (ResultSet result = meta.getPrimaryKeys(null, SqlNames.likeExact(schema), SqlNames.likeExact(table))) {
+            while (result.next()) {
+                if (!SqlNames.same(table, result.getString("TABLE_NAME"))) {
+                    continue;
+                }
+                columns.put((int) result.getShort("KEY_SEQ"), result.getString("COLUMN_NAME"));
+                name = result.getString("PK_NAME");
+            }
+        }
+        if (columns.isEmpty()) {
+            return List.of();
+        }
+        List<String> fields = new ArrayList<>(columns.values());
+        Ddl.IndexInfo index = matchIndex(indexes, name, fields, true);
+        return List.of(new Ddl.ConstraintInfo(
+                name == null ? "PK_" + table : name,
+                fields,
+                index == null ? (name == null ? "PK_" + table : name) : index.name(),
+                index != null && index.descending(),
+                null,
+                null,
+                List.of()));
+    }
+
+    public static List<Ddl.ConstraintInfo> foreignKeys(Connection connection, String schema, String table,
+                                                       List<Ddl.IndexInfo> indexes) throws SQLException {
+        DatabaseMetaData meta = connection.getMetaData();
+        Map<String, List<ForeignColumn>> grouped = new LinkedHashMap<>();
+        try (ResultSet result = meta.getImportedKeys(null, SqlNames.likeExact(schema), SqlNames.likeExact(table))) {
+            while (result.next()) {
+                if (!SqlNames.same(table, result.getString("FKTABLE_NAME"))) {
+                    continue;
+                }
+                String name = result.getString("FK_NAME");
+                grouped.computeIfAbsent(name, key -> new ArrayList<>()).add(new ForeignColumn(
+                        result.getShort("KEY_SEQ"),
+                        result.getString("FKCOLUMN_NAME"),
+                        result.getString("PKTABLE_SCHEM"),
+                        result.getString("PKTABLE_NAME"),
+                        result.getString("PKCOLUMN_NAME")));
+            }
+        }
+        List<Ddl.ConstraintInfo> keys = new ArrayList<>();
+        for (Map.Entry<String, List<ForeignColumn>> entry : grouped.entrySet()) {
+            List<ForeignColumn> parts = entry.getValue();
+            parts.sort(Comparator.comparingInt(ForeignColumn::sequence));
+            List<String> fields = new ArrayList<>();
+            List<String> referenced = new ArrayList<>();
+            for (ForeignColumn part : parts) {
+                fields.add(part.column);
+                referenced.add(part.referencedColumn);
+            }
+            ForeignColumn first = parts.get(0);
+            Ddl.IndexInfo index = matchIndex(indexes, entry.getKey(), fields, false);
+            keys.add(new Ddl.ConstraintInfo(
+                    entry.getKey(),
+                    fields,
+                    index == null ? entry.getKey() : index.name(),
+                    index != null && index.descending(),
+                    first.referencedSchema,
+                    first.referencedTable,
+                    referenced));
+        }
+        keys.sort(Comparator.comparing(Ddl.ConstraintInfo::name, String.CASE_INSENSITIVE_ORDER));
+        return keys;
+    }
+
+    public static List<Ddl.ConstraintInfo> uniques(List<Ddl.IndexInfo> indexes, List<Ddl.ConstraintInfo> primary) {
+        List<String> primaryColumns = primary.isEmpty() ? List.of() : primary.get(0).columns();
+        String primaryIndex = primary.isEmpty() ? "" : primary.get(0).index();
+        List<Ddl.ConstraintInfo> keys = new ArrayList<>();
+        for (Ddl.IndexInfo index : indexes) {
+            if (!index.unique() || index.name().equalsIgnoreCase(primaryIndex) || sameColumns(index.columns(), primaryColumns)) {
+                continue;
+            }
+            keys.add(new Ddl.ConstraintInfo(index.name(), index.columns(), index.name(), index.descending(),
+                    null, null, List.of()));
+        }
+        return keys;
+    }
+
+    private static Ddl.IndexInfo matchIndex(List<Ddl.IndexInfo> indexes, String preferred, List<String> columns, boolean unique) {
+        Ddl.IndexInfo fallback = null;
+        for (Ddl.IndexInfo index : indexes) {
+            if (unique && !index.unique()) {
+                continue;
+            }
+            if (!sameColumns(index.columns(), columns)) {
+                continue;
+            }
+            if (preferred != null && index.name().equalsIgnoreCase(preferred)) {
+                return index;
+            }
+            if (fallback == null) {
+                fallback = index;
+            }
+        }
+        return fallback;
+    }
+
+    private static boolean sameColumns(List<String> left, List<String> right) {
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.size(); i++) {
+            if (!left.get(i).equalsIgnoreCase(right.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private record ForeignColumn(int sequence, String column, String referencedSchema, String referencedTable,
+                                 String referencedColumn) {
     }
 
     public static List<TriggerInfo> triggers(Connection connection) throws SQLException {

@@ -54,11 +54,42 @@ final class IndexDef {
     final String name;
     final int[] columns;
     final boolean unique;
+    final boolean descending;
 
     IndexDef(String name, int[] columns, boolean unique) {
+        this(name, columns, unique, false);
+    }
+
+    IndexDef(String name, int[] columns, boolean unique, boolean descending) {
         this.name = name;
         this.columns = columns.clone();
         this.unique = unique;
+        this.descending = descending;
+    }
+}
+
+final class ForeignKey {
+    final String name;
+    final int[] columns;
+    final String referencedSchema;
+    final String referencedTable;
+    final String[] referencedColumns;
+    final String indexName;
+    final boolean descending;
+
+    ForeignKey(String name, int[] columns, String referencedSchema, String referencedTable,
+               String[] referencedColumns, String indexName, boolean descending) {
+        this.name = name;
+        this.columns = columns.clone();
+        this.referencedSchema = referencedSchema;
+        this.referencedTable = referencedTable;
+        this.referencedColumns = referencedColumns.clone();
+        this.indexName = indexName;
+        this.descending = descending;
+    }
+
+    ForeignKey withColumns(int[] columns) {
+        return new ForeignKey(name, columns, referencedSchema, referencedTable, referencedColumns, indexName, descending);
     }
 }
 
@@ -68,13 +99,41 @@ final class Schema {
     final int[] primaryKey;
     final List<int[]> uniques;
     final List<IndexDef> indexes;
+    final String primaryConstraint;
+    final String primaryIndex;
+    final boolean primaryDescending;
+    final List<ForeignKey> foreignKeys;
 
     Schema(String name, List<Column> columns, int[] primaryKey, List<int[]> uniques, List<IndexDef> indexes) {
+        this(name, columns, primaryKey, uniques, indexes,
+                primaryKey.length == 0 ? "" : "PK_" + name,
+                primaryKey.length == 0 ? "" : "PK_" + name,
+                false,
+                List.of());
+    }
+
+    Schema(String name, List<Column> columns, int[] primaryKey, List<int[]> uniques, List<IndexDef> indexes,
+           String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignKey> foreignKeys) {
         this.name = name;
         this.columns = List.copyOf(columns);
         this.primaryKey = primaryKey.clone();
         this.uniques = uniques.stream().map(int[]::clone).toList();
-        this.indexes = indexes.stream().map(index -> new IndexDef(index.name, index.columns, index.unique)).toList();
+        this.indexes = indexes.stream()
+                .map(index -> new IndexDef(index.name, index.columns, index.unique, index.descending))
+                .toList();
+        if (this.primaryKey.length == 0) {
+            this.primaryConstraint = "";
+            this.primaryIndex = "";
+            this.primaryDescending = false;
+        } else {
+            this.primaryConstraint = primaryConstraint == null || primaryConstraint.isBlank() ? "PK_" + name : primaryConstraint;
+            this.primaryIndex = primaryIndex == null || primaryIndex.isBlank() ? this.primaryConstraint : primaryIndex;
+            this.primaryDescending = primaryDescending;
+        }
+        this.foreignKeys = foreignKeys.stream()
+                .map(key -> new ForeignKey(key.name, key.columns, key.referencedSchema, key.referencedTable,
+                        key.referencedColumns, key.indexName, key.descending))
+                .toList();
     }
 
     int indexOf(String columnName) {
@@ -98,10 +157,10 @@ final class Schema {
     Schema withIdentity(int columnIndex, long next) {
         List<Column> copy = new ArrayList<>(columns);
         copy.set(columnIndex, columns.get(columnIndex).withIdentity(next));
-        return new Schema(name, copy, primaryKey, uniques, indexes);
+        return copy(copy, primaryKey, uniques, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
 
-    Schema withPrimaryKey(int[] key) {
+    Schema withPrimaryKey(int[] key, String constraint, String index, boolean descending) {
         if (key.length == 0) {
             throw new NexException("a chave primária precisa de ao menos uma coluna");
         }
@@ -109,10 +168,10 @@ final class Schema {
             throw new NexException("a tabela " + name + " já possui chave primária");
         }
         List<Column> copy = new ArrayList<>(columns);
-        for (int index : key) {
-            copy.set(index, copy.get(index).asNotNull());
+        for (int column : key) {
+            copy.set(column, copy.get(column).asNotNull());
         }
-        return new Schema(name, copy, key, uniques, indexes);
+        return copy(copy, key, uniques, indexes, constraint, index, descending, foreignKeys);
     }
 
     Schema add(Column column, boolean primary, boolean unique) {
@@ -127,13 +186,34 @@ final class Schema {
         if (unique && !primary) {
             groups.add(new int[]{index});
         }
-        return new Schema(name, copy, pk, groups, indexes);
+        String constraint = primaryConstraint;
+        String indexName = primaryIndex;
+        boolean descending = primaryDescending;
+        if (primary) {
+            constraint = "PK_" + name;
+            indexName = constraint;
+            descending = false;
+        }
+        return copy(copy, pk, groups, indexes, constraint, indexName, descending, foreignKeys);
+    }
+
+    Schema namePrimary(String constraint, String index, boolean descending) {
+        if (primaryKey.length == 0) {
+            throw new NexException("a tabela " + name + " não possui chave primária");
+        }
+        return copy(columns, primaryKey, uniques, indexes, constraint, index, descending, foreignKeys);
     }
 
     Schema withIndex(IndexDef index) {
         List<IndexDef> copy = new ArrayList<>(indexes);
         copy.add(index);
-        return new Schema(name, columns, primaryKey, uniques, copy);
+        return copy(columns, primaryKey, uniques, copy, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
+    }
+
+    Schema withForeignKey(ForeignKey key) {
+        List<ForeignKey> copy = new ArrayList<>(foreignKeys);
+        copy.add(key);
+        return copy(columns, primaryKey, uniques, indexes, primaryConstraint, primaryIndex, primaryDescending, copy);
     }
 
     Schema withoutIndex(String indexName) {
@@ -149,7 +229,7 @@ final class Schema {
         if (!found) {
             throw new NexException("índice não encontrado: " + indexName);
         }
-        return new Schema(name, columns, primaryKey, uniques, copy);
+        return copy(columns, primaryKey, uniques, copy, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
 
     Schema drop(int index) {
@@ -172,9 +252,36 @@ final class Schema {
             if (contains(definition.columns, index)) {
                 continue;
             }
-            kept.add(new IndexDef(definition.name, remap(definition.columns, index), definition.unique));
+            kept.add(new IndexDef(definition.name, remap(definition.columns, index), definition.unique, definition.descending));
         }
-        return new Schema(name, copy, primary, unique, kept);
+        List<ForeignKey> keys = new ArrayList<>();
+        for (ForeignKey key : foreignKeys) {
+            if (contains(key.columns, index)) {
+                continue;
+            }
+            keys.add(key.withColumns(remap(key.columns, index)));
+        }
+        String constraint = primary.length == 0 ? "" : primaryConstraint;
+        String indexName = primary.length == 0 ? "" : primaryIndex;
+        boolean descending = primary.length > 0 && primaryDescending;
+        return copy(copy, primary, unique, kept, constraint, indexName, descending, keys);
+    }
+
+    boolean ownsIndex(String indexName) {
+        if (primaryKey.length > 0 && Names.same(primaryIndex, indexName)) {
+            return true;
+        }
+        for (ForeignKey key : foreignKeys) {
+            if (Names.same(key.indexName, indexName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Schema copy(List<Column> columns, int[] primaryKey, List<int[]> uniques, List<IndexDef> indexes,
+                        String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignKey> foreignKeys) {
+        return new Schema(name, columns, primaryKey, uniques, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
 
     private static int[] remap(int[] indexes, int removed) {

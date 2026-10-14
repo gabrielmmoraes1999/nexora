@@ -378,6 +378,26 @@ public final class Wire {
             for (String column : index.columns()) {
                 writeUtf(out, column);
             }
+            out.writeBoolean(index.descending());
+        }
+        writeUtf(out, table.primaryConstraint() == null ? "" : table.primaryConstraint());
+        writeUtf(out, table.primaryIndex() == null ? "" : table.primaryIndex());
+        out.writeBoolean(table.primaryDescending());
+        out.writeInt(table.foreignKeys().size());
+        for (TableDescription.ForeignKey key : table.foreignKeys()) {
+            writeUtf(out, key.name());
+            out.writeInt(key.columns().size());
+            for (String column : key.columns()) {
+                writeUtf(out, column);
+            }
+            writeUtf(out, key.referencedSchema());
+            writeUtf(out, key.referencedTable());
+            out.writeInt(key.referencedColumns().size());
+            for (String column : key.referencedColumns()) {
+                writeUtf(out, column);
+            }
+            writeUtf(out, key.indexName());
+            out.writeBoolean(key.descending());
         }
     }
 
@@ -419,9 +439,44 @@ public final class Wire {
             for (int c = 0; c < count; c++) {
                 indexColumns.add(readUtf(in));
             }
-            indexes.add(new TableDescription.TableIndex(table, index, unique, indexColumns));
+            boolean descending = in.readBoolean();
+            indexes.add(new TableDescription.TableIndex(table, index, unique, indexColumns, descending));
         }
-        return new TableDescription(schema, name, columns, indexes);
+        String primaryConstraint = readUtf(in);
+        String primaryIndex = readUtf(in);
+        boolean primaryDescending = in.readBoolean();
+        int foreignCount = in.readInt();
+        if (foreignCount < 0) {
+            throw new IOException("quadro inválido");
+        }
+        List<TableDescription.ForeignKey> foreignKeys = new ArrayList<>(foreignCount);
+        for (int i = 0; i < foreignCount; i++) {
+            String foreignName = readUtf(in);
+            int localCount = in.readInt();
+            if (localCount < 0) {
+                throw new IOException("quadro inválido");
+            }
+            List<String> local = new ArrayList<>(localCount);
+            for (int c = 0; c < localCount; c++) {
+                local.add(readUtf(in));
+            }
+            String referencedSchema = readUtf(in);
+            String referencedTable = readUtf(in);
+            int referencedCount = in.readInt();
+            if (referencedCount < 0) {
+                throw new IOException("quadro inválido");
+            }
+            List<String> referenced = new ArrayList<>(referencedCount);
+            for (int c = 0; c < referencedCount; c++) {
+                referenced.add(readUtf(in));
+            }
+            String indexName = readUtf(in);
+            boolean descending = in.readBoolean();
+            foreignKeys.add(new TableDescription.ForeignKey(
+                    foreignName, local, referencedSchema, referencedTable, referenced, indexName, descending));
+        }
+        return new TableDescription(schema, name, columns, indexes,
+                primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
 
     private static void writeValue(DataOutputStream out, Object value) throws IOException {

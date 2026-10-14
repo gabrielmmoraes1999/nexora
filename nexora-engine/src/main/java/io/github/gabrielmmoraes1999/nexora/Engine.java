@@ -342,18 +342,30 @@ final class Engine implements AutoCloseable {
         List<TableDescription.TableIndex> indexes = new ArrayList<>();
         if (schema.primaryKey.length > 0) {
             indexes.add(new TableDescription.TableIndex(
-                    schema.name, "PRIMARY", true, names(schema, schema.primaryKey)));
+                    schema.name, schema.primaryIndex, true, names(schema, schema.primaryKey), schema.primaryDescending));
         }
         int sequence = 1;
         for (int[] unique : schema.uniques) {
             indexes.add(new TableDescription.TableIndex(
-                    schema.name, "UNIQUE_" + sequence++, true, names(schema, unique)));
+                    schema.name, "UNIQUE_" + sequence++, true, names(schema, unique), false));
         }
         for (IndexDef index : schema.indexes) {
             indexes.add(new TableDescription.TableIndex(
-                    schema.name, index.name, index.unique, names(schema, index.columns)));
+                    schema.name, index.name, index.unique, names(schema, index.columns), index.descending));
         }
-        return new TableDescription(namespace, schema.name, List.copyOf(columns), List.copyOf(indexes));
+        List<TableDescription.ForeignKey> foreignKeys = new ArrayList<>();
+        for (ForeignKey key : schema.foreignKeys) {
+            foreignKeys.add(new TableDescription.ForeignKey(
+                    key.name,
+                    names(schema, key.columns),
+                    key.referencedSchema,
+                    key.referencedTable,
+                    List.of(key.referencedColumns),
+                    key.indexName,
+                    key.descending));
+        }
+        return new TableDescription(namespace, schema.name, List.copyOf(columns), List.copyOf(indexes),
+                schema.primaryConstraint, schema.primaryIndex, schema.primaryDescending, foreignKeys);
     }
 
     private static List<String> names(Schema schema, int[] indexes) {
@@ -572,7 +584,9 @@ final class Engine implements AutoCloseable {
                 guardDdl(drop.table());
                 rejectBorrowed(require(drop.table()));
                 mutating(drop.table(), () -> {
-                    require(drop.table()).dropColumn(drop.column());
+                    TableStore table = require(drop.table());
+                    guardReferencedColumn(table, drop.column());
+                    table.dropColumn(drop.column());
                     return 0;
                 });
                 yield SqlResult.update(0);
@@ -582,7 +596,25 @@ final class Engine implements AutoCloseable {
                 rejectBorrowed(require(add.table()));
                 mutating(add.table(), () -> {
                     TableStore table = require(add.table());
-                    table.addPrimaryKey(resolve(table.schema().columns, add.columns(), "chave primária"));
+                    String constraint = add.constraint() == null || add.constraint().isBlank()
+                            ? "PK_" + table.schema().name : add.constraint();
+                    String index = add.index() == null || add.index().isBlank() ? constraint : add.index();
+                    claim(table.schema(), constraint, index, true);
+                    table.addPrimaryKey(resolve(table.schema().columns, add.columns(), "chave primária"),
+                            constraint, index, add.descending());
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
+            case AddForeignKey add -> {
+                guardDdl(add.table());
+                rejectBorrowed(require(add.table()));
+                mutating(add.table(), () -> {
+                    TableStore table = require(add.table());
+                    ForeignKey key = buildForeignKey(table.schema(), table.namespace(), add.constraint(), add.columns(),
+                            add.index(), add.descending(), add.refTable(), add.refColumns());
+                    checkForeignRows(table, key);
+                    table.addForeignKey(key);
                     return 0;
                 });
                 yield SqlResult.update(0);
@@ -618,6 +650,21 @@ final class Engine implements AutoCloseable {
             throw new NexException("tabela já existe: " + shown(statement.name()));
         }
         Schema schema = compile(rel.name(), statement.columns(), statement.primaryKey(), statement.uniques());
+        if (statement.primaryConstraint() != null || statement.primaryIndex() != null || statement.primaryDescending()) {
+            if (schema.primaryKey.length == 0) {
+                throw new NexException("USING INDEX exige uma chave primária");
+            }
+            String constraint = statement.primaryConstraint() == null ? schema.primaryConstraint : statement.primaryConstraint();
+            String index = statement.primaryIndex() == null ? constraint : statement.primaryIndex();
+            claim(schema, constraint, index, true);
+            schema = schema.namePrimary(constraint, index, statement.primaryDescending());
+        }
+        for (ForeignClause clause : statement.foreignKeys()) {
+            ForeignKey foreign = buildForeignKey(schema, rel.schema(), clause.constraint(), clause.columns(),
+                    clause.index(), clause.descending(), clause.refTable(), clause.refColumns());
+            schema = schema.withIndex(new IndexDef(foreign.indexName, foreign.columns, false, foreign.descending))
+                    .withForeignKey(foreign);
+        }
         createStored(schema, rel.schema());
         recordOwner(Relation.catalogName(rel.schema(), schema.name));
     }
@@ -637,6 +684,7 @@ final class Engine implements AutoCloseable {
         guardDdl(statement.name());
         String storedName = Relation.catalogName(table.namespace(), table.schema().name);
         ensureNoViewDepends(storedName);
+        guardReferenced(table);
         rejectBorrowed(table);
         String key = rel.key();
         tables.remove(key);
@@ -676,8 +724,8 @@ final class Engine implements AutoCloseable {
         guardDdl(statement.table());
         TableStore table = require(statement.table());
         rejectBorrowed(table);
-        if (reservedIndexName(statement.name())) {
-            throw new NexException("DROP INDEX não remove PRIMARY KEY nem UNIQUE declarado na tabela");
+        if (table.schema().ownsIndex(statement.name()) || reservedIndexName(statement.name())) {
+            throw new NexException("DROP INDEX não remove PRIMARY KEY, FOREIGN KEY nem UNIQUE declarado na tabela");
         }
         if (!table.hasIndex(statement.name())) {
             if (statement.ifExists()) {
@@ -709,6 +757,315 @@ final class Engine implements AutoCloseable {
             }
         }
         return true;
+    }
+
+    private void claim(Schema schema, String constraint, String index, boolean replacingPrimary) {
+        Names.checkName(constraint, "restrição");
+        Names.checkName(index, "índice");
+        if (nameUsed(schema, constraint, replacingPrimary)) {
+            throw new NexException("restrição já existe: " + constraint);
+        }
+        if (!Names.same(constraint, index) && nameUsed(schema, index, replacingPrimary)) {
+            throw new NexException("índice já existe: " + index);
+        }
+    }
+
+    private boolean nameUsed(Schema schema, String name, boolean ignorePrimary) {
+        if (!ignorePrimary && schema.primaryKey.length > 0
+                && (Names.same(schema.primaryConstraint, name) || Names.same(schema.primaryIndex, name))) {
+            return true;
+        }
+        for (ForeignKey key : schema.foreignKeys) {
+            if (Names.same(key.name, name) || Names.same(key.indexName, name)) {
+                return true;
+            }
+        }
+        for (IndexDef definition : schema.indexes) {
+            if (Names.same(definition.name, name)) {
+                return true;
+            }
+        }
+        for (int i = 1; i <= schema.uniques.size(); i++) {
+            if (Names.same("UNIQUE_" + i, name)) {
+                return true;
+            }
+        }
+        return Names.same(name, "PRIMARY");
+    }
+
+    private String freshForeignName(Schema schema, int[] columns) {
+        String base = "FK_" + schema.name;
+        if (!nameUsed(schema, base, false)) {
+            return base;
+        }
+        StringBuilder detailed = new StringBuilder(base);
+        for (int column : columns) {
+            detailed.append('_').append(schema.columns.get(column).name);
+        }
+        if (!nameUsed(schema, detailed.toString(), false)) {
+            return detailed.toString();
+        }
+        for (int sequence = 2; sequence < 1000; sequence++) {
+            String candidate = base + "_" + sequence;
+            if (!nameUsed(schema, candidate, false)) {
+                return candidate;
+            }
+        }
+        throw new NexException("não foi possível nomear a chave estrangeira");
+    }
+
+    private ForeignKey buildForeignKey(Schema child, String childNamespace, String constraint, List<String> columnNames,
+                                       String index, boolean descending, String refTable, List<String> refColumnNames) {
+        int[] columns = resolve(child.columns, columnNames, "chave estrangeira");
+        for (int column : columns) {
+            if (child.columns.get(column).type == DataType.BLOB) {
+                throw new NexException("BLOB não pode ser chave");
+            }
+        }
+        Relation parentId = relation(refTable);
+        boolean self = Names.same(parentId.schema(), childNamespace) && Names.same(parentId.name(), child.name);
+        String referencedSchema;
+        String referencedTable;
+        String[] referencedColumns;
+        DataType[] referencedTypes;
+        if (self) {
+            int[] refs = refColumnNames.isEmpty() ? child.primaryKey : resolve(child.columns, refColumnNames, "chave referenciada");
+            if (refs.length == 0) {
+                throw new NexException("informe as colunas referenciadas de " + child.name);
+            }
+            ensureReferencedKey(child, refs);
+            referencedSchema = childNamespace;
+            referencedTable = child.name;
+            referencedColumns = new String[refs.length];
+            referencedTypes = new DataType[refs.length];
+            for (int i = 0; i < refs.length; i++) {
+                referencedColumns[i] = child.columns.get(refs[i]).name;
+                referencedTypes[i] = child.columns.get(refs[i]).type;
+            }
+        } else {
+            TableStore parent = require(refTable);
+            int[] refs = refColumnNames.isEmpty()
+                    ? parent.schema().primaryKey
+                    : resolve(parent.schema().columns, refColumnNames, "chave referenciada");
+            if (refs.length == 0) {
+                throw new NexException("informe as colunas referenciadas de " + parent.schema().name);
+            }
+            ensureReferencedKey(parent.schema(), refs);
+            referencedSchema = parent.namespace();
+            referencedTable = parent.schema().name;
+            referencedColumns = new String[refs.length];
+            referencedTypes = new DataType[refs.length];
+            for (int i = 0; i < refs.length; i++) {
+                referencedColumns[i] = parent.schema().columns.get(refs[i]).name;
+                referencedTypes[i] = parent.schema().columns.get(refs[i]).type;
+            }
+        }
+        if (columns.length != referencedColumns.length) {
+            throw new NexException("a chave estrangeira e a chave referenciada têm quantidades diferentes de colunas");
+        }
+        for (int i = 0; i < columns.length; i++) {
+            if (child.columns.get(columns[i]).type != referencedTypes[i]) {
+                throw new NexException("tipo incompatível na chave estrangeira: " + child.columns.get(columns[i]).name);
+            }
+        }
+        String constraintName = constraint == null || constraint.isBlank() ? freshForeignName(child, columns) : constraint;
+        String indexName = index == null || index.isBlank() ? constraintName : index;
+        claim(child, constraintName, indexName, false);
+        return new ForeignKey(constraintName, columns, referencedSchema, referencedTable, referencedColumns, indexName, descending);
+    }
+
+    private static void ensureReferencedKey(Schema schema, int[] columns) {
+        if (Arrays.equals(schema.primaryKey, columns)) {
+            return;
+        }
+        for (int[] unique : schema.uniques) {
+            if (Arrays.equals(unique, columns)) {
+                return;
+            }
+        }
+        throw new NexException("a chave estrangeira precisa referenciar a chave primária ou uma chave UNIQUE");
+    }
+
+    private void checkForeignRows(TableStore child, ForeignKey key) {
+        TableStore parent = parentOf(key);
+        int[] parentColumns = referencedIndexes(parent.schema(), key);
+        for (StoredRow row : child.scan()) {
+            Object[] values = logical(child, row);
+            if (anyNull(values, key.columns)) {
+                continue;
+            }
+            if (!keyExists(parent, parentColumns, values, key.columns)) {
+                throw new NexException("chave estrangeira " + key.name + " não encontra o registro em " + referencedLabel(key));
+            }
+        }
+    }
+
+    private void enforceOutgoing(TableStore child, Object[] values) {
+        for (ForeignKey key : child.schema().foreignKeys) {
+            if (anyNull(values, key.columns)) {
+                continue;
+            }
+            TableStore parent = parentOf(key);
+            if (!keyExists(parent, referencedIndexes(parent.schema(), key), values, key.columns)) {
+                throw new NexException("chave estrangeira " + key.name + " não encontra o registro em " + referencedLabel(key));
+            }
+        }
+    }
+
+    private void enforceIncoming(TableStore parent, Object[] values, long exceptId) {
+        for (TableStore child : tables.values()) {
+            for (ForeignKey key : child.schema().foreignKeys) {
+                if (!pointsAt(key, parent)) {
+                    continue;
+                }
+                int[] parentColumns = referencedIndexes(parent.schema(), key);
+                if (anyNull(values, parentColumns)) {
+                    continue;
+                }
+                Map<Integer, Object> equals = new LinkedHashMap<>();
+                for (int i = 0; i < key.columns.length; i++) {
+                    equals.put(key.columns[i], values[parentColumns[i]]);
+                }
+                List<StoredRow> found = child.lookup(equals);
+                if (found == null) {
+                    found = new ArrayList<>();
+                    for (StoredRow row : child.scan()) {
+                        Object[] current = logical(child, row);
+                        boolean same = true;
+                        for (int i = 0; i < key.columns.length; i++) {
+                            if (!sameValue(current[key.columns[i]], values[parentColumns[i]])) {
+                                same = false;
+                                break;
+                            }
+                        }
+                        if (same) {
+                            found.add(row);
+                        }
+                    }
+                }
+                for (StoredRow row : found) {
+                    if (child == parent && row.id == exceptId) {
+                        continue;
+                    }
+                    throw new NexException("chave estrangeira " + key.name + " em " + child.schema().name
+                            + " ainda aponta para este registro");
+                }
+            }
+        }
+    }
+
+    private boolean referencedValuesChanged(TableStore parent, Object[] oldValues, Object[] newValues) {
+        for (TableStore child : tables.values()) {
+            for (ForeignKey key : child.schema().foreignKeys) {
+                if (!pointsAt(key, parent)) {
+                    continue;
+                }
+                for (String column : key.referencedColumns) {
+                    int index = parent.schema().indexOf(column);
+                    if (index >= 0 && !sameValue(oldValues[index], newValues[index])) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean keyExists(TableStore parent, int[] parentColumns, Object[] childValues, int[] childColumns) {
+        Map<Integer, Object> equals = new LinkedHashMap<>();
+        for (int i = 0; i < parentColumns.length; i++) {
+            equals.put(parentColumns[i], childValues[childColumns[i]]);
+        }
+        List<StoredRow> found = parent.lookup(equals);
+        if (found != null) {
+            return !found.isEmpty();
+        }
+        for (StoredRow row : parent.scan()) {
+            Object[] values = logical(parent, row);
+            boolean same = true;
+            for (int i = 0; i < parentColumns.length; i++) {
+                if (!sameValue(values[parentColumns[i]], childValues[childColumns[i]])) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void guardReferenced(TableStore table) {
+        for (TableStore other : tables.values()) {
+            if (other == table) {
+                continue;
+            }
+            for (ForeignKey key : other.schema().foreignKeys) {
+                if (pointsAt(key, table)) {
+                    throw new NexException("tabela em uso pela chave estrangeira " + key.name + " em " + other.schema().name);
+                }
+            }
+        }
+    }
+
+    private void guardReferencedColumn(TableStore table, String column) {
+        for (TableStore other : tables.values()) {
+            if (other == table) {
+                continue;
+            }
+            for (ForeignKey key : other.schema().foreignKeys) {
+                if (!pointsAt(key, table)) {
+                    continue;
+                }
+                for (String referenced : key.referencedColumns) {
+                    if (Names.same(referenced, column)) {
+                        throw new NexException("coluna em uso pela chave estrangeira " + key.name + " em " + other.schema().name);
+                    }
+                }
+            }
+        }
+    }
+
+    private TableStore parentOf(ForeignKey key) {
+        TableStore parent = tables.get(Relation.key(key.referencedSchema, key.referencedTable));
+        if (parent == null) {
+            throw new NexException("tabela referenciada não encontrada: " + referencedLabel(key));
+        }
+        return parent;
+    }
+
+    private static int[] referencedIndexes(Schema schema, ForeignKey key) {
+        int[] indexes = new int[key.referencedColumns.length];
+        for (int i = 0; i < key.referencedColumns.length; i++) {
+            int found = schema.indexOf(key.referencedColumns[i]);
+            if (found < 0) {
+                throw new NexException("coluna referenciada não encontrada: " + key.referencedColumns[i]);
+            }
+            indexes[i] = found;
+        }
+        return indexes;
+    }
+
+    private static boolean pointsAt(ForeignKey key, TableStore parent) {
+        return Names.same(key.referencedSchema, parent.namespace())
+                && Names.same(key.referencedTable, parent.schema().name);
+    }
+
+    private static String referencedLabel(ForeignKey key) {
+        if (Names.same(key.referencedSchema, Relation.PUBLIC)) {
+            return key.referencedTable;
+        }
+        return key.referencedSchema + "." + key.referencedTable;
+    }
+
+    private static boolean anyNull(Object[] values, int[] columns) {
+        for (int column : columns) {
+            if (values[column] == null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int insert(Insert statement) {
@@ -752,6 +1109,7 @@ final class Engine implements AutoCloseable {
                 }
                 long id = table.insertOne(values);
                 count++;
+                enforceOutgoing(table, logical(table, rowById(table, id)));
                 if (routines) {
                     fireTriggers(table, "AFTER", "INSERT", null, logical(table, rowById(table, id)));
                 }
@@ -803,11 +1161,17 @@ final class Engine implements AutoCloseable {
                 replacements.put(row.id, cells);
                 before.add(old);
                 after.add(neu);
+                if (referencedValuesChanged(table, old, neu)) {
+                    enforceIncoming(table, old, row.id);
+                }
             }
             if (Names.same(schema.name, SystemTables.USERS)) {
                 guardLastAdmin(table, List.of(), replacements);
             }
             table.update(replacements);
+            for (Object[] neu : after) {
+                enforceOutgoing(table, neu);
+            }
             if (routines) {
                 for (int i = 0; i < matched.size(); i++) {
                     fireTriggers(table, "AFTER", "UPDATE", before.get(i), after.get(i));
@@ -835,6 +1199,7 @@ final class Engine implements AutoCloseable {
             int count = 0;
             for (StoredRow row : matched) {
                 Object[] old = logical(table, row);
+                enforceIncoming(table, old, row.id);
                 if (routines) {
                     fireTriggers(table, "BEFORE", "DELETE", old, null);
                 }
@@ -1575,7 +1940,8 @@ final class Engine implements AutoCloseable {
 
     private boolean shouldShrink(TableStore table) {
         long wanted = DatabaseFile.capacityFor(table.packedBytes(), storage.pageSize());
-        return wanted < table.capacity() && wanted * 2 <= table.capacity();
+        // Metade exata fica: o próximo insert ocupa essa página e o empacotar devolveria o mesmo corte.
+        return wanted < table.capacity() && wanted * 2 < table.capacity();
     }
 
     private void upgradeStorage() {
@@ -1796,7 +2162,7 @@ final class Engine implements AutoCloseable {
         return statement instanceof CreateTable || statement instanceof DropTable
                 || statement instanceof CreateIndex || statement instanceof DropIndex
                 || statement instanceof AddColumn || statement instanceof DropColumn
-                || statement instanceof AddPrimaryKey
+                || statement instanceof AddPrimaryKey || statement instanceof AddForeignKey
                 || statement instanceof Grant || statement instanceof Revoke
                 || statement instanceof CreateGenerator || statement instanceof DropGenerator
                 || statement instanceof CreateProcedure || statement instanceof DropProcedure

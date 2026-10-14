@@ -14,6 +14,7 @@ final class Highlighter {
             "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "BETWEEN", "ESCAPE",
             "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "ALTER", "DROP", "TABLE", "INDEX",
             "UNIQUE", "PRIMARY", "KEY", "COLUMN", "ADD", "DEFAULT", "AUTOINCREMENT", "IDENTITY", "CONSTRAINT",
+            "FOREIGN", "REFERENCES", "USING", "ASCENDING", "DESCENDING",
             "VIEW", "PROCEDURE", "RETURNS", "TRIGGER", "FOR", "ACTIVE", "INACTIVE", "BEFORE", "AFTER", "POSITION",
             "GENERATOR", "SEQUENCE", "ROLE", "SCHEMA", "GRANT", "REVOKE", "ALL", "TO", "ON", "PUBLIC", "WITH",
             "OPTION", "IF", "EXISTS", "CASCADE", "RESTRICT", "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION", "WORK",

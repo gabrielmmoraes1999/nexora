@@ -187,6 +187,26 @@ final class MetaCodec {
             for (int column : index.columns) {
                 writer.u16(column);
             }
+            writer.u8(index.descending ? 1 : 0);
+        }
+        writer.utf(schema.primaryConstraint == null ? "" : schema.primaryConstraint);
+        writer.utf(schema.primaryIndex == null ? "" : schema.primaryIndex);
+        writer.u8(schema.primaryDescending ? 1 : 0);
+        writer.u16(schema.foreignKeys.size());
+        for (ForeignKey key : schema.foreignKeys) {
+            writer.utf(key.name);
+            writer.u16(key.columns.length);
+            for (int column : key.columns) {
+                writer.u16(column);
+            }
+            writer.utf(key.referencedSchema);
+            writer.utf(key.referencedTable);
+            writer.u16(key.referencedColumns.length);
+            for (String column : key.referencedColumns) {
+                writer.utf(column);
+            }
+            writer.utf(key.indexName);
+            writer.u8(key.descending ? 1 : 0);
         }
     }
 
@@ -252,10 +272,57 @@ final class MetaCodec {
                     }
                     group[j] = column;
                 }
-                indexes.add(new IndexDef(indexName, group, unique));
+                boolean descending = version >= 5 && reader.u8() != 0;
+                indexes.add(new IndexDef(indexName, group, unique, descending));
             }
         }
-        return new Schema(name, columns, primary, uniques, indexes);
+        String primaryConstraint = "";
+        String primaryIndex = "";
+        boolean primaryDescending = false;
+        List<ForeignKey> foreignKeys = new ArrayList<>();
+        if (version >= 5) {
+            primaryConstraint = reader.utf();
+            primaryIndex = reader.utf();
+            primaryDescending = reader.u8() != 0;
+            int foreignCount = reader.u16();
+            if (foreignCount < 0 || foreignCount > Format.MAX_COLUMNS) {
+                throw new NexException("esquema da tabela está corrompido");
+            }
+            for (int i = 0; i < foreignCount; i++) {
+                String foreignName = reader.utf();
+                int size = reader.u16();
+                if (size <= 0 || size > columns.size()) {
+                    throw new NexException("esquema da tabela está corrompido");
+                }
+                int[] local = new int[size];
+                for (int j = 0; j < size; j++) {
+                    int column = reader.u16();
+                    if (column < 0 || column >= columns.size()) {
+                        throw new NexException("esquema da tabela está corrompido");
+                    }
+                    local[j] = column;
+                }
+                String referencedSchema = reader.utf();
+                String referencedTable = reader.utf();
+                int referencedCount = reader.u16();
+                if (referencedCount <= 0 || referencedCount > Format.MAX_COLUMNS) {
+                    throw new NexException("esquema da tabela está corrompido");
+                }
+                String[] referenced = new String[referencedCount];
+                for (int j = 0; j < referencedCount; j++) {
+                    referenced[j] = reader.utf();
+                }
+                String indexName = reader.utf();
+                boolean descending = reader.u8() != 0;
+                foreignKeys.add(new ForeignKey(foreignName, local, referencedSchema, referencedTable,
+                        referenced, indexName, descending));
+            }
+        } else if (primary.length > 0) {
+            primaryConstraint = "PK_" + name;
+            primaryIndex = primaryConstraint;
+        }
+        return new Schema(name, columns, primary, uniques, indexes,
+                primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
 
     private static void writeDefault(ByteWriter writer, Column column) {

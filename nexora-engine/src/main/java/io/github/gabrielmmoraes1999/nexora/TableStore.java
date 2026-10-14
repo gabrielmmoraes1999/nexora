@@ -116,6 +116,9 @@ final class TableStore implements AutoCloseable {
     }
 
     boolean hasIndex(String name) {
+        if (schema.ownsIndex(name)) {
+            return true;
+        }
         for (IndexDef index : schema.indexes) {
             if (Names.same(index.name, name)) {
                 return true;
@@ -355,11 +358,14 @@ final class TableStore implements AutoCloseable {
         dirty = true;
     }
 
-    void addPrimaryKey(int[] columns) {
+    void addPrimaryKey(int[] columns, String constraint, String index, boolean descending) {
+        if (hasIndex(index)) {
+            throw new NexException("índice já existe: " + index);
+        }
         List<Extent> extra = new ArrayList<>();
-        IndexTree.DiskIndex primary = IndexTree.DiskIndex.empty(new IndexTree.Spec("PRIMARY", columns, true, true))
+        IndexTree.DiskIndex primary = IndexTree.DiskIndex.empty(new IndexTree.Spec(index, columns, true, true))
                 .fill(schema, rows.values(), this::keyParts, extra, pages());
-        Schema nextSchema = schema.withPrimaryKey(columns);
+        Schema nextSchema = schema.withPrimaryKey(columns, constraint, index, descending);
         validate(nextSchema);
         List<IndexTree.DiskIndex> copy = new ArrayList<>();
         copy.add(primary);
@@ -367,6 +373,22 @@ final class TableStore implements AutoCloseable {
         schema = nextSchema;
         indexes = copy;
         pendingFree.addAll(extra);
+        dirty = true;
+    }
+
+    void addForeignKey(ForeignKey key) {
+        if (hasIndex(key.indexName)) {
+            throw new NexException("índice já existe: " + key.indexName);
+        }
+        rejectBlobKey(schema, key.columns);
+        Schema next = schema.withIndex(new IndexDef(key.indexName, key.columns, false, key.descending)).withForeignKey(key);
+        validate(next);
+        IndexTree.DiskIndex created = IndexTree.DiskIndex.empty(new IndexTree.Spec(key.indexName, key.columns, false, false))
+                .fill(schema, rows.values(), this::keyParts, new ArrayList<>(), pages());
+        schema = next;
+        List<IndexTree.DiskIndex> copy = new ArrayList<>(indexes);
+        copy.add(created);
+        indexes = copy;
         dirty = true;
     }
 
@@ -984,7 +1006,7 @@ final class TableStore implements AutoCloseable {
         if (schema.primaryKey.length > 0) {
             next.add(indexes.get(0));
         } else if (primary) {
-            next.add(IndexTree.DiskIndex.empty(new IndexTree.Spec("PRIMARY", new int[]{column}, true, true))
+            next.add(IndexTree.DiskIndex.empty(new IndexTree.Spec(nextSchema.primaryIndex, new int[]{column}, true, true))
                     .fill(nextSchema, rows.values(), this::keyParts, extra, pages()));
         }
         int uniqueFrom = schema.primaryKey.length > 0 ? 1 : 0;

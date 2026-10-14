@@ -7,11 +7,22 @@ import java.util.List;
  *
  * @param schema esquema SQL. O padrão é {@code public}
  */
-public record TableDescription(String schema, String name, List<TableColumn> columns, List<TableIndex> indexes) {
+public record TableDescription(
+        String schema,
+        String name,
+        List<TableColumn> columns,
+        List<TableIndex> indexes,
+        String primaryConstraint,
+        String primaryIndex,
+        boolean primaryDescending,
+        List<ForeignKey> foreignKeys) {
 
     public TableDescription {
         columns = List.copyOf(columns);
         indexes = List.copyOf(indexes);
+        primaryConstraint = primaryConstraint == null ? "" : primaryConstraint;
+        primaryIndex = primaryIndex == null ? "" : primaryIndex;
+        foreignKeys = foreignKeys == null ? List.of() : List.copyOf(foreignKeys);
     }
 
     /**
@@ -30,9 +41,23 @@ public record TableDescription(String schema, String name, List<TableColumn> col
             String defaultSql) {
     }
 
-    public record TableIndex(String table, String name, boolean unique, List<String> columns) {
+    public record TableIndex(String table, String name, boolean unique, List<String> columns, boolean descending) {
         public TableIndex {
             columns = List.copyOf(columns);
+        }
+    }
+
+    public record ForeignKey(
+            String name,
+            List<String> columns,
+            String referencedSchema,
+            String referencedTable,
+            List<String> referencedColumns,
+            String indexName,
+            boolean descending) {
+        public ForeignKey {
+            columns = List.copyOf(columns);
+            referencedColumns = List.copyOf(referencedColumns);
         }
     }
 }

@@ -271,7 +271,28 @@ DROP TABLE IF EXISTS rascunho;
 DROP TABLE pedido;
 ```
 
-Uma tabela tem uma chave primária. Ela pode ser uma coluna (`id INTEGER PRIMARY KEY`) ou composta (`PRIMARY KEY (a, b)`), na criação ou depois com `ALTER TABLE ... ADD PRIMARY KEY`. `ADD CONSTRAINT nome PRIMARY KEY` também vale; o nome não é guardado. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
+Uma tabela tem uma chave primária. Ela pode ser uma coluna (`id INTEGER PRIMARY KEY`) ou composta (`PRIMARY KEY (a, b)`), na criação ou depois com `ALTER TABLE ... ADD PRIMARY KEY`. O índice nasce junto, com o nome da constraint e ordenação Ascending. Sem nome explícito, os dois se chamam `PK_` mais o nome da tabela. `ADD CONSTRAINT PK_pedido PRIMARY KEY (id)` guarda esse nome. Para outro nome ou ordem descendente:
+
+```sql
+ALTER TABLE teste
+  ADD CONSTRAINT PK_teste PRIMARY KEY (id) USING DESCENDING INDEX ix_teste;
+```
+
+`USING INDEX` sem `DESCENDING` continua Ascending. A ordem física do índice permanece crescente; `DESCENDING` fica registrado na constraint e aparece em `ASC_OR_DESC`. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
+
+Chave estrangeira também cria índice, com o prefixo `FK_`. O padrão é `FK_` mais o nome da tabela, Ascending, e o índice recebe o mesmo nome da constraint. A segunda chave da mesma tabela usa `FK_tabela_coluna`. Sem a lista de colunas referenciadas, vale a chave primária da outra tabela. A referência precisa ser a chave primária ou um `UNIQUE`, com o mesmo tipo. Nulo em qualquer coluna da chave não exige registro do outro lado. Apagar ou alterar a chave referenciada falha enquanto houver filho. `ON DELETE` e `ON UPDATE` aceitam `RESTRICT` e `NO ACTION`.
+
+```sql
+CREATE TABLE item (
+    id INTEGER PRIMARY KEY,
+    pedido_id INTEGER,
+    CONSTRAINT FK_item FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+);
+
+ALTER TABLE item
+  ADD CONSTRAINT FK_item_extra FOREIGN KEY (extra) REFERENCES pedido (id)
+  USING DESCENDING INDEX ix_extra;
+```
 
 `getGeneratedKeys()` devolve um resultado vazio. O valor gerado se lê com `SELECT`.
 
@@ -308,7 +329,7 @@ DROP INDEX idx_cliente ON pedido;
 DROP INDEX IF EXISTS idx_cliente ON pedido;
 ```
 
-`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNIQUE_1`, `UNIQUE_2`, … estão reservados. Remover uma coluna remove os índices que a usam.
+`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNIQUE_1`, `UNIQUE_2`, … estão reservados. O índice da chave primária e o de cada chave estrangeira também não saem com `DROP INDEX`. Remover uma coluna remove os índices que a usam.
 
 As entradas ficam em páginas de 4096 bytes na região da tabela. O arquivo cresce com as chaves. A igualdade lê só as páginas do caminho, da raiz até a folha, e a lista inteira de chaves não permanece na memória. Os registros da tabela continuam sendo carregados ao abrir.
 
@@ -488,7 +509,7 @@ try (ResultSet keys = meta.getPrimaryKeys(null, null, "cliente")) {
     while (keys.next()) {
         String column = keys.getString("COLUMN_NAME");
         short position = keys.getShort("KEY_SEQ");
-        String name = keys.getString("PK_NAME"); // PRIMARY
+        String name = keys.getString("PK_NAME"); // PK_cliente
     }
 }
 

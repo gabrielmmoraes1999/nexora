@@ -5,7 +5,7 @@ import java.util.List;
 record ParsedSql(List<Stmt> statements, int parameters) {
 }
 
-sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AddPrimaryKey, Insert, Update, Delete, Select,
+sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AddPrimaryKey, AddForeignKey, Insert, Update, Delete, Select,
         SelectProcedure, Grant, Revoke, BeginTx, CommitTx, RollbackTx, CreateGenerator, DropGenerator, SetGenerator,
         CreateProcedure, DropProcedure, ExecuteProcedure, CreateTrigger, DropTrigger, AlterTrigger, CreateView, DropView,
         CreateRole, DropRole, GrantRole, RevokeRole, DropConnection, CreateSchema, DropSchema, SetSchema {
@@ -41,7 +41,12 @@ record DropConnection(Expr attachment) implements Stmt {
 record DropView(boolean ifExists, String name) implements Stmt {
 }
 
-record CreateTable(boolean ifNotExists, String name, List<ColDef> columns, List<String> primaryKey, List<List<String>> uniques) implements Stmt {
+record CreateTable(boolean ifNotExists, String name, List<ColDef> columns, List<String> primaryKey, List<List<String>> uniques,
+                   String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignClause> foreignKeys) implements Stmt {
+}
+
+record ForeignClause(String constraint, List<String> columns, String index, boolean descending,
+                     String refTable, List<String> refColumns) {
 }
 
 record CreateIndex(boolean unique, boolean ifNotExists, String name, String table, List<String> columns) implements Stmt {
@@ -59,7 +64,11 @@ record AddColumn(String table, ColDef column) implements Stmt {
 record DropColumn(String table, String column) implements Stmt {
 }
 
-record AddPrimaryKey(String table, List<String> columns) implements Stmt {
+record AddPrimaryKey(String table, List<String> columns, String constraint, String index, boolean descending) implements Stmt {
+}
+
+record AddForeignKey(String table, List<String> columns, String constraint, String index, boolean descending,
+                     String refTable, List<String> refColumns) implements Stmt {
 }
 
 record Insert(String table, List<String> columns, List<List<Expr>> rows) implements Stmt {

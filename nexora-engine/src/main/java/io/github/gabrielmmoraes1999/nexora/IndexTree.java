@@ -35,7 +35,7 @@ final class IndexTree {
     static List<Spec> specs(Schema schema) {
         List<Spec> list = new ArrayList<>();
         if (schema.primaryKey.length > 0) {
-            list.add(new Spec("PRIMARY", schema.primaryKey, true, true));
+            list.add(new Spec(schema.primaryIndex, schema.primaryKey, true, true));
         }
         int sequence = 1;
         for (int[] unique : schema.uniques) {

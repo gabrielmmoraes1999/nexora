@@ -37,9 +37,23 @@ public final class Ddl {
     ) {
     }
 
-    public record IndexInfo(String name, boolean unique, List<String> columns) {
+    public record IndexInfo(String name, boolean unique, List<String> columns, boolean descending) {
         public IndexInfo {
             columns = List.copyOf(columns);
+        }
+    }
+
+    public record ConstraintInfo(
+            String name,
+            List<String> columns,
+            String index,
+            boolean descending,
+            String referencedSchema,
+            String referencedTable,
+            List<String> referencedColumns) {
+        public ConstraintInfo {
+            columns = List.copyOf(columns);
+            referencedColumns = referencedColumns == null ? List.of() : List.copyOf(referencedColumns);
         }
     }
 
@@ -101,6 +115,11 @@ public final class Ddl {
     }
 
     public static String table(String schema, String name, List<ColumnInfo> columns, List<IndexInfo> indexes) {
+        return table(schema, name, columns, indexes, null, List.of());
+    }
+
+    public static String table(String schema, String name, List<ColumnInfo> columns, List<IndexInfo> indexes,
+                               ConstraintInfo primaryKey, List<ConstraintInfo> foreignKeys) {
         List<String> primary = new ArrayList<>();
         for (ColumnInfo column : columns) {
             if (column.primaryKeyPosition > 0) {
@@ -111,7 +130,17 @@ public final class Ddl {
             }
         }
         primary.removeIf(String::isBlank);
-        boolean inlineKey = primary.size() == 1;
+        if (primaryKey != null && !primaryKey.columns.isEmpty()) {
+            primary = new ArrayList<>(primaryKey.columns);
+        }
+        String constraint = primaryKey == null || primaryKey.name == null || primaryKey.name.isBlank()
+                ? "PK_" + name : primaryKey.name;
+        String indexName = primaryKey == null || primaryKey.index == null || primaryKey.index.isBlank()
+                ? constraint : primaryKey.index;
+        boolean descending = primaryKey != null && primaryKey.descending;
+        boolean namedKey = primaryKey != null
+                && (descending || !constraint.equalsIgnoreCase("PK_" + name) || !indexName.equalsIgnoreCase(constraint));
+        boolean inlineKey = primary.size() == 1 && !namedKey;
         StringBuilder sql = new StringBuilder();
         sql.append("CREATE TABLE ").append(SqlNames.qualify(schema, name)).append(" (\n");
         for (int i = 0; i < columns.size(); i++) {
@@ -124,8 +153,19 @@ public final class Ddl {
                     column.nullable, column.defaultSql, inlineKey && column.primaryKeyPosition > 0,
                     false, column.autoIncrement);
         }
-        if (!inlineKey && !primary.isEmpty()) {
-            sql.append(",\n    PRIMARY KEY (").append(quotedList(primary)).append(')');
+        if (!primary.isEmpty() && !inlineKey) {
+            sql.append(",\n    ");
+            if (namedKey) {
+                sql.append("CONSTRAINT ").append(SqlNames.quote(constraint)).append(' ');
+            }
+            sql.append("PRIMARY KEY (").append(quotedList(primary)).append(')');
+            if (namedKey && (descending || !indexName.equalsIgnoreCase(constraint))) {
+                sql.append(" USING ");
+                if (descending) {
+                    sql.append("DESCENDING ");
+                }
+                sql.append("INDEX ").append(SqlNames.quote(indexName));
+            }
         }
         for (IndexInfo index : indexes) {
             if (index.unique && reservedUnique(index.name)) {
@@ -133,13 +173,59 @@ public final class Ddl {
             }
         }
         sql.append("\n)");
+        if (foreignKeys != null) {
+            for (ConstraintInfo foreign : foreignKeys) {
+                sql.append(";\n\nALTER TABLE ").append(SqlNames.qualify(schema, name))
+                        .append(" ADD CONSTRAINT ").append(SqlNames.quote(foreign.name))
+                        .append(" FOREIGN KEY (").append(quotedList(foreign.columns))
+                        .append(") REFERENCES ").append(SqlNames.qualify(foreign.referencedSchema, foreign.referencedTable))
+                        .append(" (").append(quotedList(foreign.referencedColumns)).append(')');
+                if (foreign.descending || (foreign.index != null && !foreign.index.equalsIgnoreCase(foreign.name))) {
+                    sql.append(" USING ");
+                    if (foreign.descending) {
+                        sql.append("DESCENDING ");
+                    }
+                    sql.append("INDEX ").append(SqlNames.quote(foreign.index));
+                }
+            }
+        }
         for (IndexInfo index : indexes) {
             if (index.name == null || reservedIndex(index.name)) {
+                continue;
+            }
+            if (primaryKey != null && index.name.equalsIgnoreCase(indexName)) {
+                continue;
+            }
+            if (primaryKey == null && index.unique && sameColumns(index.columns, primary)) {
+                continue;
+            }
+            if (foreignKeys != null && foreignIndex(foreignKeys, index.name)) {
                 continue;
             }
             sql.append(";\n\n").append(createIndex(index.unique, index.name, schema, name, index.columns));
         }
         return sql.toString();
+    }
+
+    private static boolean foreignIndex(List<ConstraintInfo> foreignKeys, String name) {
+        for (ConstraintInfo foreign : foreignKeys) {
+            if (foreign.index != null && foreign.index.equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean sameColumns(List<String> left, List<String> right) {
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.size(); i++) {
+            if (!left.get(i).equalsIgnoreCase(right.get(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static String createIndex(boolean unique, String index, String schema, String table, List<String> columns) {

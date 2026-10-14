@@ -370,9 +370,15 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         }
         try {
             String sql = switch (node.kind()) {
-                case TABLE, SYSTEM_TABLE -> Ddl.table(node.schema(), node.name(),
-                        Outline.columns(connection, node.schema(), node.name()),
-                        Outline.indexes(connection, node.schema(), node.name()));
+                case TABLE, SYSTEM_TABLE -> {
+                    List<Ddl.IndexInfo> indexes = Outline.indexes(connection, node.schema(), node.name());
+                    List<Ddl.ConstraintInfo> primary = Outline.primaryKeys(connection, node.schema(), node.name(), indexes);
+                    yield Ddl.table(node.schema(), node.name(),
+                            Outline.columns(connection, node.schema(), node.name()),
+                            indexes,
+                            primary.isEmpty() ? null : primary.get(0),
+                            Outline.foreignKeys(connection, node.schema(), node.name(), indexes));
+                }
                 case VIEW -> {
                     Outline.ViewInfo view = Outline.view(connection, node.schema(), node.name());
                     yield Ddl.view(node.schema(), node.name(), view.columns(), view.source());

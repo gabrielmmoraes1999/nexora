@@ -147,7 +147,7 @@ class NexDriverTest {
                 assertTrue(keys.next());
                 assertEquals("id", keys.getString("COLUMN_NAME"));
                 assertEquals(1, keys.getShort("KEY_SEQ"));
-                assertEquals("PRIMARY", keys.getString("PK_NAME"));
+                assertEquals("PK_cliente", keys.getString("PK_NAME"));
             }
             try (Connection segunda = DriverManager.getConnection(url, "dba", "dba");
                  ResultSet nomes = segunda.createStatement().executeQuery("SELECT nome FROM cliente")) {
