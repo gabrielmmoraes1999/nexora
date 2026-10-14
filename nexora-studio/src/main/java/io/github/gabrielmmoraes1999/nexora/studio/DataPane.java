@@ -177,8 +177,8 @@ final class DataPane extends JPanel {
     }
 
     private JPanel toolbar() {
-        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        bar.setBackground(new java.awt.Color(0xF7F8FA));
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+        Look.band(bar);
         JButton refresh = Look.button("Atualizar");
         JButton insert = Look.button("Inserir");
         JButton delete = Look.button("Excluir");

@@ -7,7 +7,10 @@ import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.MatteBorder;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.sql.Connection;
@@ -57,8 +60,11 @@ final class ObjectPane extends JPanel {
     private JPanel header() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(java.awt.Color.WHITE);
-        panel.setBorder(new EmptyBorder(8, 12, 8, 12));
-        JLabel title = new JLabel(caption());
+        panel.setBorder(new CompoundBorder(
+                new MatteBorder(0, 0, 1, 0, Look.LINE),
+                new EmptyBorder(10, 14, 10, 14)));
+        JLabel title = new JLabel(caption(), Icons.of(node, true), SwingConstants.LEADING);
+        title.setIconTextGap(8);
         title.setFont(Look.UI_BOLD);
         title.setForeground(Look.NAVY);
         panel.add(title, BorderLayout.WEST);
@@ -909,8 +915,8 @@ final class ObjectPane extends JPanel {
     }
 
     private static JPanel buttons(JButton... buttons) {
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        panel.setBackground(new java.awt.Color(0xF7F8FA));
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+        Look.band(panel);
         for (JButton button : buttons) {
             if (button != null) {
                 panel.add(button);

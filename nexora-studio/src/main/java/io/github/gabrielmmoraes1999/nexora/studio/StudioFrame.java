@@ -1,5 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora.studio;
 
+import javax.swing.Box;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
@@ -10,16 +12,18 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JSeparator;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.KeyStroke;
+import javax.swing.SwingConstants;
 import javax.swing.border.EmptyBorder;
-import javax.swing.border.MatteBorder;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Taskbar;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
@@ -33,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.BiConsumer;
 
 final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
 
@@ -48,13 +53,17 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     private final JLabel statusSchema = statusLabel("");
     private final JLabel statusMode = statusLabel("");
     private final JLabel statusMessage = statusLabel("");
-    private final JButton connectButton = Look.button("Conectar");
-    private final JButton disconnectButton = Look.button("Desconectar");
-    private final JButton refreshButton = Look.button("Atualizar");
-    private final JButton queryButton = Look.button("Nova consulta");
-    private final JButton runButton = Look.primary("Executar");
-    private final JButton commitButton = Look.button("Commit");
-    private final JButton rollbackButton = Look.button("Rollback");
+    private final JLabel statusDotUser = dot();
+    private final JLabel statusDotSchema = dot();
+    private final JLabel statusDotMode = dot();
+    private final JLabel statusDotMessage = dot();
+    private final JButton connectButton = Look.tool("Conectar");
+    private final JButton disconnectButton = Look.tool("Desconectar");
+    private final JButton refreshButton = Look.tool("Atualizar");
+    private final JButton queryButton = Look.tool("Nova consulta");
+    private final JButton runButton = Look.primary("Executar", Icons.PLAY);
+    private final JButton commitButton = Look.tool("Commit");
+    private final JButton rollbackButton = Look.tool("Rollback");
     private boolean updatingSchema;
     private int queryCount;
 
@@ -62,7 +71,8 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         super("Nexora Studio");
         registryFile = Registry.defaultFile();
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setIconImage(Look.iconImage());
+        setIconImages(Look.iconImages());
+        installTaskbarIcon();
         try {
             entries.addAll(Registry.load(registryFile));
         } catch (Exception exception) {
@@ -70,20 +80,39 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         }
         setJMenuBar(menu());
         add(toolbar(), BorderLayout.NORTH);
+        workspace.putClientProperty("JTabbedPane.tabType", "underlined");
+        workspace.putClientProperty("JTabbedPane.showTabSeparators", true);
+        workspace.putClientProperty("JTabbedPane.tabHeight", 34);
+        workspace.putClientProperty("JTabbedPane.tabSelectionHeight", 3);
+        workspace.putClientProperty("JTabbedPane.tabClosable", true);
+        workspace.putClientProperty("JTabbedPane.tabCloseToolTipText", "Fechar");
+        workspace.putClientProperty("JTabbedPane.tabsPopupPolicy", "asNeeded");
+        workspace.putClientProperty("JTabbedPane.scrollButtonsPolicy", "asNeeded");
+        workspace.putClientProperty("JTabbedPane.tabCloseCallback", (BiConsumer<JTabbedPane, Integer>) (pane, index) -> {
+            if (index < 0 || index >= pane.getTabCount()) {
+                return;
+            }
+            Component page = pane.getComponentAt(index);
+            if (page instanceof JComponent component
+                    && Boolean.FALSE.equals(component.getClientProperty("JTabbedPane.tabClosable"))) {
+                return;
+            }
+            pane.remove(index);
+        });
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, explorer, workspace);
         split.setDividerLocation(300);
         split.setResizeWeight(0);
-        split.setDividerSize(6);
+        split.setDividerSize(8);
         split.setBorder(new EmptyBorder(0, 0, 0, 0));
         add(split, BorderLayout.CENTER);
         add(statusBar(), BorderLayout.SOUTH);
         workspace.addChangeListener(event -> updateActions());
         bindKeys();
-        addTab("Início", new StartPage(this::createDatabase, this::register, this::newQueryFromStart), false);
+        addTab("Início", Look.imageIcon(16), new StartPage(this::createDatabase, this::register, this::newQueryFromStart), false);
         explorer.show(entries, outlines(), "");
         updateActions();
-        setSize(1280, 800);
-        setMinimumSize(new Dimension(960, 640));
+        setSize(1360, 840);
+        setMinimumSize(new Dimension(1100, 680));
         setLocationRelativeTo(null);
         addWindowListener(new WindowAdapter() {
             @Override
@@ -147,7 +176,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         }
         queryCount++;
         String tab = title == null || title.isBlank() || "SQL".equals(title) ? "SQL " + queryCount : title;
-        addTab(tab, new QueryPane(this, databaseId, sql), true);
+        addTab(tab, Icons.SQL, new QueryPane(this, databaseId, sql), true);
     }
 
     @Override
@@ -169,7 +198,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             return;
         }
         ObjectPane pane = new ObjectPane(this, node, data);
-        addTab(node.title().isBlank() ? node.name() : node.title(), pane, true);
+        addTab(node.title().isBlank() ? node.name() : node.title(), Icons.of(node, true), pane, true);
     }
 
     @Override
@@ -612,10 +641,22 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                 statusMode.setText("");
                 setTitle("Nexora Studio");
             }
+            joinStatus();
         } finally {
             updatingSchema = false;
         }
         schemas.setEnabled(session != null);
+    }
+
+    private void joinStatus() {
+        JLabel[] labels = {statusConnection, statusUser, statusSchema, statusMode, statusMessage};
+        JLabel[] dots = {statusDotUser, statusDotSchema, statusDotMode, statusDotMessage};
+        boolean previous = !labels[0].getText().isBlank();
+        for (int i = 1; i < labels.length; i++) {
+            boolean filled = !labels[i].getText().isBlank();
+            dots[i - 1].setVisible(previous && filled);
+            previous = previous || filled;
+        }
     }
 
     private String activeId() {
@@ -731,22 +772,31 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                 Interface administrativa do Nexora, no espírito do IBExpert.
                 O banco é um arquivo .db com o log .log ao lado. A conexão embutida abre o arquivo
                 neste processo. A conexão de rede fala com o nexora-server.
-                """, "Sobre", javax.swing.JOptionPane.INFORMATION_MESSAGE)));
+                """, "Sobre", javax.swing.JOptionPane.PLAIN_MESSAGE, Look.imageIcon(64))));
         bar.add(file);
         bar.add(database);
         bar.add(query);
         bar.add(help);
+        bar.add(Box.createHorizontalGlue());
+        JLabel brand = new JLabel("Nexora", Look.imageIcon(16), SwingConstants.LEADING);
+        brand.setIconTextGap(6);
+        brand.setFont(Look.UI_BOLD);
+        brand.setForeground(Look.NAVY);
+        brand.setBorder(new EmptyBorder(0, 8, 0, 12));
+        bar.add(brand);
         return bar;
     }
 
     private JPanel toolbar() {
-        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
-        bar.setBackground(new Color(0xF7F8FA));
-        bar.setBorder(new MatteBorder(0, 0, 1, 0, Look.LINE));
-        bar.add(Look.button("Registrar"));
-        ((JButton) bar.getComponent(0)).addActionListener(event -> register());
-        JButton create = Look.button("Criar banco");
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 4));
+        Look.band(bar);
+        JButton registerButton = Look.tool("Registrar");
+        registerButton.setToolTipText("Registrar um banco já existente");
+        registerButton.addActionListener(event -> register());
+        JButton create = Look.tool("Criar banco");
+        create.setToolTipText("Criar um arquivo .db");
         create.addActionListener(event -> createDatabase());
+        bar.add(registerButton);
         connectButton.addActionListener(event -> {
             Node node = explorer.selectedDatabase();
             if (node != null) {
@@ -768,7 +818,14 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                 newQueryFromStart();
             }
         });
+        connectButton.setToolTipText("Conectar ao banco selecionado");
+        disconnectButton.setToolTipText("Desconectar o banco selecionado");
+        refreshButton.setToolTipText("Atualizar o explorador (F5)");
+        queryButton.setToolTipText("Nova consulta (Ctrl+N)");
         runButton.setToolTipText("Executar o script da consulta (F9)");
+        commitButton.setToolTipText("Confirmar a transação aberta");
+        rollbackButton.setToolTipText("Desfazer a transação aberta");
+        autoCommit.setToolTipText("Grava cada comando assim que ele termina");
         runButton.addActionListener(event -> executeQuery());
         commitButton.addActionListener(event -> transaction(true));
         rollbackButton.addActionListener(event -> transaction(false));
@@ -787,7 +844,9 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         bar.add(commitButton);
         bar.add(rollbackButton);
         bar.add(autoCommit);
-        bar.add(new JLabel("Esquema"));
+        JLabel schemaLabel = new JLabel("Esquema");
+        schemaLabel.setBorder(new EmptyBorder(0, 8, 0, 4));
+        bar.add(schemaLabel);
         bar.add(schemas);
         return bar;
     }
@@ -795,15 +854,15 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     private JPanel statusBar() {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         bar.setBackground(Look.NAVY);
-        bar.setBorder(new EmptyBorder(5, 10, 5, 10));
+        bar.setBorder(new EmptyBorder(6, 12, 6, 12));
         bar.add(statusConnection);
-        bar.add(gap());
+        bar.add(statusDotUser);
         bar.add(statusUser);
-        bar.add(gap());
+        bar.add(statusDotSchema);
         bar.add(statusSchema);
-        bar.add(gap());
+        bar.add(statusDotMode);
         bar.add(statusMode);
-        bar.add(gap());
+        bar.add(statusDotMessage);
         bar.add(statusMessage);
         return bar;
     }
@@ -825,15 +884,31 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         });
     }
 
-    private void addTab(String title, JComponent page, boolean closable) {
-        workspace.addTab(title, page);
-        int index = workspace.indexOfComponent(page);
-        workspace.setTabComponentAt(index, new TabHeader(title, closable));
+    private void addTab(String title, Icon icon, JComponent page, boolean closable) {
+        page.putClientProperty("JTabbedPane.tabClosable", closable);
+        workspace.addTab(title, icon, page);
         workspace.setSelectedComponent(page);
+    }
+
+    private void installTaskbarIcon() {
+        try {
+            if (Taskbar.isTaskbarSupported()) {
+                Taskbar taskbar = Taskbar.getTaskbar();
+                if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
+                    taskbar.setIconImage(Look.icon(64));
+                }
+            }
+        } catch (UnsupportedOperationException ignored) {
+            // a janela continua com o ícone definido em setIconImages
+        }
     }
 
     private static JMenuItem item(String text, Runnable action) {
         JMenuItem item = new JMenuItem(text);
+        Icon icon = Icons.action(text);
+        if (icon != null) {
+            item.setIcon(icon);
+        }
         item.addActionListener(event -> action.run());
         return item;
     }
@@ -845,40 +920,18 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         return label;
     }
 
-    private static JLabel gap() {
-        JLabel label = new JLabel("    ");
+    private static JLabel dot() {
+        JLabel label = new JLabel("·");
+        label.setForeground(new Color(255, 255, 255, 150));
+        label.setFont(Look.UI);
+        label.setBorder(new EmptyBorder(0, 8, 0, 8));
         return label;
     }
 
-    private static JPanel separator() {
-        JPanel panel = new JPanel();
-        panel.setOpaque(false);
-        panel.setPreferredSize(new Dimension(8, 8));
-        return panel;
-    }
-
-    private final class TabHeader extends JPanel {
-        TabHeader(String title, boolean closable) {
-            super(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            setOpaque(false);
-            JLabel label = new JLabel(title);
-            label.setFont(Look.UI);
-            add(label);
-            if (closable) {
-                JButton close = new JButton("×");
-                close.setFont(Look.UI);
-                close.setBorder(new EmptyBorder(0, 4, 0, 0));
-                close.setContentAreaFilled(false);
-                close.setFocusPainted(false);
-                close.addActionListener(event -> {
-                    int index = workspace.indexOfTabComponent(TabHeader.this);
-                    if (index >= 0) {
-                        workspace.remove(index);
-                    }
-                });
-                add(close);
-            }
-        }
+    private static JSeparator separator() {
+        JSeparator separator = new JSeparator(SwingConstants.VERTICAL);
+        separator.setPreferredSize(new Dimension(10, 18));
+        return separator;
     }
 
     private static final class Session {

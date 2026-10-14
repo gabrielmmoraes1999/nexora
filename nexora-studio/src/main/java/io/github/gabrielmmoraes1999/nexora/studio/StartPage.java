@@ -21,7 +21,11 @@ final class StartPage extends JPanel {
         JPanel card = new JPanel();
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
         card.setBackground(Color.WHITE);
+        card.putClientProperty("FlatLaf.style", "arc: 18");
         card.setBorder(new CompoundBorder(new LineBorder(Look.LINE, 1, true), new EmptyBorder(28, 32, 28, 32)));
+
+        JLabel mark = new JLabel(Look.imageIcon(72));
+        mark.setAlignmentX(LEFT_ALIGNMENT);
 
         JLabel title = new JLabel("Nexora Studio");
         title.setFont(Look.UI.deriveFont(Font.BOLD, 26f));
@@ -42,7 +46,7 @@ final class StartPage extends JPanel {
         text.setForeground(Look.INK);
         text.setAlignmentX(LEFT_ALIGNMENT);
 
-        JButton createButton = Look.primary("Criar banco");
+        JButton createButton = Look.primary("Criar banco", Icons.plus(Color.WHITE));
         JButton registerButton = Look.button("Registrar banco");
         JButton sqlButton = Look.button("Nova consulta");
         createButton.addActionListener(event -> create.run());
@@ -55,6 +59,8 @@ final class StartPage extends JPanel {
         actions.add(registerButton);
         actions.add(sqlButton);
 
+        card.add(mark);
+        card.add(Box.createVerticalStrut(16));
         card.add(title);
         card.add(Box.createVerticalStrut(10));
         card.add(text);

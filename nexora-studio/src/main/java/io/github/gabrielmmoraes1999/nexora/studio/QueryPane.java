@@ -121,12 +121,13 @@ final class QueryPane extends JPanel {
     }
 
     private JPanel toolbar() {
-        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        bar.setBackground(new java.awt.Color(0xF7F8FA));
-        javax.swing.JButton run = Look.primary("Executar");
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+        Look.band(bar);
+        javax.swing.JButton run = Look.primary("Executar", Icons.PLAY);
         run.setToolTipText("Executar o script (F9)");
         run.addActionListener(event -> execute());
         javax.swing.JButton copy = Look.button("Copiar grade");
+        copy.setToolTipText("Copia a grade para a área de transferência");
         copy.addActionListener(event -> Tables.copy(grid));
         bar.add(run);
         bar.add(copy);

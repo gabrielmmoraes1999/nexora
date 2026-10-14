@@ -1,5 +1,6 @@
 package io.github.gabrielmmoraes1999.nexora.studio;
 
+import javax.swing.Icon;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
@@ -7,6 +8,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.JTree;
+import javax.swing.SwingConstants;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -17,9 +19,6 @@ import javax.swing.tree.TreePath;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.Insets;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -67,7 +66,7 @@ final class ExplorerPane extends JPanel {
 
     private final Listener listener;
     private final JTree tree = new JTree(new DefaultMutableTreeNode("Bancos"));
-    private final PromptField filter = new PromptField("Filtrar objetos");
+    private final JTextField filter = new JTextField();
     private final JLabel empty = new JLabel("Nenhum banco. Use Registrar ou Criar banco.");
     private final Set<String> expanded = new HashSet<>();
     private String focusId = "";
@@ -79,8 +78,9 @@ final class ExplorerPane extends JPanel {
         setPreferredSize(new Dimension(300, 400));
         JPanel header = new JPanel(new BorderLayout());
         header.setBackground(Look.NAVY);
-        header.setBorder(new EmptyBorder(8, 12, 8, 12));
-        JLabel title = new JLabel("Explorador");
+        header.setBorder(new EmptyBorder(10, 12, 10, 12));
+        JLabel title = new JLabel("Explorador", Look.imageIcon(18), SwingConstants.LEADING);
+        title.setIconTextGap(8);
         title.setForeground(java.awt.Color.WHITE);
         title.setFont(Look.UI_BOLD);
         header.add(title, BorderLayout.CENTER);
@@ -88,6 +88,10 @@ final class ExplorerPane extends JPanel {
         filterBar.setBorder(new EmptyBorder(8, 8, 8, 8));
         filterBar.setBackground(Look.PAPER);
         filter.setFont(Look.UI);
+        filter.putClientProperty("JTextField.placeholderText", "Filtrar objetos");
+        filter.putClientProperty("JTextField.leadingIcon", Icons.SEARCH);
+        filter.putClientProperty("JTextField.showClearButton", true);
+        filter.setToolTipText("Filtra bancos e objetos pelo nome");
         filterBar.add(filter, BorderLayout.CENTER);
         JPanel north = new JPanel(new BorderLayout());
         north.add(header, BorderLayout.NORTH);
@@ -96,7 +100,8 @@ final class ExplorerPane extends JPanel {
 
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
-        tree.setRowHeight(24);
+        tree.setRowHeight(28);
+        tree.putClientProperty("JTree.lineStyle", "dashed");
         tree.setBackground(new java.awt.Color(0xF7F9FB));
         tree.setFont(Look.UI);
         tree.setCellRenderer(new Renderer());
@@ -526,6 +531,10 @@ final class ExplorerPane extends JPanel {
 
     private static void item(JPopupMenu menu, String label, Runnable action) {
         JMenuItem item = new JMenuItem(label);
+        Icon icon = Icons.action(label);
+        if (icon != null) {
+            item.setIcon(icon);
+        }
         item.addActionListener(event -> action.run());
         menu.add(item);
     }
@@ -552,40 +561,6 @@ final class ExplorerPane extends JPanel {
                 }
             }
             return this;
-        }
-    }
-
-    private static final class PromptField extends JTextField {
-        private final String prompt;
-
-        PromptField(String prompt) {
-            this.prompt = prompt;
-            addFocusListener(new java.awt.event.FocusAdapter() {
-                @Override
-                public void focusGained(java.awt.event.FocusEvent event) {
-                    repaint();
-                }
-
-                @Override
-                public void focusLost(java.awt.event.FocusEvent event) {
-                    repaint();
-                }
-            });
-        }
-
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            super.paintComponent(graphics);
-            if (!getText().isEmpty() || isFocusOwner()) {
-                return;
-            }
-            Graphics2D g = (Graphics2D) graphics.create();
-            g.setFont(getFont());
-            g.setColor(Look.MUTED);
-            Insets insets = getInsets();
-            java.awt.FontMetrics metrics = g.getFontMetrics();
-            g.drawString(prompt, insets.left, (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent());
-            g.dispose();
         }
     }
 }
