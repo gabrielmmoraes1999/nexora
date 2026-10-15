@@ -7,7 +7,7 @@ import java.sql.Timestamp;
 import java.util.Locale;
 
 /**
- * Texto da grade. Célula vazia vira {@code NULL}. Em texto, {@code ''} grava vazio.
+ * Grid text. An empty cell becomes {@code NULL}. In text, {@code ''} stores empty.
  */
 public final class ValuesText {
 
@@ -53,7 +53,7 @@ public final class ValuesText {
         String type = typeName == null ? "" : typeName.toUpperCase(Locale.ROOT);
         if (text == null || text.isBlank()) {
             if (!nullable) {
-                throw new IllegalArgumentException("coluna obrigatória");
+                throw new IllegalArgumentException("required column");
             }
             return null;
         }
@@ -68,16 +68,16 @@ public final class ValuesText {
                 case "TIME" -> Time.valueOf(trimmed.length() == 5 ? trimmed + ":00" : trimmed);
                 case "TIMESTAMP" -> timestamp(trimmed);
                 case "CHAR", "CHARACTER", "VARCHAR", "CHARACTER VARYING" -> string(trimmed);
-                case "BLOB", "BYTEA", "BINARY", "VARBINARY" -> throw new IllegalArgumentException("BLOB não se edita na grade");
+                case "BLOB", "BYTEA", "BINARY", "VARBINARY" -> throw new IllegalArgumentException("BLOB cannot be edited in the grid");
                 default -> trimmed;
             };
         } catch (IllegalArgumentException exception) {
             if (exception.getMessage() != null && !exception.getMessage().startsWith("For input")) {
                 throw exception;
             }
-            throw new IllegalArgumentException("valor inválido para " + type + ": " + trimmed);
+            throw new IllegalArgumentException("invalid value for " + type + ": " + trimmed);
         } catch (RuntimeException exception) {
-            throw new IllegalArgumentException("valor inválido para " + type + ": " + trimmed);
+            throw new IllegalArgumentException("invalid value for " + type + ": " + trimmed);
         }
     }
 
@@ -89,7 +89,7 @@ public final class ValuesText {
         if (folded.equals("false") || folded.equals("0")) {
             return Boolean.FALSE;
         }
-        throw new IllegalArgumentException("use TRUE ou FALSE");
+        throw new IllegalArgumentException("use TRUE or FALSE");
     }
 
     private static String string(String text) {

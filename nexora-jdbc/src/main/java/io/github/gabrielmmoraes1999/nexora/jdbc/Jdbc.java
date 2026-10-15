@@ -24,7 +24,7 @@ final class Jdbc {
     }
 
     static SQLFeatureNotSupportedException unsupported(String feature) {
-        return new SQLFeatureNotSupportedException(feature + " não é suportado pelo Nexora");
+        return new SQLFeatureNotSupportedException(feature + " is not supported by Nexora");
     }
 
     static boolean nameMatches(String pattern, String name) {

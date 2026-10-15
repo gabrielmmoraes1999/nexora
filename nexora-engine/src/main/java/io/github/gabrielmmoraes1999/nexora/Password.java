@@ -1,7 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Senha gravada com bcrypt ({@code $2a$}, custo 10).
+ * Password stored with bcrypt ({@code $2a$}, cost 10).
  */
 final class Password {
 

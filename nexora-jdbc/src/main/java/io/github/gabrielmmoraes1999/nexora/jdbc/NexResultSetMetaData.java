@@ -132,7 +132,7 @@ final class NexResultSetMetaData implements ResultSetMetaData {
         if (iface != null && iface.isInstance(this)) {
             return iface.cast(this);
         }
-        throw new SQLException("não é " + iface);
+        throw new SQLException("is not " + iface);
     }
 
     @Override
@@ -142,7 +142,7 @@ final class NexResultSetMetaData implements ResultSetMetaData {
 
     private JdbcColumn column(int index) throws SQLException {
         if (index < 1 || index > columns.size()) {
-            throw new SQLException("índice de coluna fora do intervalo: " + index, "07009");
+            throw new SQLException("column index out of range: " + index, "07009");
         }
         return columns.get(index - 1);
     }

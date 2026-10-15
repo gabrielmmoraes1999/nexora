@@ -13,31 +13,31 @@ import java.util.Locale;
 import java.util.function.IntConsumer;
 
 /**
- * Nexora. O banco é um arquivo {@code .db}: tabelas, BLOB,
- * configuração, usuários e conexões ficam nele. O {@code .log} ao lado
- * guarda as transações confirmadas desde a criação ou o último backup completo.
- * Se esse arquivo não existe, ou está vazio, a abertura cria um log só com o cabeçalho
- * e avança a geração: o arquivo antigo deixa de abrir o banco. A abertura e o fechamento gravam o checkpoint.
+ * Nexora. The database is a {@code .db} file: tables, BLOBs,
+ * configuration, users, and connections live in it. The {@code .log} beside it
+ * stores the committed transactions since creation or the last full backup.
+ * If that file does not exist, or is empty, opening creates a log with only the header
+ * and advances the generation: the old file can no longer open the database. Opening and closing write the checkpoint.
  *
- * <p>A abertura exige usuário e senha e um arquivo que já existe.
- * {@link #create(Path, DatabaseOptions)} escolhe a página, a senha e o nome.
- * A senha é gravada com bcrypt.
+ * <p>Opening requires a user and password and a file that already exists.
+ * {@link #create(Path, DatabaseOptions)} chooses the page size, the password, and the name.
+ * The password is stored with bcrypt.
  *
  * <pre>{@code
- * try (Database db = Database.open(Path.of("loja.db"), "dba", "dba")) {
+ * try (Database db = Database.open(Path.of("store.db"), "dba", "dba")) {
  *     db.execute("""
- *             CREATE TABLE cliente (
+ *             CREATE TABLE customer (
  *                 id INTEGER PRIMARY KEY AUTOINCREMENT,
- *                 nome VARCHAR(120) NOT NULL,
- *                 foto BLOB
+ *                 name VARCHAR(120) NOT NULL,
+ *                 photo BLOB
  *             )
  *             """);
- *     db.execute("INSERT INTO cliente (nome, foto) VALUES (?, ?)", "Ana", foto);
+ *     db.execute("INSERT INTO customer (name, photo) VALUES (?, ?)", "Ann", photo);
  * }
  * }</pre>
  *
- * <p>No DBeaver, o driver é {@link io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver} e a URL
- * é {@code jdbc:nexora:embedded:<arquivo.db>} ou {@code jdbc:nexora://host:porta/nome}.
+ * <p>In DBeaver, the driver is {@link io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver} and the URL
+ * is {@code jdbc:nexora:embedded:<file.db>} or {@code jdbc:nexora://host:port/name}.
  */
 public final class Database implements AutoCloseable {
 
@@ -50,29 +50,29 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Cria um arquivo novo. A página é 4096, 8192, 16384 ou 32768 e não muda depois.
-     * Um arquivo que já tem conteúdo não é reaproveitado.
+     * Creates a new file. The page size is 4096, 8192, 16384, or 32768 and does not change afterward.
+     * A file that already has content is not reused.
      */
     public static void create(Path file, DatabaseOptions options) {
         if (file == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         if (options == null) {
-            throw new NexException("as opções do banco são obrigatórias");
+            throw new NexException("database options are required");
         }
         Engine.create(file, options);
     }
 
     /**
-     * Backup completo: copia o {@code .db} e o {@code .log} para a pasta
-     * e faz o log vivo passar a registrar só o que mudar depois.
+     * Full backup: copies the {@code .db} and the {@code .log} into the directory
+     * and makes the live log record only what changes afterward.
      */
     public static void backup(Path database, Path directory) {
         if (database == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         if (directory == null) {
-            throw new NexException("a pasta do backup é obrigatória");
+            throw new NexException("backup directory is required");
         }
         try (DatabaseFile file = DatabaseFile.open(database)) {
             file.backupTo(directory);
@@ -80,15 +80,15 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Backup de modificação: copia o {@code .log} para a pasta.
-     * O log vivo permanece, com as transações desde a criação ou o último backup completo.
+     * Modification backup: copies the {@code .log} into the directory.
+     * The live log stays, with the transactions since creation or the last full backup.
      */
     public static void backupLog(Path database, Path directory) {
         if (database == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         if (directory == null) {
-            throw new NexException("a pasta do backup é obrigatória");
+            throw new NexException("backup directory is required");
         }
         try (DatabaseFile file = DatabaseFile.open(database)) {
             file.backupLogTo(directory);
@@ -96,15 +96,15 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Aplica um log sobre o {@code .db}. A mesma geração avança o banco a
-     * partir do checkpoint. A geração seguinte traz o que mudou depois do backup.
+     * Applies a log onto the {@code .db}. The same generation advances the database
+     * from the checkpoint. The next generation brings what changed after the backup.
      */
     public static void applyLog(Path database, Path log) {
         if (database == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         if (log == null) {
-            throw new NexException("o log de transação é obrigatório");
+            throw new NexException("transaction log is required");
         }
         try (Engine engine = Engine.open(database)) {
             engine.applyExternalLog(log);
@@ -112,32 +112,32 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Lê as transações comprimidas do {@code .log} e grava o SQL em {@code destination}.
-     * {@code source} pode ser o {@code .log} ou o {@code .db} ao lado dele.
-     * Os parâmetros entram no texto no lugar de cada {@code ?}.
+     * Reads the compressed transactions from the {@code .log} and writes the SQL to {@code destination}.
+     * {@code source} may be the {@code .log} or the {@code .db} beside it.
+     * Parameters are written into the text in place of each {@code ?}.
      */
     public static void exportSql(Path source, Path destination) {
         exportSql(source, destination, null);
     }
 
     /**
-     * Lê as transações comprimidas do {@code .log} e grava o SQL em {@code destination}.
-     * {@code progress} recebe 0 no início e 100 quando o arquivo está gravado.
+     * Reads the compressed transactions from the {@code .log} and writes the SQL to {@code destination}.
+     * {@code progress} receives 0 at the start and 100 when the file has been written.
      */
     public static void exportSql(Path source, Path destination, IntConsumer progress) {
         if (source == null) {
-            throw new NexException("o log de transação é obrigatório");
+            throw new NexException("transaction log is required");
         }
         if (destination == null) {
-            throw new NexException("o arquivo .sql é obrigatório");
+            throw new NexException("the .sql file is required");
         }
         Path log = logOf(source);
         Path target = destination.toAbsolutePath().normalize();
         if (target.equals(log)) {
-            throw new NexException("o destino do SQL é outro arquivo");
+            throw new NexException("the SQL destination is a different file");
         }
         if (Files.exists(target) && Files.isDirectory(target)) {
-            throw new NexException("o destino do SQL é um arquivo");
+            throw new NexException("the SQL destination is a file");
         }
         try {
             Path parent = target.getParent();
@@ -155,7 +155,7 @@ public final class Database implements AutoCloseable {
             Files.writeString(target, script, StandardCharsets.UTF_8);
             report(progress, 100);
         } catch (IOException exception) {
-            throw new NexException("não foi possível gravar o SQL: " + exception.getMessage(), exception);
+            throw new NexException("could not write the SQL: " + exception.getMessage(), exception);
         }
     }
 
@@ -175,7 +175,7 @@ public final class Database implements AutoCloseable {
         if (text.endsWith(".log")) {
             return path;
         }
-        throw new NexException("informe um arquivo .log ou o .db ao lado dele");
+        throw new NexException("provide a .log file or the .db beside it");
     }
 
     private static String scriptOf(List<TransactionLog.Batch> batches) {
@@ -292,15 +292,15 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Abre o arquivo com um papel. {@code null}, vazio ou {@code NONE} entram sem papel.
-     * O usuário precisa ter recebido o papel, salvo o DBA.
+     * Opens the file with a role. {@code null}, empty, or {@code NONE} sign in without a role.
+     * The user must have been granted the role, except the DBA.
      */
     public static Database open(Path file, String user, String password, String role) {
         if (user == null || user.isBlank() || password == null || password.isEmpty()) {
-            throw new NexException("usuário e senha são obrigatórios");
+            throw new NexException("user and password are required");
         }
         if (file == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         Engine engine = Engine.open(file);
         try {
@@ -313,31 +313,31 @@ public final class Database implements AutoCloseable {
 
     public static Database open(String file, String user, String password) {
         if (file == null || file.isBlank()) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         return open(Path.of(file), user, password);
     }
 
     /**
-     * Abre o arquivo sem autenticar. O motor de rede segura o {@code .db} assim
-     * e chama {@link #login} em cada cliente. O arquivo precisa já existir.
+     * Opens the file without authenticating. The network server holds the {@code .db} this way
+     * and calls {@link #login} for each client. The file must already exist.
      */
     public static Database attach(Path file) {
         if (file == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         return new Database(Engine.open(file), null);
     }
 
     /**
-     * Executa um ou mais comandos separados por {@code ';'}.
-     * O retorno é o resultado do último comando.
-     * Placeholders {@code ?} são posicionais e valem para o script inteiro.
+     * Runs one or more statements separated by {@code ';'}.
+     * The return value is the result of the last statement.
+     * {@code ?} placeholders are positional and apply to the whole script.
      */
     public SqlResult execute(String sql, Object... params) {
         synchronized (engine) {
             if (owner == null || owner.closed()) {
-                throw new NexException("sessão encerrada");
+                throw new NexException("session closed");
             }
             return engine.execute(owner, sql, params);
         }
@@ -354,16 +354,16 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Entra com um papel já concedido. O DBA pode usar qualquer papel existente.
-     * A origem gravada é a deste processo.
+     * Signs in with a role already granted. The DBA may use any existing role.
+     * The recorded origin is this process.
      */
     public Session login(String user, String password, String role) {
         return login(user, password, role, null);
     }
 
     /**
-     * Entra e grava a origem remota em {@code NEX$CONNECTIONS}.
-     * {@code remote} nulo usa o processo local.
+     * Signs in and records the remote origin in {@code NEX$CONNECTIONS}.
+     * A null {@code remote} uses the local process.
      */
     public Session login(String user, String password, String role, RemoteClient remote) {
         synchronized (engine) {
@@ -387,7 +387,7 @@ public final class Database implements AutoCloseable {
     public int executeUpdate(String sql, Object... params) {
         SqlResult result = execute(sql, params);
         if (result.isQuery()) {
-            throw new NexException("o comando retornou linhas; use query ou execute");
+            throw new NexException("the statement returned rows; use query or execute");
         }
         return result.affectedRows();
     }
@@ -395,7 +395,7 @@ public final class Database implements AutoCloseable {
     public SqlResult query(String sql, Object... params) {
         SqlResult result = execute(sql, params);
         if (!result.isQuery()) {
-            throw new NexException("o comando não é uma consulta");
+            throw new NexException("the statement is not a query");
         }
         return result;
     }
@@ -407,7 +407,7 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Esquemas do arquivo, na ordem do nome. Todo banco tem {@code public}.
+     * Schemas in the file, in name order. Every database has {@code public}.
      */
     public List<String> schemas() {
         synchronized (engine) {
@@ -416,8 +416,8 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Define o esquema da sessão. Nome sem aspas não distingue maiúsculas.
-     * O padrão, ao conectar, é {@code public}.
+     * Sets the session schema. An unquoted name is case-insensitive.
+     * The default, on connect, is {@code public}.
      */
     public void setSchema(Session session, String schema) {
         synchronized (engine) {
@@ -426,8 +426,8 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Descreve as tabelas do usuário, na ordem do nome, com colunas e índices.
-     * As tabelas {@code NEX$} ficam de fora.
+     * Describes the user tables, in name order, with columns and indexes.
+     * {@code NEX$} tables are omitted.
      */
     public List<TableDescription> describeTables() {
         synchronized (engine) {
@@ -442,7 +442,7 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Descreve as views, na ordem do nome. Cada uma é somente leitura e não tem índice.
+     * Describes the views, in name order. Each one is read-only and has no index.
      */
     public List<TableDescription> describeViews() {
         synchronized (engine) {
@@ -455,7 +455,7 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Tamanho da página, em bytes. É o valor gravado na criação do arquivo.
+     * Page size, in bytes. It is the value stored when the file was created.
      */
     public int pageSize() {
         return engine.pageSize();
@@ -468,8 +468,8 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * A sessão tem {@code BEGIN} sem {@code COMMIT} nem {@code ROLLBACK}.
-     * Outra sessão pode ter a sua própria transação ao mesmo tempo.
+     * The session has {@code BEGIN} without {@code COMMIT} or {@code ROLLBACK}.
+     * Another session may have its own transaction at the same time.
      */
     public boolean transactionActive(Session session) {
         synchronized (engine) {

@@ -5,8 +5,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 
 /**
- * Bcrypt do OpenBSD ({@code $2a$}, {@code $2b$} e {@code $2y$}).
- * A senha entra em UTF-8, com o byte nulo no fim, e o hash publicado tem 23 bytes.
+ * OpenBSD bcrypt ({@code $2a$}, {@code $2b$}, and {@code $2y$}).
+ * The password is UTF-8, with a trailing null byte, and the published hash is 23 bytes.
  */
 final class Bcrypt {
 
@@ -318,14 +318,14 @@ final class Bcrypt {
 
     private static byte[] digest(int cost, byte[] salt, String password) {
         if (cost < MIN_COST || cost > MAX_COST) {
-            throw new IllegalArgumentException("custo bcrypt fora de 4 a 31");
+            throw new IllegalArgumentException("bcrypt cost is outside 4 to 31");
         }
         if (salt.length != SALT_LENGTH) {
-            throw new IllegalArgumentException("sal bcrypt inválido");
+            throw new IllegalArgumentException("invalid bcrypt salt");
         }
         byte[] raw = password.getBytes(StandardCharsets.UTF_8);
         if (raw.length > MAX_PASSWORD) {
-            throw new IllegalArgumentException("senha excede 72 bytes");
+            throw new IllegalArgumentException("password exceeds 72 bytes");
         }
         byte[] key = new byte[raw.length + 1];
         System.arraycopy(raw, 0, key, 0, raw.length);

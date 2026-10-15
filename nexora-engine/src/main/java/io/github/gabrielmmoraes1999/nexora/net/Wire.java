@@ -26,8 +26,8 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * Quadros do motor. Cada quadro é o tamanho, o código e o corpo.
- * A senha vai no quadro de entrada, sem cifra.
+ * Server frames. Each frame is the length, the code, and the body.
+ * The password travels in the login frame, unencrypted.
  */
 public final class Wire {
 
@@ -91,7 +91,7 @@ public final class Wire {
         byte[] payload = body == null ? new byte[0] : body;
         long length = 1L + payload.length;
         if (length < 1 || length > MAX_FRAME) {
-            throw new IOException("quadro excede o limite");
+            throw new IOException("frame exceeds the limit");
         }
         DataOutputStream out = output instanceof DataOutputStream data ? data : new DataOutputStream(output);
         out.writeInt((int) length);
@@ -109,7 +109,7 @@ public final class Wire {
             throw exception;
         }
         if (length < 1 || length > MAX_FRAME) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         byte opcode = in.readByte();
         byte[] body = new byte[length - 1];
@@ -140,11 +140,11 @@ public final class Wire {
         DataInputStream in = input(body);
         int magic = in.readInt();
         if (magic != MAGIC) {
-            throw new IOException("protocolo inválido");
+            throw new IOException("invalid protocol");
         }
         int version = in.readUnsignedByte();
         if (version != VERSION) {
-            throw new IOException("versão do protocolo não suportada: " + version);
+            throw new IOException("unsupported protocol version: " + version);
         }
         String database = readUtf(in);
         String user = readUtf(in);
@@ -190,7 +190,7 @@ public final class Wire {
         String sql = readUtf(in);
         int count = in.readInt();
         if (count < 0 || count > MAX_FRAME) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         Object[] params = new Object[count];
         for (int i = 0; i < count; i++) {
@@ -230,7 +230,7 @@ public final class Wire {
         if (query) {
             int columnCount = in.readInt();
             if (columnCount < 0) {
-                throw new IOException("quadro inválido");
+                throw new IOException("invalid frame");
             }
             List<ColumnMeta> columns = new ArrayList<>(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -238,13 +238,13 @@ public final class Wire {
             }
             int rowCount = in.readInt();
             if (rowCount < 0) {
-                throw new IOException("quadro inválido");
+                throw new IOException("invalid frame");
             }
             List<Row> rows = new ArrayList<>(rowCount);
             for (int r = 0; r < rowCount; r++) {
                 int size = in.readInt();
                 if (size != columnCount) {
-                    throw new IOException("quadro inválido");
+                    throw new IOException("invalid frame");
                 }
                 Object[] values = new Object[size];
                 for (int c = 0; c < size; c++) {
@@ -289,7 +289,7 @@ public final class Wire {
         DataInputStream in = input(body);
         int count = in.readInt();
         if (count < 0) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         List<String> names = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -311,7 +311,7 @@ public final class Wire {
         DataInputStream in = input(body);
         int count = in.readInt();
         if (count < 0) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         List<TableDescription> tables = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
@@ -321,7 +321,7 @@ public final class Wire {
     }
 
     public static byte[] encodeError(String message) {
-        return bytes(out -> writeUtf(out, message == null || message.isBlank() ? "erro no motor" : message));
+        return bytes(out -> writeUtf(out, message == null || message.isBlank() ? "server error" : message));
     }
 
     public static String decodeError(byte[] body) throws IOException {
@@ -409,7 +409,7 @@ public final class Wire {
         String name = readUtf(in);
         int columnCount = in.readInt();
         if (columnCount < 0) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         List<TableDescription.TableColumn> columns = new ArrayList<>(columnCount);
         for (int i = 0; i < columnCount; i++) {
@@ -427,7 +427,7 @@ public final class Wire {
         }
         int indexCount = in.readInt();
         if (indexCount < 0) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         List<TableDescription.TableIndex> indexes = new ArrayList<>(indexCount);
         for (int i = 0; i < indexCount; i++) {
@@ -436,7 +436,7 @@ public final class Wire {
             boolean unique = in.readBoolean();
             int count = in.readInt();
             if (count < 0) {
-                throw new IOException("quadro inválido");
+                throw new IOException("invalid frame");
             }
             List<String> indexColumns = new ArrayList<>(count);
             for (int c = 0; c < count; c++) {
@@ -450,14 +450,14 @@ public final class Wire {
         boolean primaryDescending = in.readBoolean();
         int foreignCount = in.readInt();
         if (foreignCount < 0) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         List<TableDescription.ForeignKey> foreignKeys = new ArrayList<>(foreignCount);
         for (int i = 0; i < foreignCount; i++) {
             String foreignName = readUtf(in);
             int localCount = in.readInt();
             if (localCount < 0) {
-                throw new IOException("quadro inválido");
+                throw new IOException("invalid frame");
             }
             List<String> local = new ArrayList<>(localCount);
             for (int c = 0; c < localCount; c++) {
@@ -467,7 +467,7 @@ public final class Wire {
             String referencedTable = readUtf(in);
             int referencedCount = in.readInt();
             if (referencedCount < 0) {
-                throw new IOException("quadro inválido");
+                throw new IOException("invalid frame");
             }
             List<String> referenced = new ArrayList<>(referencedCount);
             for (int c = 0; c < referencedCount; c++) {
@@ -541,7 +541,7 @@ public final class Wire {
             out.writeByte(V_UTIL_DATE);
             out.writeLong(date.getTime());
         } else {
-            throw new NexException("tipo de parâmetro não suportado: " + value.getClass().getName());
+            throw new NexException("unsupported parameter type: " + value.getClass().getName());
         }
     }
 
@@ -561,7 +561,7 @@ public final class Wire {
             case V_BYTES -> {
                 int length = in.readInt();
                 if (length < 0 || length > MAX_FRAME) {
-                    throw new IOException("quadro inválido");
+                    throw new IOException("invalid frame");
                 }
                 byte[] bytes = new byte[length];
                 in.readFully(bytes);
@@ -574,14 +574,14 @@ public final class Wire {
             case V_SQL_TIME -> java.sql.Time.valueOf(LocalTime.parse(readUtf(in)));
             case V_SQL_TIMESTAMP -> java.sql.Timestamp.valueOf(LocalDateTime.parse(readUtf(in)));
             case V_UTIL_DATE -> new Date(in.readLong());
-            default -> throw new IOException("quadro inválido");
+            default -> throw new IOException("invalid frame");
         };
     }
 
     private static void writeUtf(DataOutputStream out, String value) throws IOException {
         byte[] bytes = (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_FRAME) {
-            throw new IOException("quadro excede o limite");
+            throw new IOException("frame exceeds the limit");
         }
         out.writeInt(bytes.length);
         out.write(bytes);
@@ -592,14 +592,14 @@ public final class Wire {
         try {
             return ReferentialAction.valueOf(name);
         } catch (IllegalArgumentException exception) {
-            throw new IOException("ação referencial desconhecida: " + name);
+            throw new IOException("unknown referential action: " + name);
         }
     }
 
     private static String readUtf(DataInputStream in) throws IOException {
         int length = in.readInt();
         if (length < 0 || length > MAX_FRAME) {
-            throw new IOException("quadro inválido");
+            throw new IOException("invalid frame");
         }
         byte[] bytes = new byte[length];
         in.readFully(bytes);
@@ -620,7 +620,7 @@ public final class Wire {
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("falha ao montar o quadro", exception);
+            throw new NexException("failed to build the frame", exception);
         }
     }
 

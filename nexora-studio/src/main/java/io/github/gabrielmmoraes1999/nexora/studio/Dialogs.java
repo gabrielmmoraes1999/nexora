@@ -47,7 +47,7 @@ final class Dialogs {
     }
 
     static void error(Component parent, String message) {
-        JOptionPane.showMessageDialog(parent, message == null || message.isBlank() ? "falha sem mensagem" : message,
+        JOptionPane.showMessageDialog(parent, message == null || message.isBlank() ? "failure with no message" : message,
                 "Nexora Studio", JOptionPane.ERROR_MESSAGE);
     }
 
@@ -58,7 +58,7 @@ final class Dialogs {
 
     static String message(Throwable error) {
         if (error == null) {
-            return "falha sem mensagem";
+            return "failure with no message";
         }
         if (error instanceof SQLException sql) {
             String text = sql.getMessage() == null ? sql.toString() : sql.getMessage();
@@ -84,10 +84,10 @@ final class Dialogs {
     static String password(Component parent, String alias) {
         JPasswordField field = new JPasswordField(18);
         JPanel panel = new JPanel(new BorderLayout(0, 8));
-        panel.add(new JLabel("Senha de " + alias), BorderLayout.NORTH);
+        panel.add(new JLabel("Password for " + alias), BorderLayout.NORTH);
         panel.add(field, BorderLayout.CENTER);
         JOptionPane option = new JOptionPane(panel, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
-        JDialog dialog = option.createDialog(parent, "Conectar");
+        JDialog dialog = option.createDialog(parent, "Connect");
         dialog.setVisible(true);
         Object result = option.getValue();
         if (!(result instanceof Integer choice) || choice != JOptionPane.OK_OPTION) {
@@ -99,8 +99,8 @@ final class Dialogs {
     static DatabaseEntry registration(Component parent, DatabaseEntry existing) {
         boolean editing = existing != null;
         JTextField alias = new JTextField(editing ? existing.alias() : "", 22);
-        JRadioButton file = new JRadioButton("Arquivo .db", existing == null || existing.embedded());
-        JRadioButton network = new JRadioButton("Rede (motor)", existing != null && !existing.embedded());
+        JRadioButton file = new JRadioButton("File .db", existing == null || existing.embedded());
+        JRadioButton network = new JRadioButton("Network (server)", existing != null && !existing.embedded());
         ButtonGroup group = new ButtonGroup();
         group.add(file);
         group.add(network);
@@ -112,7 +112,7 @@ final class Dialogs {
         JTextField user = new JTextField(editing ? existing.user() : "DBA", 16);
         JPasswordField password = new JPasswordField(editing ? existing.password() : "", 16);
         JTextField role = new JTextField(editing ? existing.role() : "", 16);
-        JCheckBox remember = new JCheckBox("Lembrar senha neste computador", existing == null || existing.rememberPassword());
+        JCheckBox remember = new JCheckBox("Remember password on this computer", existing == null || existing.rememberPassword());
         browse.addActionListener(event -> {
             Path chosen = chooseFile(parent, false);
             if (chosen != null) {
@@ -135,26 +135,26 @@ final class Dialogs {
         mode.run();
 
         Form form = new Form();
-        form.add("Apelido", alias);
+        form.add("Alias", alias);
         JPanel modeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         modeRow.setOpaque(false);
         modeRow.add(file);
         modeRow.add(network);
-        form.add("Conexão", modeRow);
-        form.add("Arquivo", row(path, browse));
+        form.add("Connection", modeRow);
+        form.add("File", row(path, browse));
         form.add("Host", host);
-        form.add("Porta", port);
-        form.add("Banco", database);
-        form.add("Usuário", user);
-        form.add("Senha", password);
-        form.add("Papel", role);
+        form.add("Port", port);
+        form.add("Database", database);
+        form.add("User", user);
+        form.add("Password", password);
+        form.add("Role", role);
         form.span(remember);
-        JLabel hint = new JLabel("O arquivo já precisa existir. Para criar um .db, use Criar banco.");
+        JLabel hint = new JLabel("The file must already exist. To create a .db, use Create database.");
         hint.setFont(Look.UI);
         hint.setForeground(Look.MUTED);
         form.span(hint);
 
-        if (!open(parent, editing ? "Banco" : "Registrar banco", form.panel, null)) {
+        if (!open(parent, editing ? "Database" : "Register database", form.panel, null)) {
             return null;
         }
         try {
@@ -162,13 +162,13 @@ final class Dialogs {
             String aliasText = alias.getText().trim();
             boolean embedded = file.isSelected();
             if (embedded && path.getText().isBlank()) {
-                throw new IllegalArgumentException("informe o arquivo .db");
+                throw new IllegalArgumentException("enter the .db file");
             }
             if (!embedded && database.getText().isBlank()) {
-                throw new IllegalArgumentException("informe o nome do banco no motor");
+                throw new IllegalArgumentException("enter the database name on the server");
             }
             if (user.getText().isBlank()) {
-                throw new IllegalArgumentException("informe o usuário");
+                throw new IllegalArgumentException("enter the user");
             }
             String storedPath = embedded ? Path.of(path.getText().trim()).toAbsolutePath().normalize().toString() : "";
             if (aliasText.isBlank()) {
@@ -203,8 +203,8 @@ final class Dialogs {
         JTextField description = new JTextField("Nexora", 16);
         JTextField charset = new JTextField("UTF8", 16);
         JTextField alias = new JTextField(16);
-        JCheckBox connect = new JCheckBox("Conectar agora", true);
-        JCheckBox remember = new JCheckBox("Lembrar senha neste computador", true);
+        JCheckBox connect = new JCheckBox("Connect now", true);
+        JCheckBox remember = new JCheckBox("Remember password on this computer", true);
         browse.addActionListener(event -> {
             Path chosen = chooseFile(parent, true);
             if (chosen != null) {
@@ -222,22 +222,22 @@ final class Dialogs {
             }
         });
         Form form = new Form();
-        form.add("Arquivo", row(path, browse));
-        form.add("Página", page);
-        form.add("Usuário DBA", user);
-        form.add("Senha", password);
-        form.add("Nome", name);
-        form.add("Descrição", description);
+        form.add("File", row(path, browse));
+        form.add("Page", page);
+        form.add("DBA user", user);
+        form.add("Password", password);
+        form.add("Name", name);
+        form.add("Description", description);
         form.add("Charset", charset);
-        form.add("Apelido", alias);
+        form.add("Alias", alias);
         form.span(connect);
         form.span(remember);
-        if (!open(parent, "Criar banco", form.panel, null)) {
+        if (!open(parent, "Create database", form.panel, null)) {
             return null;
         }
         try {
             if (path.getText().isBlank()) {
-                throw new IllegalArgumentException("informe o arquivo .db");
+                throw new IllegalArgumentException("enter the .db file");
             }
             Path file = Path.of(path.getText().trim()).toAbsolutePath().normalize();
             String databaseName = name.getText().isBlank() ? stripExtension(fileName(file)) : name.getText().trim();
@@ -264,7 +264,7 @@ final class Dialogs {
         String[] types = {"SMALLINT", "INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "BOOLEAN",
                 "CHAR", "VARCHAR", "DATE", "TIME", "TIMESTAMP", "BLOB"};
         DefaultTableModel model = new DefaultTableModel(
-                new Object[]{"Nome", "Tipo", "Tamanho", "Escala", "Nulo", "PK", "Único", "Auto", "Default"}, 0) {
+                new Object[]{"Name", "Type", "Size", "Scale", "Null", "PK", "Unique", "Auto", "Default"}, 0) {
             @Override
             public Class<?> getColumnClass(int column) {
                 return switch (column) {
@@ -275,15 +275,15 @@ final class Dialogs {
             }
         };
         model.addRow(new Object[]{"id", "INTEGER", 0, 0, false, true, false, true, ""});
-        model.addRow(new Object[]{"nome", "VARCHAR", 120, 0, false, false, false, false, ""});
+        model.addRow(new Object[]{"name", "VARCHAR", 120, 0, false, false, false, false, ""});
         JTable grid = Tables.create();
         grid.setModel(model);
         Tables.install(grid);
         grid.getColumnModel().getColumn(1).setCellEditor(new javax.swing.DefaultCellEditor(new JComboBox<>(types)));
         grid.setPreferredScrollableViewportSize(new Dimension(680, 220));
-        JButton add = Look.button("Coluna");
-        JButton remove = Look.button("Remover");
-        add.addActionListener(event -> model.addRow(new Object[]{"coluna", "VARCHAR", 80, 0, true, false, false, false, ""}));
+        JButton add = Look.button("Column");
+        JButton remove = Look.button("Remove");
+        add.addActionListener(event -> model.addRow(new Object[]{"column", "VARCHAR", 80, 0, true, false, false, false, ""}));
         remove.addActionListener(event -> {
             int row = grid.getSelectedRow();
             if (row >= 0) {
@@ -294,7 +294,7 @@ final class Dialogs {
         buttons.setOpaque(false);
         buttons.add(add);
         buttons.add(remove);
-        JLabel hint = new JLabel("Default é SQL: 0, 'texto', TRUE. A chave pode ser uma coluna ou várias marcadas como PK.");
+        JLabel hint = new JLabel("Default is SQL: 0, 'text', TRUE. The primary key can be one column or several marked PK.");
         hint.setForeground(Look.MUTED);
         JPanel center = new JPanel(new BorderLayout(0, 8));
         center.setBorder(new EmptyBorder(8, 0, 0, 0));
@@ -303,16 +303,16 @@ final class Dialogs {
         center.add(Look.scroll(grid), BorderLayout.CENTER);
         center.add(hint, BorderLayout.SOUTH);
         Form form = new Form();
-        form.add("Esquema", schema);
-        form.add("Tabela", name);
+        form.add("Schema", schema);
+        form.add("Table", name);
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(new EmptyBorder(12, 12, 12, 12));
         panel.add(form.panel, BorderLayout.NORTH);
         panel.add(center, BorderLayout.CENTER);
         final Named[] created = {null};
-        JDialog dialog = dialog(parent, "Nova tabela", panel);
-        JButton ok = Look.primary("Criar");
-        JButton cancel = Look.button("Cancelar");
+        JDialog dialog = dialog(parent, "New table", panel);
+        JButton ok = Look.primary("Create");
+        JButton cancel = Look.button("Cancel");
         ok.addActionListener(event -> {
             if (grid.isEditing()) {
                 grid.getCellEditor().stopCellEditing();
@@ -349,7 +349,7 @@ final class Dialogs {
 
     static boolean index(Component parent, Connection connection, String schema, String table, List<String> columns) {
         JTextField name = new JTextField(16);
-        JCheckBox unique = new JCheckBox("Único");
+        JCheckBox unique = new JCheckBox("Unique");
         JPanel list = new JPanel(new GridBagLayout());
         list.setOpaque(false);
         List<JCheckBox> boxes = new ArrayList<>();
@@ -364,11 +364,11 @@ final class Dialogs {
             list.add(box, constraints);
         }
         Form form = new Form();
-        form.add("Nome", name);
+        form.add("Name", name);
         form.span(unique);
-        form.span(new JLabel("Colunas"));
+        form.span(new JLabel("Columns"));
         form.span(new JScrollPane(list));
-        return open(parent, "Novo índice em " + table, form.panel, () -> {
+        return open(parent, "New index on " + table, form.panel, () -> {
             try {
                 List<String> chosen = new ArrayList<>();
                 for (JCheckBox box : boxes) {
@@ -393,16 +393,16 @@ final class Dialogs {
         type.setSelectedItem("VARCHAR");
         JTextField size = new JTextField("80", 6);
         JTextField scale = new JTextField("0", 4);
-        JCheckBox nullable = new JCheckBox("Aceita NULL", true);
+        JCheckBox nullable = new JCheckBox("Allows NULL", true);
         JTextField fallback = new JTextField(16);
         Form form = new Form();
-        form.add("Nome", name);
-        form.add("Tipo", type);
-        form.add("Tamanho", size);
-        form.add("Escala", scale);
+        form.add("Name", name);
+        form.add("Type", type);
+        form.add("Size", size);
+        form.add("Scale", scale);
         form.span(nullable);
         form.add("Default", fallback);
-        return open(parent, "Nova coluna em " + table, form.panel, () -> {
+        return open(parent, "New column on " + table, form.panel, () -> {
             try {
                 Ddl.ColumnDraft draft = new Ddl.ColumnDraft(name.getText(), String.valueOf(type.getSelectedItem()),
                         Integer.parseInt(size.getText().trim()), Integer.parseInt(scale.getText().trim()),
@@ -428,9 +428,9 @@ final class Dialogs {
         JCheckBox delete = new JCheckBox("DELETE");
         JCheckBox option = new JCheckBox("WITH GRANT OPTION");
         Form form = new Form();
-        form.add("Esquema", schemaField);
-        form.add("Tabela", tableField);
-        form.add("Para", grantee);
+        form.add("Schema", schemaField);
+        form.add("Table", tableField);
+        form.add("To", grantee);
         JPanel privileges = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         privileges.setOpaque(false);
         privileges.add(select);
@@ -439,7 +439,7 @@ final class Dialogs {
         privileges.add(delete);
         form.span(privileges);
         form.span(option);
-        return open(parent, "Conceder", form.panel, () -> {
+        return open(parent, "Grant", form.panel, () -> {
             try {
                 List<String> chosen = new ArrayList<>();
                 if (select.isSelected()) {
@@ -469,19 +469,19 @@ final class Dialogs {
         JPasswordField password = new JPasswordField(16);
         JTextField first = new JTextField(16);
         JTextField last = new JTextField(16);
-        JCheckBox active = new JCheckBox("Ativo", true);
-        JCheckBox admin = new JCheckBox("Administrador");
+        JCheckBox active = new JCheckBox("Active", true);
+        JCheckBox admin = new JCheckBox("Administrator");
         Form form = new Form();
-        form.add("Usuário", name);
-        form.add("Senha", password);
-        form.add("Nome", first);
-        form.add("Sobrenome", last);
+        form.add("User", name);
+        form.add("Password", password);
+        form.add("Name", first);
+        form.add("Last name", last);
         form.span(active);
         form.span(admin);
-        return open(parent, "Novo usuário", form.panel, () -> {
+        return open(parent, "New user", form.panel, () -> {
             try {
                 if (name.getText().isBlank() || password.getPassword().length == 0) {
-                    throw new IllegalArgumentException("informe usuário e senha");
+                    throw new IllegalArgumentException("enter user and password");
                 }
                 try (var statement = connection.prepareStatement("""
                         INSERT INTO NEX$USERS (NEX$USER_NAME, NEX$PASSWORD, NEX$FIRST_NAME, NEX$LAST_NAME, NEX$ACTIVE, NEX$ADMIN)
@@ -506,18 +506,18 @@ final class Dialogs {
     static boolean changePassword(Component parent, Connection connection, String user) {
         JPasswordField password = new JPasswordField(16);
         Form form = new Form();
-        form.add("Nova senha de " + user, password);
-        return open(parent, "Senha", form.panel, () -> {
+        form.add("New password for " + user, password);
+        return open(parent, "Password", form.panel, () -> {
             try {
                 if (password.getPassword().length == 0) {
-                    throw new IllegalArgumentException("informe a senha");
+                    throw new IllegalArgumentException("enter the password");
                 }
                 try (var statement = connection.prepareStatement(
                         "UPDATE NEX$USERS SET NEX$PASSWORD = ? WHERE NEX$USER_NAME = ?")) {
                     statement.setString(1, new String(password.getPassword()));
                     statement.setString(2, user);
                     if (statement.executeUpdate() != 1) {
-                        throw new SQLException("usuário não encontrado: " + user);
+                        throw new SQLException("user not found: " + user);
                     }
                 }
                 return true;
@@ -540,7 +540,7 @@ final class Dialogs {
         JDialog dialog = dialog(parent, title, form);
         final boolean[] ok = {false};
         JButton confirm = Look.primary("OK");
-        JButton cancel = Look.button("Cancelar");
+        JButton cancel = Look.button("Cancel");
         confirm.addActionListener(event -> {
             if (accept != null && !accept.getAsBoolean()) {
                 return;
@@ -599,7 +599,7 @@ final class Dialogs {
 
     private static Path chooseFile(Component parent, boolean save) {
         JFileChooser chooser = new JFileChooser();
-        chooser.setFileFilter(new FileNameExtensionFilter("Banco Nexora (*.db)", "db"));
+        chooser.setFileFilter(new FileNameExtensionFilter("Nexora database (*.db)", "db"));
         int result = save ? chooser.showSaveDialog(parent) : chooser.showOpenDialog(parent);
         if (result != JFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
             return null;
@@ -621,11 +621,11 @@ final class Dialogs {
         try {
             int port = Integer.parseInt(text.trim());
             if (port < 1 || port > 65535) {
-                throw new IllegalArgumentException("porta inválida");
+                throw new IllegalArgumentException("invalid port");
             }
             return port;
         } catch (NumberFormatException exception) {
-            throw new IllegalArgumentException("porta inválida");
+            throw new IllegalArgumentException("invalid port");
         }
     }
 

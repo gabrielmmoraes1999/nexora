@@ -3,10 +3,10 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.net.InetAddress;
 
 /**
- * Origem de uma conexão, no papel de {@code MON$REMOTE_*} do Firebird.
- * Na conexão embutida o protocolo é {@code local} e o endereço fica vazio.
- * No motor, protocolo e endereço vêm do socket; host, usuário do sistema
- * e processo vêm do cliente.
+ * Origin of a connection, in the role of Firebird's {@code MON$REMOTE_*}.
+ * On an embedded connection the protocol is {@code local} and the address is empty.
+ * On the server, protocol and address come from the socket; host, system user,
+ * and process come from the client.
  */
 public record RemoteClient(String protocol, String address, String host, String osUser, String process) {
 
@@ -21,7 +21,7 @@ public record RemoteClient(String protocol, String address, String host, String 
         try {
             host = InetAddress.getLocalHost().getHostName();
         } catch (Exception ignored) {
-            // sem nome de máquina, a coluna fica nula
+            // without a machine name, the column stays null
         }
         String process = ProcessHandle.current().info().command().orElse(null);
         return new RemoteClient("local", null, host, System.getProperty("user.name"), process);

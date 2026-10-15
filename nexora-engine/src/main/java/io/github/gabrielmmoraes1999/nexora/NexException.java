@@ -1,7 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Erro de SQL, de integridade ou de leitura do arquivo da tabela.
+ * SQL, integrity, or table-file read error.
  */
 public class NexException extends RuntimeException {
 

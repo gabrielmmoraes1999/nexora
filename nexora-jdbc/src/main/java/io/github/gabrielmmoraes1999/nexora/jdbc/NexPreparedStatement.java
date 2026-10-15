@@ -44,7 +44,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
     @Override
     public ResultSet executeQuery() throws SQLException {
         if (!execute()) {
-            throw new SQLException("o comando não é uma consulta");
+            throw new SQLException("the statement is not a query");
         }
         return getResultSet();
     }
@@ -52,7 +52,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
     @Override
     public int executeUpdate() throws SQLException {
         if (execute()) {
-            throw new SQLException("o comando retornou linhas; use executeQuery");
+            throw new SQLException("the statement returned rows; use executeQuery");
         }
         return getUpdateCount();
     }
@@ -334,7 +334,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
 
     @Override
     public void addBatch(String sql) throws SQLException {
-        throw new SQLException("use addBatch() sem SQL no PreparedStatement");
+        throw new SQLException("use addBatch() without SQL on PreparedStatement");
     }
 
     @Override
@@ -354,7 +354,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
                 for (int i = 0; i < batch.size(); i++) {
                     try {
                         if (run(sql, batch.get(i))) {
-                            throw new SQLException("SELECT não pode entrar no lote");
+                            throw new SQLException("SELECT cannot be added to the batch");
                         }
                         counts[i] = getUpdateCount();
                     } catch (SQLException exception) {
@@ -372,7 +372,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
     private void put(int parameterIndex, Object value) throws SQLException {
         checkOpen();
         if (parameterIndex < 1) {
-            throw new SQLException("índice de parâmetro começa em 1", "07009");
+            throw new SQLException("parameter index starts at 1", "07009");
         }
         while (parameters.size() < parameterIndex) {
             parameters.add(UNSET);
@@ -384,7 +384,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
         Object[] values = new Object[parameters.size()];
         for (int i = 0; i < parameters.size(); i++) {
             if (parameters.get(i) == UNSET) {
-                throw new SQLException("parâmetro " + (i + 1) + " não foi definido", "07001");
+                throw new SQLException("parameter " + (i + 1) + " was not set", "07001");
             }
             values[i] = parameters.get(i);
         }
@@ -405,7 +405,7 @@ final class NexPreparedStatement extends NexStatement implements PreparedStateme
                 return input.readAllBytes();
             }
             if (length > Integer.MAX_VALUE) {
-                throw new SQLException("fluxo grande demais");
+                throw new SQLException("stream is too large");
             }
             return input.readNBytes((int) length);
         } catch (IOException exception) {

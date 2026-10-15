@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Variáveis de uma procedure ou trigger, mais as linhas {@code NEW} e {@code OLD}.
+ * Variables of a procedure or trigger, plus the {@code NEW} and {@code OLD} rows.
  */
 final class RoutineScope {
 
@@ -19,7 +19,7 @@ final class RoutineScope {
     void declare(ParamDef param, Object initial) {
         String key = Names.fold(param.name());
         if (types.containsKey(key)) {
-            throw new NexException("variável duplicada: " + param.name());
+            throw new NexException("duplicate variable: " + param.name());
         }
         Column column = new Column(param.name(), param.type(), param.length(), param.scale(), false, false, 0L, false, null);
         types.put(key, column);
@@ -38,7 +38,7 @@ final class RoutineScope {
     Object variable(String name) {
         String key = Names.fold(name);
         if (!types.containsKey(key)) {
-            throw new NexException("variável não declarada: " + name);
+            throw new NexException("undeclared variable: " + name);
         }
         return values.get(key);
     }
@@ -47,7 +47,7 @@ final class RoutineScope {
         String key = Names.fold(name);
         Column column = types.get(key);
         if (column == null) {
-            throw new NexException("variável não declarada: " + name);
+            throw new NexException("undeclared variable: " + name);
         }
         values.put(key, value == null ? null : Values.coerce(column.type, column.length, column.scale, value));
     }
@@ -61,11 +61,11 @@ final class RoutineScope {
     Object field(String qualifier, String name) {
         Object[] row = Names.same(qualifier, "NEW") ? newValues : oldValues;
         if (row == null || rowSchema == null) {
-            throw new NexException(qualifier.toUpperCase() + " não existe neste contexto");
+            throw new NexException(qualifier.toUpperCase() + " does not exist in this context");
         }
         int index = rowSchema.indexOf(name);
         if (index < 0) {
-            throw new NexException("coluna não encontrada: " + name);
+            throw new NexException("column not found: " + name);
         }
         Object value = row[index];
         return value == Values.MISSING ? null : value;
@@ -73,11 +73,11 @@ final class RoutineScope {
 
     void setNew(String name, Object value) {
         if (newValues == null || rowSchema == null) {
-            throw new NexException("NEW não existe neste contexto");
+            throw new NexException("NEW does not exist in this context");
         }
         int index = rowSchema.indexOf(name);
         if (index < 0) {
-            throw new NexException("coluna não encontrada: " + name);
+            throw new NexException("column not found: " + name);
         }
         Column column = rowSchema.columns.get(index);
         newValues[index] = value == null ? null : Values.coerce(column.type, column.length, column.scale, value);

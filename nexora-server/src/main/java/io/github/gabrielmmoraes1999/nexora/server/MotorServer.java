@@ -25,10 +25,10 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Publica os arquivos do {@link MotorConfig} numa porta TCP.
- * Cada cliente autentica e o SQL roda no processo do motor.
- * Várias transações ficam abertas; cada uma grava numa cópia própria
- * e o commit publica as linhas se ninguém confirmou as mesmas no meio.
+ * Publishes the files from {@link MotorConfig} on a TCP port.
+ * Each client authenticates and SQL runs in the server process.
+ * Several transactions stay open; each one writes to its own copy,
+ * and commit publishes the rows if nobody else committed the same ones in the meantime.
  */
 public final class MotorServer implements AutoCloseable {
 
@@ -46,7 +46,7 @@ public final class MotorServer implements AutoCloseable {
 
     public static MotorServer start(MotorConfig config) {
         if (config == null) {
-            throw new NexException("a configuração do motor é obrigatória");
+            throw new NexException("the server configuration is required");
         }
         List<Published> opened = new ArrayList<>();
         ServerSocket socket = null;
@@ -65,21 +65,21 @@ public final class MotorServer implements AutoCloseable {
                 try {
                     published.database.close();
                 } catch (RuntimeException ignored) {
-                    // o erro original explica a falha da subida
+                    // the original error explains the startup failure
                 }
             }
             if (socket != null) {
                 try {
                     socket.close();
                 } catch (IOException ignored) {
-                    // o erro original explica a falha da subida
+                    // the original error explains the startup failure
                 }
             }
             if (exception instanceof NexException nex) {
                 throw nex;
             }
             if (exception instanceof IOException io) {
-                throw new NexException("não foi possível escutar em " + config.host() + ":" + config.port()
+                throw new NexException("could not listen on " + config.host() + ":" + config.port()
                         + ": " + io.getMessage(), io);
             }
             throw (RuntimeException) exception;
@@ -104,14 +104,14 @@ public final class MotorServer implements AutoCloseable {
             try {
                 socket.close();
             } catch (IOException ignored) {
-                // o accept sai em seguida
+                // accept returns right after
             }
         }
         for (Socket client : clients) {
             try {
                 client.close();
             } catch (IOException ignored) {
-                // a conexão já caiu
+                // the connection already closed
             }
         }
         try {
@@ -151,12 +151,12 @@ public final class MotorServer implements AutoCloseable {
                     switch (frame.opcode()) {
                         case Wire.LOGIN -> {
                             if (session != null) {
-                                throw new NexException("a conexão já está autenticada");
+                                throw new NexException("the connection is already authenticated");
                             }
                             Wire.Login login = Wire.decodeLogin(frame.body());
                             current = find(login.database());
                             if (current == null) {
-                                throw new NexException("banco não encontrado: " + login.database());
+                                throw new NexException("database not found: " + login.database());
                             }
                             session = current.login(login.user(), login.password(), login.role(),
                                     clientOf(socket, login));
@@ -204,19 +204,19 @@ public final class MotorServer implements AutoCloseable {
                             Wire.writeFrame(out, Wire.OK, new byte[0]);
                             return;
                         }
-                        default -> throw new IOException("comando desconhecido");
+                        default -> throw new IOException("unknown command");
                     }
                 } catch (NexException exception) {
                     Wire.writeFrame(out, Wire.FAIL, Wire.encodeError(exception.getMessage()));
                 }
             }
         } catch (EOFException ignored) {
-            // o cliente fechou
+            // the client closed
         } catch (IOException ignored) {
-            // a conexão caiu
+            // the connection closed
         } catch (RuntimeException exception) {
             if (!closed) {
-                System.err.println("conexão encerrada: " + exception.getMessage());
+                System.err.println("connection closed: " + exception.getMessage());
             }
         } finally {
             clients.remove(socket);
@@ -224,13 +224,13 @@ public final class MotorServer implements AutoCloseable {
                 try {
                     current.detach(session);
                 } catch (RuntimeException ignored) {
-                    // o banco pode já ter sido fechado
+                    // the database may already be closed
                 }
             }
             try {
                 socket.close();
             } catch (IOException ignored) {
-                // a conexão já caiu
+                // the connection already closed
             }
         }
     }
@@ -260,7 +260,7 @@ public final class MotorServer implements AutoCloseable {
 
     private static void require(Session session) {
         if (session == null || session.closed()) {
-            throw new NexException("sessão encerrada");
+            throw new NexException("session closed");
         }
     }
 
@@ -336,13 +336,13 @@ public final class MotorServer implements AutoCloseable {
                         database.execute(session, "ROLLBACK");
                     }
                 } catch (RuntimeException ignored) {
-                    // o logout ainda retira a conexão
+                    // logout still removes the connection
                 } finally {
                     sessions.remove(session);
                     try {
                         database.logout(session);
                     } catch (RuntimeException ignored) {
-                        // o arquivo pode já estar fechado
+                        // the file may already be closed
                     }
                 }
             }
@@ -356,12 +356,12 @@ public final class MotorServer implements AutoCloseable {
                             database.execute(session, "ROLLBACK");
                         }
                     } catch (RuntimeException ignored) {
-                        // segue para soltar o arquivo
+                        // continue on to release the file
                     }
                     try {
                         database.logout(session);
                     } catch (RuntimeException ignored) {
-                        // segue para soltar o arquivo
+                        // continue on to release the file
                     }
                 }
                 sessions.clear();
@@ -380,7 +380,7 @@ public final class MotorServer implements AutoCloseable {
 
         private void ensure(Session session) {
             if (session == null || session.closed() || !sessions.contains(session)) {
-                throw new NexException("sessão encerrada");
+                throw new NexException("session closed");
             }
         }
     }

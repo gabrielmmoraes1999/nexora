@@ -3,9 +3,9 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.util.List;
 
 /**
- * Estrutura de uma tabela já gravada: colunas na ordem de criação e índices.
+ * Structure of a stored table: columns in creation order and indexes.
  *
- * @param schema esquema SQL. O padrão é {@code public}
+ * @param schema SQL schema. The default is {@code public}
  */
 public record TableDescription(
         String schema,
@@ -26,8 +26,8 @@ public record TableDescription(
     }
 
     /**
-     * @param primaryKeyPosition posição na chave primária, começando em 1; 0 se a coluna não fizer parte dela
-     * @param defaultSql literal SQL do DEFAULT, ou {@code null} quando a coluna não tem padrão
+     * @param primaryKeyPosition position in the primary key, starting at 1; 0 if the column is not part of it
+     * @param defaultSql SQL literal of the DEFAULT, or {@code null} when the column has no default
      */
     public record TableColumn(
             String table,

@@ -8,8 +8,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Um arquivo aberto pelo JDBC. Várias conexões no mesmo processo compartilham
- * o banco; cada uma autentica de novo. Outro processo recebe "o banco já está aberto".
+ * A file opened by JDBC. Several connections in the same process share
+ * the database; each one authenticates again. Another process receives "the database is already open".
  */
 final class SharedDatabase {
 

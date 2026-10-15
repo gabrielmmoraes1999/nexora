@@ -46,7 +46,7 @@ class NexStatement implements Statement {
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         if (!execute(sql)) {
-            throw new SQLException("o comando não é uma consulta");
+            throw new SQLException("the statement is not a query");
         }
         return result;
     }
@@ -54,7 +54,7 @@ class NexStatement implements Statement {
     @Override
     public int executeUpdate(String sql) throws SQLException {
         if (execute(sql)) {
-            throw new SQLException("o comando retornou linhas; use executeQuery");
+            throw new SQLException("the statement returned rows; use executeQuery");
         }
         return updateCount;
     }
@@ -81,7 +81,7 @@ class NexStatement implements Statement {
     public void setMaxFieldSize(int max) throws SQLException {
         checkOpen();
         if (max < 0) {
-            throw new SQLException("maxFieldSize negativo");
+            throw new SQLException("maxFieldSize is negative");
         }
         maxFieldSize = max;
     }
@@ -96,7 +96,7 @@ class NexStatement implements Statement {
     public void setMaxRows(int max) throws SQLException {
         checkOpen();
         if (max < 0) {
-            throw new SQLException("maxRows negativo");
+            throw new SQLException("maxRows is negative");
         }
         maxRows = max;
     }
@@ -117,7 +117,7 @@ class NexStatement implements Statement {
     public void setQueryTimeout(int seconds) throws SQLException {
         checkOpen();
         if (seconds < 0) {
-            throw new SQLException("queryTimeout negativo");
+            throw new SQLException("queryTimeout is negative");
         }
         queryTimeout = seconds;
     }
@@ -139,7 +139,7 @@ class NexStatement implements Statement {
 
     @Override
     public void setCursorName(String name) throws SQLException {
-        throw Jdbc.unsupported("cursor nomeado");
+        throw Jdbc.unsupported("named cursor");
     }
 
     @Override
@@ -170,7 +170,7 @@ class NexStatement implements Statement {
         if (direction != ResultSet.FETCH_FORWARD
                 && direction != ResultSet.FETCH_REVERSE
                 && direction != ResultSet.FETCH_UNKNOWN) {
-            throw new SQLException("fetch direction inválida: " + direction);
+            throw new SQLException("invalid fetch direction: " + direction);
         }
         fetchDirection = direction;
     }
@@ -185,7 +185,7 @@ class NexStatement implements Statement {
     public void setFetchSize(int rows) throws SQLException {
         checkOpen();
         if (rows < 0) {
-            throw new SQLException("fetchSize negativo");
+            throw new SQLException("fetchSize is negative");
         }
         fetchSize = rows;
     }
@@ -212,7 +212,7 @@ class NexStatement implements Statement {
     public void addBatch(String sql) throws SQLException {
         checkOpen();
         if (sql == null) {
-            throw new SQLException("SQL é obrigatório");
+            throw new SQLException("SQL is required");
         }
         synchronized (connection.lock()) {
             batch.add(sql);
@@ -236,7 +236,7 @@ class NexStatement implements Statement {
                 for (int i = 0; i < batch.size(); i++) {
                     try {
                         if (run(batch.get(i), new Object[0])) {
-                            throw new SQLException("SELECT não pode entrar no lote");
+                            throw new SQLException("SELECT cannot be added to the batch");
                         }
                         counts[i] = updateCount;
                     } catch (SQLException exception) {
@@ -343,7 +343,7 @@ class NexStatement implements Statement {
         if (iface != null && iface.isInstance(this)) {
             return iface.cast(this);
         }
-        throw new SQLException("não é " + iface);
+        throw new SQLException("is not " + iface);
     }
 
     @Override
@@ -381,7 +381,7 @@ class NexStatement implements Statement {
 
     void checkOpen() throws SQLException {
         if (closed) {
-            throw new SQLException("o statement está fechado", "HY010");
+            throw new SQLException("the statement is closed", "HY010");
         }
         connection.checkOpen();
     }

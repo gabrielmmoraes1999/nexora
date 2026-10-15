@@ -12,7 +12,7 @@
 
     <artifactId>nexora-jdbc</artifactId>
     <name>Nexora JDBC</name>
-    <description>Driver JDBC do Nexora. Depende do engine e não depende do motor.</description>
+    <description>Nexora JDBC driver. Depends on the engine and does not depend on the server.</description>
 
     <dependencies>
         <dependency>

@@ -1,7 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora.studio;
 
 /**
- * Identificadores no texto SQL. Aspas preservam o nome que o catálogo devolveu.
+ * Identifiers in SQL text. Quotes preserve the name the catalog returned.
  */
 public final class SqlNames {
 
@@ -20,8 +20,8 @@ public final class SqlNames {
     }
 
     /**
-     * Nome como o catálogo grava privilégio e trigger: {@code tabela} em {@code public},
-     * {@code esquema.tabela} nos demais.
+     * Name as the catalog stores a privilege and a trigger: {@code table} in {@code public},
+     * {@code schema.table} otherwise.
      */
     public static String catalog(String schema, String name) {
         if (schema == null || schema.isBlank() || schema.equalsIgnoreCase("public")) {
@@ -38,7 +38,7 @@ public final class SqlNames {
     }
 
     /**
-     * Escapa {@code \%_} para {@code DatabaseMetaData} tratar o nome como literal.
+     * Escapes {@code \%_} so {@code DatabaseMetaData} treats the name as a literal.
      */
     public static String likeExact(String name) {
         StringBuilder out = new StringBuilder(name.length());

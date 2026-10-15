@@ -49,8 +49,8 @@ final class QueryPane extends JPanel {
         log.setFont(Look.MONO.deriveFont(12f));
         log.setBackground(java.awt.Color.WHITE);
         Tables.install(grid);
-        bottom.addTab("Resultado", Look.scroll(grid));
-        bottom.addTab("Mensagens", Look.scroll(log));
+        bottom.addTab("Result", Look.scroll(grid));
+        bottom.addTab("Messages", Look.scroll(log));
 
         JPanel south = new JPanel(new BorderLayout());
         summary.setFont(Look.UI);
@@ -65,7 +65,7 @@ final class QueryPane extends JPanel {
         split.setBorder(javax.swing.BorderFactory.createEmptyBorder());
         add(toolbar(), BorderLayout.NORTH);
         add(split, BorderLayout.CENTER);
-        message(false, "F9 executa o script. O SELECT, quando houver, precisa ser o último comando.");
+        message(false, "F9 runs the script. The SELECT, when present, must be the last command.");
     }
 
     String databaseId() {
@@ -75,13 +75,13 @@ final class QueryPane extends JPanel {
     void execute() {
         Connection connection = hub.connection(databaseId);
         if (connection == null) {
-            message(true, "banco desconectado");
+            message(true, "database disconnected");
             bottom.setSelectedIndex(1);
             return;
         }
         String sql = selectedSql();
         if (sql.isBlank()) {
-            message(true, "escreva um comando");
+            message(true, "write a command");
             bottom.setSelectedIndex(1);
             return;
         }
@@ -94,15 +94,15 @@ final class QueryPane extends JPanel {
             if (query) {
                 try (ResultSet result = statement.getResultSet()) {
                     int rows = Tables.showResult(grid, result);
-                    String capped = rows == 1000 ? " (limite de 1000)" : "";
-                    summary.setText(rows + (rows == 1 ? " linha" : " linhas") + " em " + millis + " ms" + capped);
-                    message(false, "consulta  " + summary.getText());
+                    String capped = rows == 1000 ? " (limit of 1000)" : "";
+                    summary.setText(rows + (rows == 1 ? " row" : " rows") + " in " + millis + " ms" + capped);
+                    message(false, "query  " + summary.getText());
                     bottom.setSelectedIndex(0);
                 }
             } else {
                 int count = statement.getUpdateCount();
-                summary.setText(count + " linha(s) afetada(s) em " + millis + " ms");
-                message(false, "comando  " + summary.getText());
+                summary.setText(count + " row(s) affected in " + millis + " ms");
+                message(false, "command  " + summary.getText());
                 grid.setModel(new javax.swing.table.DefaultTableModel());
                 bottom.setSelectedIndex(1);
             }
@@ -123,11 +123,11 @@ final class QueryPane extends JPanel {
     private JPanel toolbar() {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         Look.band(bar);
-        javax.swing.JButton run = Look.primary("Executar", Icons.PLAY);
-        run.setToolTipText("Executar o script (F9)");
+        javax.swing.JButton run = Look.primary("Execute", Icons.PLAY);
+        run.setToolTipText("Execute the script (F9)");
         run.addActionListener(event -> execute());
-        javax.swing.JButton copy = Look.button("Copiar grade");
-        copy.setToolTipText("Copia a grade para a área de transferência");
+        javax.swing.JButton copy = Look.button("Copy grid");
+        copy.setToolTipText("Copies the grid to the clipboard");
         copy.addActionListener(event -> Tables.copy(grid));
         bar.add(run);
         bar.add(copy);

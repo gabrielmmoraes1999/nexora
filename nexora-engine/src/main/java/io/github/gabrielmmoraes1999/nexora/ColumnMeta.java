@@ -1,12 +1,12 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Descrição de uma coluna devolvida por uma consulta.
+ * Description of a column returned by a query.
  *
- * @param name nome de exibição, já com alias quando houver
- * @param type tipo inferido da expressão
- * @param schema esquema da tabela, ou vazio quando a expressão não é uma coluna
- * @param table tabela da coluna, ou vazio quando a expressão não é uma coluna
+ * @param name display name, including the alias when there is one
+ * @param type type inferred from the expression
+ * @param schema table schema, or empty when the expression is not a column
+ * @param table column table, or empty when the expression is not a column
  */
 public record ColumnMeta(String name, DataType type, String schema, String table) {
 

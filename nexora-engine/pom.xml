@@ -12,7 +12,7 @@
 
     <artifactId>nexora-engine</artifactId>
     <name>Nexora Engine</name>
-    <description>Arquivo .db, log, SQL e protocolo do Nexora.</description>
+    <description>Nexora .db file, log, SQL, and protocol.</description>
 
     <dependencies>
         <dependency>

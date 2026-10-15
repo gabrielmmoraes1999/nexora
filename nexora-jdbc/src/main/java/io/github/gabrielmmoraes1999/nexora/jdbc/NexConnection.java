@@ -97,7 +97,7 @@ final class NexConnection implements Connection {
     public String nativeSQL(String sql) throws SQLException {
         checkOpen();
         if (sql == null) {
-            throw new SQLException("SQL é obrigatório");
+            throw new SQLException("SQL is required");
         }
         return sql;
     }
@@ -130,12 +130,12 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (autoCommit) {
-                throw new SQLException("commit não vale com auto-commit ligado", "25000");
+                throw new SQLException("commit is not valid with auto-commit on", "25000");
             }
             access.refresh();
             if (access.transactionActive()) {
                 if (!access.ownsTransaction()) {
-                    throw new SQLException("outra conexão está com uma transação aberta");
+                    throw new SQLException("another connection has an open transaction");
                 }
                 execute("COMMIT", new Object[0]);
             }
@@ -147,12 +147,12 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (autoCommit) {
-                throw new SQLException("rollback não vale com auto-commit ligado", "25000");
+                throw new SQLException("rollback is not valid with auto-commit on", "25000");
             }
             access.refresh();
             if (access.transactionActive()) {
                 if (!access.ownsTransaction()) {
-                    throw new SQLException("outra conexão está com uma transação aberta");
+                    throw new SQLException("another connection has an open transaction");
                 }
                 execute("ROLLBACK", new Object[0]);
             }
@@ -228,13 +228,13 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (level == TRANSACTION_NONE) {
-                throw new SQLException("isolation TRANSACTION_NONE não é suportado", "0A000");
+                throw new SQLException("isolation TRANSACTION_NONE is not supported", "0A000");
             }
             if (level != TRANSACTION_READ_UNCOMMITTED
                     && level != TRANSACTION_READ_COMMITTED
                     && level != TRANSACTION_REPEATABLE_READ
                     && level != TRANSACTION_SERIALIZABLE) {
-                throw new SQLException("nível de isolamento inválido: " + level);
+                throw new SQLException("invalid isolation level: " + level);
             }
             this.isolation = level;
         }
@@ -287,7 +287,7 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (map == null) {
-                throw new SQLException("type map é obrigatório");
+                throw new SQLException("type map is required");
             }
             typeMap = new HashMap<>(map);
         }
@@ -298,7 +298,7 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (holdability != ResultSet.HOLD_CURSORS_OVER_COMMIT && holdability != ResultSet.CLOSE_CURSORS_AT_COMMIT) {
-                throw new SQLException("holdability inválida: " + holdability);
+                throw new SQLException("invalid holdability: " + holdability);
             }
             this.holdability = holdability;
         }
@@ -350,7 +350,7 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (sql == null) {
-                throw new SQLException("SQL é obrigatório");
+                throw new SQLException("SQL is required");
             }
             checkResultSet(resultSetType, resultSetConcurrency);
             NexPreparedStatement statement = new NexPreparedStatement(
@@ -404,7 +404,7 @@ final class NexConnection implements Connection {
     @Override
     public boolean isValid(int timeout) throws SQLException {
         if (timeout < 0) {
-            throw new SQLException("timeout negativo");
+            throw new SQLException("timeout is negative");
         }
         return !closed;
     }
@@ -456,7 +456,7 @@ final class NexConnection implements Connection {
     @Override
     public void abort(Executor executor) throws SQLException {
         if (executor == null) {
-            throw new SQLException("executor é obrigatório");
+            throw new SQLException("executor is required");
         }
         if (!closed) {
             close();
@@ -468,10 +468,10 @@ final class NexConnection implements Connection {
         synchronized (lock()) {
             checkOpen();
             if (executor == null) {
-                throw new SQLException("executor é obrigatório");
+                throw new SQLException("executor is required");
             }
             if (milliseconds < 0) {
-                throw new SQLException("timeout negativo");
+                throw new SQLException("timeout is negative");
             }
             networkTimeout = milliseconds;
         }
@@ -490,7 +490,7 @@ final class NexConnection implements Connection {
         if (iface != null && iface.isInstance(this)) {
             return iface.cast(this);
         }
-        throw new SQLException("não é " + iface);
+        throw new SQLException("is not " + iface);
     }
 
     @Override
@@ -505,14 +505,14 @@ final class NexConnection implements Connection {
     void beforeStatement(String sql) throws SQLException {
         checkOpen();
         if (sql == null) {
-            throw new SQLException("SQL é obrigatório");
+            throw new SQLException("SQL is required");
         }
         if (readOnly && !Jdbc.readOnlyCommand(sql)) {
-            throw new SQLException("conexão somente leitura", "25006");
+            throw new SQLException("read-only connection", "25006");
         }
         access.refresh();
         if (access.transactionActive() && !access.ownsTransaction() && !"SELECT".equals(Jdbc.firstKeyword(sql))) {
-            throw new SQLException("outra conexão está com uma transação aberta");
+            throw new SQLException("another connection has an open transaction");
         }
         if (!autoCommit && !Jdbc.skipsTransaction(sql) && !access.transactionActive()) {
             execute("BEGIN", new Object[0]);
@@ -525,7 +525,7 @@ final class NexConnection implements Connection {
 
     void checkOpen() throws SQLException {
         if (closed) {
-            throw new SQLException("a conexão está fechada", "08003");
+            throw new SQLException("the connection is closed", "08003");
         }
     }
 

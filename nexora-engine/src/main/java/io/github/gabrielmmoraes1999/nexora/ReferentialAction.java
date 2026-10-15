@@ -1,8 +1,8 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * O que acontece com a linha filha quando a chave referenciada muda ou some.
- * {@code NO ACTION} e {@code RESTRICT} recusam o comando enquanto existir filho.
+ * What happens to the child row when the referenced key changes or disappears.
+ * {@code NO ACTION} and {@code RESTRICT} reject the statement while a child exists.
  */
 public enum ReferentialAction {
     NO_ACTION,
@@ -28,7 +28,7 @@ public enum ReferentialAction {
     static ReferentialAction stored(int ordinal) {
         ReferentialAction[] values = values();
         if (ordinal < 0 || ordinal >= values.length) {
-            throw new NexException("esquema da tabela está corrompido");
+            throw new NexException("table schema is corrupt");
         }
         return values[ordinal];
     }

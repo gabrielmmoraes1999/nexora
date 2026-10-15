@@ -57,13 +57,13 @@ class NexDriverTest {
         assertFalse(rede.embedded());
         assertNull(driver.connect("jdbc:sqlite:dados", null));
         SQLException vazia = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:", null));
-        assertTrue(vazia.getMessage().contains("arquivo"));
+        assertTrue(vazia.getMessage().contains("file"));
         SQLException semArquivo = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:embedded:", null));
-        assertTrue(semArquivo.getMessage().contains("arquivo"));
+        assertTrue(semArquivo.getMessage().contains("file"));
         SQLException semPorta = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora://localhost/loja", null));
-        assertTrue(semPorta.getMessage().contains("porta"));
+        assertTrue(semPorta.getMessage().contains("port"));
         SQLException semSenha = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:C:/dados/loja.db", null));
-        assertTrue(semSenha.getMessage().contains("senha"));
+        assertTrue(semSenha.getMessage().contains("password"));
         DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:nexora:C:/dados/loja.db", null);
         assertEquals(3, properties.length);
         assertEquals("roleName", properties[2].name);
@@ -223,7 +223,7 @@ class NexDriverTest {
     void arquivoAusenteNaoECriado() throws Exception {
         Path arquivo = dir.resolve("loja.db");
         SQLException ausente = assertThrows(SQLException.class, () -> DriverManager.getConnection(url(), "dba", "dba"));
-        assertTrue(ausente.getMessage().contains("não existe"));
+        assertTrue(ausente.getMessage().contains("does not exist"));
         assertFalse(Files.exists(arquivo));
     }
 

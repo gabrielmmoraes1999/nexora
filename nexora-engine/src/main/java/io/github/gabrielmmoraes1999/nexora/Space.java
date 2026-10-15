@@ -25,7 +25,7 @@ final class Extent {
                 Extent last = merged.get(merged.size() - 1);
                 long end = last.offset + last.length;
                 if (end > extent.offset) {
-                    throw new NexException("espaço livre da tabela está corrompido");
+                    throw new NexException("table free space is corrupt");
                 }
                 if (end == extent.offset) {
                     merged.set(merged.size() - 1, new Extent(last.offset, last.length + extent.length));
@@ -105,7 +105,7 @@ final class Space {
 
     void take(long offset, long length) {
         if (length <= 0) {
-            throw new NexException("falha interna ao compactar o banco");
+            throw new NexException("failed internally to compact the database");
         }
         long end = offset + length;
         for (int i = 0; i < free.size(); i++) {
@@ -115,7 +115,7 @@ final class Space {
                 continue;
             }
             if (offset < extent.offset || end > extentEnd) {
-                throw new NexException("falha interna ao compactar o banco");
+                throw new NexException("failed internally to compact the database");
             }
             free.remove(i);
             if (offset > extent.offset) {
@@ -126,7 +126,7 @@ final class Space {
             }
             return;
         }
-        throw new NexException("falha interna ao compactar o banco");
+        throw new NexException("failed internally to compact the database");
     }
 
     private void trimTail() {

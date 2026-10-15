@@ -48,7 +48,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     private final JTabbedPane workspace = new JTabbedPane();
     private final JCheckBox autoCommit = new JCheckBox("Auto-commit", true);
     private final JComboBox<String> schemas = new JComboBox<>();
-    private final JLabel statusConnection = statusLabel("sem banco");
+    private final JLabel statusConnection = statusLabel("no database");
     private final JLabel statusUser = statusLabel("");
     private final JLabel statusSchema = statusLabel("");
     private final JLabel statusMode = statusLabel("");
@@ -57,11 +57,11 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     private final JLabel statusDotSchema = dot();
     private final JLabel statusDotMode = dot();
     private final JLabel statusDotMessage = dot();
-    private final JButton connectButton = Look.tool("Conectar");
-    private final JButton disconnectButton = Look.tool("Desconectar");
-    private final JButton refreshButton = Look.tool("Atualizar");
-    private final JButton queryButton = Look.tool("Nova consulta");
-    private final JButton runButton = Look.primary("Executar", Icons.PLAY);
+    private final JButton connectButton = Look.tool("Connect");
+    private final JButton disconnectButton = Look.tool("Disconnect");
+    private final JButton refreshButton = Look.tool("Refresh");
+    private final JButton queryButton = Look.tool("New query");
+    private final JButton runButton = Look.primary("Execute", Icons.PLAY);
     private final JButton commitButton = Look.tool("Commit");
     private final JButton rollbackButton = Look.tool("Rollback");
     private boolean updatingSchema;
@@ -76,7 +76,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         try {
             entries.addAll(Registry.load(registryFile));
         } catch (Exception exception) {
-            Dialogs.error(this, "Não foi possível ler o registro de bancos: " + Dialogs.message(exception));
+            Dialogs.error(this, "Could not read the database registry: " + Dialogs.message(exception));
         }
         setJMenuBar(menu());
         add(toolbar(), BorderLayout.NORTH);
@@ -85,7 +85,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         workspace.putClientProperty("JTabbedPane.tabHeight", 34);
         workspace.putClientProperty("JTabbedPane.tabSelectionHeight", 3);
         workspace.putClientProperty("JTabbedPane.tabClosable", true);
-        workspace.putClientProperty("JTabbedPane.tabCloseToolTipText", "Fechar");
+        workspace.putClientProperty("JTabbedPane.tabCloseToolTipText", "Close");
         workspace.putClientProperty("JTabbedPane.tabsPopupPolicy", "asNeeded");
         workspace.putClientProperty("JTabbedPane.scrollButtonsPolicy", "asNeeded");
         workspace.putClientProperty("JTabbedPane.tabCloseCallback", (BiConsumer<JTabbedPane, Integer>) (pane, index) -> {
@@ -108,7 +108,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         add(statusBar(), BorderLayout.SOUTH);
         workspace.addChangeListener(event -> updateActions());
         bindKeys();
-        addTab("Início", Look.imageIcon(16), new StartPage(this::createDatabase, this::register, this::newQueryFromStart), false);
+        addTab("Start", Look.imageIcon(16), new StartPage(this::createDatabase, this::register, this::newQueryFromStart), false);
         explorer.show(entries, outlines(), "");
         updateActions();
         setSize(1360, 840);
@@ -182,7 +182,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     @Override
     public void openNode(Node node, boolean data) {
         if (node.kind() == Node.Kind.USER) {
-            node = Node.folder(node.databaseId(), Node.USERS, "Usuários");
+            node = Node.folder(node.databaseId(), Node.USERS, "Users");
         }
         for (int i = 0; i < workspace.getTabCount(); i++) {
             if (workspace.getComponentAt(i) instanceof ObjectPane pane && pane.same(node)) {
@@ -194,7 +194,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             }
         }
         if (connection(node.databaseId()) == null) {
-            message("conecte o banco antes de abrir o objeto");
+            message("connect the database before opening the object");
             return;
         }
         ObjectPane pane = new ObjectPane(this, node, data);
@@ -227,7 +227,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         entries.add(created.entry());
         save();
         explorer.show(entries, outlines(), created.entry().id());
-        message("banco criado: " + created.entry().path());
+        message("database created: " + created.entry().path());
         if (created.connect()) {
             connectEntry(created.entry());
         }
@@ -250,7 +250,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         }
         try {
             if (!session.connection.getAutoCommit()
-                    && !Dialogs.confirm(this, "Desconectar? A transação aberta será desfeita.")) {
+                    && !Dialogs.confirm(this, "Disconnect? The open transaction will be rolled back.")) {
                 return;
             }
             session.connection.close();
@@ -287,7 +287,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         if (entry == null) {
             return;
         }
-        if (!Dialogs.confirm(this, "Remover " + entry.label() + " do registro? O arquivo não é apagado.")) {
+        if (!Dialogs.confirm(this, "Remove " + entry.label() + " from the registry? The file is not deleted.")) {
             return;
         }
         if (sessions.containsKey(entry.id())) {
@@ -326,7 +326,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         }
         Session session = sessions.get(node.databaseId());
         if (session == null) {
-            message("conecte o banco");
+            message("connect the database");
             return;
         }
         try {
@@ -346,7 +346,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
 
     @Override
     public void newSchema(Node node) {
-        String name = Dialogs.ask(this, "Novo esquema", "Nome do esquema", "");
+        String name = Dialogs.ask(this, "New schema", "Schema name", "");
         if (name == null) {
             return;
         }
@@ -362,7 +362,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         try {
             connection.setSchema(node.name());
             updateActions();
-            message("esquema " + node.name());
+            message("schema " + node.name());
         } catch (SQLException exception) {
             Dialogs.error(this, Dialogs.message(exception));
         }
@@ -374,7 +374,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         if (sql == null) {
             return;
         }
-        if (!Dialogs.confirm(this, "Excluir " + node.title() + "?\n\n" + sql)) {
+        if (!Dialogs.confirm(this, "Delete " + node.title() + "?\n\n" + sql)) {
             return;
         }
         if (run(node.databaseId(), sql)) {
@@ -384,7 +384,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
 
     @Override
     public void newRole(Node node) {
-        String name = Dialogs.ask(this, "Novo papel", "Nome do papel", "");
+        String name = Dialogs.ask(this, "New role", "Role name", "");
         if (name == null) {
             return;
         }
@@ -424,7 +424,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                         }
                     }
                     if (trigger == null) {
-                        throw new SQLException("trigger não encontrado");
+                        throw new SQLException("trigger not found");
                     }
                     yield Ddl.trigger(trigger.name(), trigger.relation(), trigger.inactive(), trigger.type(),
                             trigger.position(), trigger.source());
@@ -483,7 +483,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             if (!outline.warnings().isEmpty()) {
                 message(String.join(" ", outline.warnings()));
             } else {
-                message("conectado a " + entry.label());
+                message("connected to " + entry.label());
             }
             updateActions();
             return true;
@@ -498,7 +498,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     private boolean run(String databaseId, String sql) {
         Connection connection = connection(databaseId);
         if (connection == null) {
-            message("banco desconectado");
+            message("database disconnected");
             return false;
         }
         try {
@@ -517,7 +517,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             query.execute();
             return;
         }
-        message("abra uma consulta para executar");
+        message("open a query to execute");
     }
 
     private void transaction(boolean commit) {
@@ -546,7 +546,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         }
         try {
             connection.setAutoCommit(autoCommit.isSelected());
-            message(autoCommit.isSelected() ? "auto-commit ligado" : "transação manual");
+            message(autoCommit.isSelected() ? "auto-commit on" : "manual transaction");
             updateActions();
         } catch (SQLException exception) {
             Dialogs.error(this, Dialogs.message(exception));
@@ -577,7 +577,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             database = Node.database(entries.get(0).id(), entries.get(0).label());
         }
         if (database == null) {
-            message("registre um banco antes da consulta");
+            message("register a database before the query");
             return;
         }
         newQuery(database);
@@ -626,16 +626,16 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                     statusUser.setText("");
                 }
                 statusSchema.setText(current);
-                statusMode.setText(manual ? "transação manual" : "auto-commit");
+                statusMode.setText(manual ? "manual transaction" : "auto-commit");
                 setTitle("Nexora Studio — " + statusConnection.getText());
             } else if (selectedDatabase != null) {
                 statusConnection.setText(selectedDatabase.title());
                 statusUser.setText("");
                 statusSchema.setText("");
-                statusMode.setText("desconectado");
+                statusMode.setText("disconnected");
                 setTitle("Nexora Studio — " + selectedDatabase.title());
             } else {
-                statusConnection.setText("sem banco");
+                statusConnection.setText("no database");
                 statusUser.setText("");
                 statusSchema.setText("");
                 statusMode.setText("");
@@ -708,7 +708,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         try {
             Registry.save(registryFile, entries);
         } catch (Exception exception) {
-            Dialogs.error(this, "Não foi possível gravar o registro: " + Dialogs.message(exception));
+            Dialogs.error(this, "Could not save the registry: " + Dialogs.message(exception));
         }
     }
 
@@ -716,7 +716,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         for (Session session : sessions.values()) {
             try {
                 if (!session.connection.getAutoCommit()
-                        && !Dialogs.confirm(this, "Sair? Uma transação aberta será desfeita.")) {
+                        && !Dialogs.confirm(this, "Exit? An open transaction will be rolled back.")) {
                     return;
                 }
             } catch (SQLException exception) {
@@ -727,7 +727,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
             try {
                 session.connection.close();
             } catch (SQLException ignored) {
-                // a janela fecha mesmo se uma conexão já tiver caído
+                // the window closes even if a connection has already dropped
             }
         }
         sessions.clear();
@@ -736,43 +736,43 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
 
     private JMenuBar menu() {
         JMenuBar bar = new JMenuBar();
-        JMenu file = new JMenu("Arquivo");
-        file.add(item("Registrar banco", this::register));
-        file.add(item("Criar banco", this::createDatabase));
+        JMenu file = new JMenu("File");
+        file.add(item("Register database", this::register));
+        file.add(item("Create database", this::createDatabase));
         file.addSeparator();
-        file.add(item("Sair", this::exit));
-        JMenu database = new JMenu("Banco");
-        database.add(item("Conectar", () -> {
+        file.add(item("Exit", this::exit));
+        JMenu database = new JMenu("Database");
+        database.add(item("Connect", () -> {
             Node node = explorer.selectedDatabase();
             if (node != null) {
                 connect(node);
             }
         }));
-        database.add(item("Desconectar", () -> {
+        database.add(item("Disconnect", () -> {
             Node node = explorer.selectedDatabase();
             if (node != null) {
                 disconnect(node);
             }
         }));
-        database.add(item("Atualizar", () -> refresh(explorer.selectedDatabase())));
+        database.add(item("Refresh", () -> refresh(explorer.selectedDatabase())));
         database.addSeparator();
         database.add(item("Commit", () -> transaction(true)));
         database.add(item("Rollback", () -> transaction(false)));
-        JMenu query = new JMenu("Consulta");
-        JMenuItem created = item("Nova consulta", this::newQueryFromStart);
+        JMenu query = new JMenu("Query");
+        JMenuItem created = item("New query", this::newQueryFromStart);
         created.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
         query.add(created);
-        JMenuItem run = item("Executar", this::executeQuery);
+        JMenuItem run = item("Execute", this::executeQuery);
         run.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F9, 0));
         query.add(run);
-        JMenu help = new JMenu("Ajuda");
-        help.add(item("Sobre", () -> javax.swing.JOptionPane.showMessageDialog(this, """
+        JMenu help = new JMenu("Help");
+        help.add(item("About", () -> javax.swing.JOptionPane.showMessageDialog(this, """
                 Nexora Studio 1.0
 
-                Interface administrativa do Nexora, no espírito do IBExpert.
-                O banco é um arquivo .db com o log .log ao lado. A conexão embutida abre o arquivo
-                neste processo. A conexão de rede fala com o nexora-server.
-                """, "Sobre", javax.swing.JOptionPane.PLAIN_MESSAGE, Look.imageIcon(64))));
+                Administrative interface for Nexora, in the spirit of IBExpert.
+                The database is a .db file with the .log beside it. The embedded connection opens the file
+                in this process. The network connection talks to nexora-server.
+                """, "About", javax.swing.JOptionPane.PLAIN_MESSAGE, Look.imageIcon(64))));
         bar.add(file);
         bar.add(database);
         bar.add(query);
@@ -790,11 +790,11 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
     private JPanel toolbar() {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 4));
         Look.band(bar);
-        JButton registerButton = Look.tool("Registrar");
-        registerButton.setToolTipText("Registrar um banco já existente");
+        JButton registerButton = Look.tool("Register");
+        registerButton.setToolTipText("Register an existing database");
         registerButton.addActionListener(event -> register());
-        JButton create = Look.tool("Criar banco");
-        create.setToolTipText("Criar um arquivo .db");
+        JButton create = Look.tool("Create database");
+        create.setToolTipText("Create a .db file");
         create.addActionListener(event -> createDatabase());
         bar.add(registerButton);
         connectButton.addActionListener(event -> {
@@ -818,14 +818,14 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                 newQueryFromStart();
             }
         });
-        connectButton.setToolTipText("Conectar ao banco selecionado");
-        disconnectButton.setToolTipText("Desconectar o banco selecionado");
-        refreshButton.setToolTipText("Atualizar o explorador (F5)");
-        queryButton.setToolTipText("Nova consulta (Ctrl+N)");
-        runButton.setToolTipText("Executar o script da consulta (F9)");
-        commitButton.setToolTipText("Confirmar a transação aberta");
-        rollbackButton.setToolTipText("Desfazer a transação aberta");
-        autoCommit.setToolTipText("Grava cada comando assim que ele termina");
+        connectButton.setToolTipText("Connect to the selected database");
+        disconnectButton.setToolTipText("Disconnect the selected database");
+        refreshButton.setToolTipText("Refresh the explorer (F5)");
+        queryButton.setToolTipText("New query (Ctrl+N)");
+        runButton.setToolTipText("Execute the query script (F9)");
+        commitButton.setToolTipText("Commit the open transaction");
+        rollbackButton.setToolTipText("Roll back the open transaction");
+        autoCommit.setToolTipText("Writes each command as soon as it finishes");
         runButton.addActionListener(event -> executeQuery());
         commitButton.addActionListener(event -> transaction(true));
         rollbackButton.addActionListener(event -> transaction(false));
@@ -844,7 +844,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         bar.add(commitButton);
         bar.add(rollbackButton);
         bar.add(autoCommit);
-        JLabel schemaLabel = new JLabel("Esquema");
+        JLabel schemaLabel = new JLabel("Schema");
         schemaLabel.setBorder(new EmptyBorder(0, 8, 0, 4));
         bar.add(schemaLabel);
         bar.add(schemas);
@@ -899,7 +899,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                 }
             }
         } catch (UnsupportedOperationException ignored) {
-            // a janela continua com o ícone definido em setIconImages
+            // the window keeps the icon set in setIconImages
         }
     }
 

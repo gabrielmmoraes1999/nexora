@@ -1,8 +1,8 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Nome de tabela ou view. Sem esquema, {@code schema} fica {@code null}
- * até a resolução usar o esquema da sessão. O padrão é {@code public}.
+ * Table or view name. Without a schema, {@code schema} stays {@code null}
+ * until resolution uses the session schema. The default is {@code public}.
  */
 final class Relation {
 
@@ -33,8 +33,8 @@ final class Relation {
     }
 
     /**
-     * Nome gravado no catálogo. Em {@code public} fica só o objeto.
-     * Nos outros esquemas, {@code esquema.objeto}.
+     * Name stored in the catalog. In {@code public} it is only the object.
+     * In other schemas, {@code schema.object}.
      */
     static String catalogName(String schema, String name) {
         if (schema == null || Names.same(schema, PUBLIC)) {
@@ -45,14 +45,14 @@ final class Relation {
 
     static Relation parse(String written) {
         if (written == null || written.isBlank()) {
-            throw new NexException("nome é obrigatório");
+            throw new NexException("name is required");
         }
         int dot = written.indexOf('.');
         if (dot < 0) {
             return new Relation(null, written);
         }
         if (dot == 0 || dot == written.length() - 1 || written.indexOf('.', dot + 1) >= 0) {
-            throw new NexException("nome qualificado inválido: " + written);
+            throw new NexException("invalid qualified name: " + written);
         }
         return new Relation(written.substring(0, dot), written.substring(dot + 1));
     }
@@ -63,12 +63,12 @@ final class Relation {
         }
         int dot = catalogName.lastIndexOf('.');
         if (dot <= 0 || dot >= catalogName.length() - 1) {
-            throw new NexException("catálogo inconsistente na tabela " + catalogName);
+            throw new NexException("inconsistent catalog in table " + catalogName);
         }
         String schema = catalogName.substring(0, dot);
         String name = catalogName.substring(dot + 1);
         if (!Names.same(name, metaName)) {
-            throw new NexException("catálogo inconsistente na tabela " + catalogName);
+            throw new NexException("inconsistent catalog in table " + catalogName);
         }
         return new Relation(schema, metaName);
     }

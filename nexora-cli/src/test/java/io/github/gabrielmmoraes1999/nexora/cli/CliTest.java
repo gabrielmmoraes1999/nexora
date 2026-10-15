@@ -25,7 +25,7 @@ class CliTest {
     @Test
     void createGravaOArquivo() throws Exception {
         assertTrue(assertThrows(NexException.class, () -> Cli.execute(null)).getMessage().contains("create"));
-        assertTrue(assertThrows(NexException.class, () -> Cli.execute(new String[]{"info"})).getMessage().contains("desconhecido"));
+        assertTrue(assertThrows(NexException.class, () -> Cli.execute(new String[]{"info"})).getMessage().contains("unknown"));
         Path ruim = dir.resolve("ruim.db");
         assertThrows(NexException.class, () -> Cli.execute(new String[]{
                 "create", ruim.toString(), "--page-size", "2048", "--password", "x"
@@ -54,14 +54,14 @@ class CliTest {
             db.execute("INSERT INTO t VALUES (1, 'antes')");
         }
         Path copia = dir.resolve("copia");
-        Cli.execute(new String[]{"backup", "completo", arquivo.toString(), copia.toString()});
+        Cli.execute(new String[]{"backup", "full", arquivo.toString(), copia.toString()});
         try (Database db = Database.open(arquivo, "dba", "abc")) {
             db.execute("INSERT INTO t VALUES (2, 'depois')");
             db.execute("INSERT INTO t VALUES (?, ?)", 3, "d'agua");
         }
         long vivo = Files.size(dir.resolve("cli.log"));
         Path mods = dir.resolve("mods");
-        Cli.execute(new String[]{"backup", "modificacao", arquivo.toString(), mods.toString()});
+        Cli.execute(new String[]{"backup", "incremental", arquivo.toString(), mods.toString()});
         assertEquals(vivo, Files.size(dir.resolve("cli.log")));
         assertEquals(vivo, Files.size(mods.resolve("cli.log")));
         assertFalse(Files.exists(mods.resolve("cli.db")));
@@ -75,8 +75,8 @@ class CliTest {
             System.setOut(previous);
         }
         String saida = console.toString(StandardCharsets.UTF_8);
-        assertTrue(saida.contains("exportando: 0%"));
-        assertTrue(saida.contains("exportando: 100%"));
+        assertTrue(saida.contains("exporting: 0%"));
+        assertTrue(saida.contains("exporting: 100%"));
         String texto = Files.readString(sql);
         assertTrue(texto.contains("INSERT INTO t VALUES (2, 'depois');"));
         assertTrue(texto.contains("INSERT INTO t VALUES (3, 'd''agua');"));

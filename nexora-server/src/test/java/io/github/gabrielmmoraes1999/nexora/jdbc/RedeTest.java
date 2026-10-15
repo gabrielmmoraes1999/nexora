@@ -36,7 +36,7 @@ class RedeTest {
         Path ausente = dir.resolve("ausente.db");
         NexException falta = assertThrows(NexException.class, () -> MotorServer.start(
                 new MotorConfig("127.0.0.1", 0, List.of(new MotorConfig.DatabaseSpec("loja", ausente)))));
-        assertTrue(falta.getMessage().contains("não existe"));
+        assertTrue(falta.getMessage().contains("does not exist"));
         assertFalse(Files.exists(ausente));
 
         Path file = dir.resolve("loja.db");
@@ -47,10 +47,10 @@ class RedeTest {
             String url = "jdbc:nexora://127.0.0.1:" + server.port() + "/LOJA";
             SQLException nome = assertThrows(SQLException.class,
                     () -> DriverManager.getConnection("jdbc:nexora://127.0.0.1:" + server.port() + "/outra", "dba", "dba"));
-            assertTrue(nome.getMessage().contains("banco"));
+            assertTrue(nome.getMessage().contains("database"));
             SQLException senha = assertThrows(SQLException.class,
                     () -> DriverManager.getConnection(url, "dba", "errada"));
-            assertTrue(senha.getMessage().contains("senha"));
+            assertTrue(senha.getMessage().contains("password"));
             assertThrows(NexException.class, () -> Database.open(file, "dba", "dba"));
 
             try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {

@@ -14,11 +14,11 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * Uma tabela dentro do arquivo do banco. Os deslocamentos são relativos
- * ao início da região. O BLOB mora nessa mesma região. O commit grava os
- * dados novos e só então troca o ponteiro do cabeçalho. O espaço
- * O índice também fica nessa região, em páginas. A busca lê essas páginas;
- * a lista de chaves não permanece na memória depois do commit.
+ * A table inside the database file. Offsets are relative
+ * to the start of the region. The BLOB lives in that same region. Commit writes the
+ * new data and only then swaps the header pointer. The space
+ * The index also lives in that region, in pages. The search reads those pages;
+ * the key list does not stay in memory after commit.
  */
 final class TableStore implements AutoCloseable {
 
@@ -38,14 +38,14 @@ final class TableStore implements AutoCloseable {
     private int activeSlot;
     private boolean dirty;
     /**
-     * O mapa vivo é o que um savepoint confirmado ainda enxerga.
-     * A próxima alteração copia o mapa antes de mexer nele.
+     * The live map is what a committed savepoint still sees.
+     * The next change copies the map before modifying it.
      */
     private boolean shared;
     private final Map<Long, byte[]> blobCache = new HashMap<>();
     /**
-     * Savepoint que ainda aponta para o mapa vivo. Os ids inseridos nele
-     * são desfeitos se esse savepoint for restaurado.
+     * Savepoint that still points at the live map. Ids inserted in it
+     * are undone if that savepoint is restored.
      */
     private Snapshot undo;
     private List<IndexTree.DiskIndex> indexes = List.of();
@@ -149,7 +149,7 @@ final class TableStore implements AutoCloseable {
 
     void addUnique(UniqueKey key) {
         if (hasIndex(key.name)) {
-            throw new NexException("índice já existe: " + key.name);
+            throw new NexException("index already exists: " + key.name);
         }
         rejectBlobKey(schema, key.columns);
         Schema next = schema.withUnique(key);
@@ -179,7 +179,7 @@ final class TableStore implements AutoCloseable {
             }
         }
         if (!found) {
-            throw new NexException("chave única não encontrada: " + name);
+            throw new NexException("unique key not found: " + name);
         }
         Schema next = schema.withoutUnique(name);
         validate(next);
@@ -190,7 +190,7 @@ final class TableStore implements AutoCloseable {
 
     void dropPrimaryKey() {
         if (schema.primaryKey.length == 0) {
-            throw new NexException("a tabela " + schema.name + " não possui chave primária");
+            throw new NexException("table " + schema.name + " does not have a primary key");
         }
         String indexName = schema.primaryIndex;
         Schema next = schema.withoutPrimaryKey();
@@ -209,7 +209,7 @@ final class TableStore implements AutoCloseable {
             }
         }
         if (indexName == null) {
-            throw new NexException("chave estrangeira não encontrada: " + name);
+            throw new NexException("foreign key not found: " + name);
         }
         Schema next = schema.withoutForeignKey(name);
         validate(next);
@@ -229,7 +229,7 @@ final class TableStore implements AutoCloseable {
             kept.add(index);
         }
         if (removed == null) {
-            throw new NexException("índice não encontrado: " + name);
+            throw new NexException("index not found: " + name);
         }
         removed.release(pendingFree, pages());
         indexes = kept;
@@ -285,7 +285,7 @@ final class TableStore implements AutoCloseable {
         int count = 0;
         for (Object[] raw : batch) {
             if (raw.length != schema.columns.size()) {
-                throw new NexException("quantidade de valores não corresponde às colunas de " + schema.name);
+                throw new NexException("value count does not match the columns of " + schema.name);
             }
             Cell[] cells = new Cell[raw.length];
             for (int i = 0; i < raw.length; i++) {
@@ -307,7 +307,7 @@ final class TableStore implements AutoCloseable {
                     column = schema.columns.get(i);
                 }
                 if (value == null && column.notNull) {
-                    throw new NexException("coluna obrigatória sem valor: " + schema.name + "." + column.name);
+                    throw new NexException("required column has no value: " + schema.name + "." + column.name);
                 }
                 cells[i] = toCell(column, value);
             }
@@ -337,16 +337,16 @@ final class TableStore implements AutoCloseable {
         for (Map.Entry<Long, Cell[]> entry : replacements.entrySet()) {
             StoredRow current = rows.get(entry.getKey());
             if (current == null) {
-                throw new NexException("registro não encontrado para atualização");
+                throw new NexException("record not found for update");
             }
             Cell[] cells = entry.getValue();
             if (cells.length != schema.columns.size()) {
-                throw new NexException("quantidade de valores não corresponde às colunas de " + schema.name);
+                throw new NexException("value count does not match the columns of " + schema.name);
             }
             for (int i = 0; i < cells.length; i++) {
                 Column column = nextSchema.columns.get(i);
                 if (cells[i].isNull() && column.notNull) {
-                    throw new NexException("coluna obrigatória sem valor: " + schema.name + "." + column.name);
+                    throw new NexException("required column has no value: " + schema.name + "." + column.name);
                 }
                 if (column.autoIncrement && cells[i].value instanceof Number number
                         && number.longValue() >= column.nextIdentity) {
@@ -392,13 +392,13 @@ final class TableStore implements AutoCloseable {
 
     void addColumn(Column column, boolean primary, boolean unique) {
         if (schema.indexOf(column.name) >= 0) {
-            throw new NexException("coluna já existe: " + column.name);
+            throw new NexException("column already exists: " + column.name);
         }
         if ((primary || unique) && column.type == DataType.BLOB) {
-            throw new NexException("BLOB não pode ser chave");
+            throw new NexException("BLOB cannot be a key");
         }
         if (!rows.isEmpty() && column.notNull && !column.hasDefault && !column.autoIncrement) {
-            throw new NexException("coluna NOT NULL precisa de DEFAULT quando a tabela já tem registros");
+            throw new NexException("NOT NULL column requires a DEFAULT when the table already has records");
         }
         Column stored = column.autoIncrement && column.nextIdentity == 0 ? column.withIdentity(1) : column;
         long identity = stored.nextIdentity;
@@ -414,7 +414,7 @@ final class TableStore implements AutoCloseable {
                 value = stored.defaultValue;
             }
             if (value == null && stored.notNull) {
-                throw new NexException("coluna obrigatória sem valor: " + stored.name);
+                throw new NexException("required column has no value: " + stored.name);
             }
             cells[cells.length - 1] = toCell(stored, value);
             freed.addAll(freedExtents(current, cells));
@@ -434,7 +434,7 @@ final class TableStore implements AutoCloseable {
 
     void addPrimaryKey(int[] columns, String constraint, String index, boolean descending) {
         if (hasIndex(index)) {
-            throw new NexException("índice já existe: " + index);
+            throw new NexException("index already exists: " + index);
         }
         List<Extent> extra = new ArrayList<>();
         IndexTree.DiskIndex primary = IndexTree.DiskIndex.empty(new IndexTree.Spec(index, columns, true, true))
@@ -452,7 +452,7 @@ final class TableStore implements AutoCloseable {
 
     void addForeignKey(ForeignKey key) {
         if (hasIndex(key.indexName)) {
-            throw new NexException("índice já existe: " + key.indexName);
+            throw new NexException("index already exists: " + key.indexName);
         }
         rejectBlobKey(schema, key.columns);
         Schema next = schema.withIndex(new IndexDef(key.indexName, key.columns, false, key.descending)).withForeignKey(key);
@@ -469,10 +469,10 @@ final class TableStore implements AutoCloseable {
     void dropColumn(String name) {
         int index = schema.indexOf(name);
         if (index < 0) {
-            throw new NexException("coluna não encontrada: " + name);
+            throw new NexException("column not found: " + name);
         }
         if (schema.columns.size() == 1) {
-            throw new NexException("a tabela precisa manter ao menos uma coluna");
+            throw new NexException("the table must keep at least one column");
         }
         TreeMap<Long, StoredRow> next = new TreeMap<>();
         List<Extent> freed = new ArrayList<>();
@@ -527,8 +527,8 @@ final class TableStore implements AutoCloseable {
     }
 
     /**
-     * Separa o mapa da transação do mapa confirmado. As linhas que não mudam
-     * continuam as mesmas e o commit não as regrava.
+     * Separates the transaction map from the committed map. Rows that do not change
+     * stay the same and commit does not rewrite them.
      */
     void markShared() {
         shared = true;
@@ -564,16 +564,16 @@ final class TableStore implements AutoCloseable {
     }
 
     /**
-     * Publica no estado confirmado só as linhas que a transação inseriu, alterou
-     * ou apagou desde {@code base}. Outra sessão que tenha mudado a mesma linha
-     * impede a publicação.
+     * Publishes to the committed state only the rows the transaction inserted, updated,
+     * or deleted since {@code base}. Another session that changed the same row
+     * blocks the publish.
      */
     void publishChanges(Snapshot base, Snapshot committed) {
         if (base == null || committed == null) {
-            throw new NexException("falha interna ao confirmar " + schema.name);
+            throw new NexException("failed internally to commit " + schema.name);
         }
         if (!sameShape(schema, committed.schema)) {
-            throw new NexException("outra transação alterou a estrutura de " + schema.name);
+            throw new NexException("another transaction changed the structure of " + schema.name);
         }
         String name = schema.name;
         List<Long> inserted = new ArrayList<>();
@@ -613,14 +613,14 @@ final class TableStore implements AutoCloseable {
             StoredRow current = committed.rows.get(id);
             StoredRow original = base.rows.get(id);
             if (current == null || !Arrays.deepEquals(valuesOf(base.schema, original), valuesOf(committed.schema, current))) {
-                throw new NexException("outra transação alterou a mesma linha de " + name);
+                throw new NexException("another transaction changed the same row of " + name);
             }
         }
         for (Long id : deleted) {
             StoredRow current = committed.rows.get(id);
             StoredRow original = base.rows.get(id);
             if (current == null || !Arrays.deepEquals(valuesOf(base.schema, original), valuesOf(committed.schema, current))) {
-                throw new NexException("outra transação alterou a mesma linha de " + name);
+                throw new NexException("another transaction changed the same row of " + name);
             }
         }
         long privateNext = nextRowId;
@@ -639,8 +639,8 @@ final class TableStore implements AutoCloseable {
             try {
                 update(updatedCells);
             } catch (NexException exception) {
-                if (exception.getMessage() != null && exception.getMessage().contains("duplicado")) {
-                    throw new NexException("outra transação gravou a mesma chave em " + name);
+                if (exception.getMessage() != null && exception.getMessage().contains("duplicate")) {
+                    throw new NexException("another transaction wrote the same key in " + name);
                 }
                 throw exception;
             }
@@ -649,8 +649,8 @@ final class TableStore implements AutoCloseable {
             try {
                 insert(new ArrayList<>(insertedValues.values()));
             } catch (NexException exception) {
-                if (exception.getMessage() != null && exception.getMessage().contains("duplicado")) {
-                    throw new NexException("outra transação gravou a mesma chave em " + name);
+                if (exception.getMessage() != null && exception.getMessage().contains("duplicate")) {
+                    throw new NexException("another transaction wrote the same key in " + name);
                 }
                 throw exception;
             }
@@ -691,8 +691,8 @@ final class TableStore implements AutoCloseable {
     }
 
     /**
-     * Reescreve os registros vivos no início da região. O commit usa isso
-     * quando a região atual ficou grande demais para o que ainda está na tabela.
+     * Rewrites live records at the start of the region. Commit uses this
+     * when the current region has grown too large for what is still in the table.
      */
     Plan preparePacked() {
         return prepare(true);
@@ -779,7 +779,7 @@ final class TableStore implements AutoCloseable {
         long finalSize = space.fileSize();
         byte[] meta = MetaCodec.encode(schema, nextRowId, finalSize, lives, reusable, roots, (int) reserved);
         if (meta.length != reserved) {
-            throw new NexException("falha interna ao gravar os metadados de " + schema.name);
+            throw new NexException("failed internally to write the metadata of " + schema.name);
         }
         writes.add(new Write(metaAt, meta));
         ensureDisjoint(writes, finalSize);
@@ -886,7 +886,7 @@ final class TableStore implements AutoCloseable {
         schema = image.schema;
         fileSize = image.fileSize;
         if (fileSize > capacity) {
-            throw new NexException("região da tabela " + schema.name + " não comporta os dados");
+            throw new NexException("region of table " + schema.name + " cannot hold the data");
         }
         metaOffset = active.metaOffset();
         metaLength = active.metaLength();
@@ -932,7 +932,7 @@ final class TableStore implements AutoCloseable {
         long size = Format.HEADER_SIZE + draft.length;
         byte[] meta = MetaCodec.encode(schema, 1, size, List.of(), List.of(), roots);
         if (meta.length != draft.length) {
-            throw new NexException("falha interna ao criar a tabela " + schema.name);
+            throw new NexException("failed internally to create table " + schema.name);
         }
         writeAt(0, FileHeader.fresh(Format.HEADER_SIZE, meta.length));
         writeAt(Format.HEADER_SIZE, meta);
@@ -948,7 +948,7 @@ final class TableStore implements AutoCloseable {
 
     private StoredRow readSlot(LiveSlot slot) {
         if (slot.size <= Format.BLOCK_HEADER || slot.size > Integer.MAX_VALUE) {
-            throw new NexException("registro corrompido na tabela " + schema.name);
+            throw new NexException("corrupt record in table " + schema.name);
         }
         byte[] block = readAt(slot.offset, (int) slot.size);
         ByteBuffer buffer = ByteBuffer.wrap(block).order(Format.ORDER);
@@ -957,10 +957,10 @@ final class TableStore implements AutoCloseable {
         long blockSize = buffer.getLong();
         long rowId = buffer.getLong();
         if (magic != Format.SLOT_MAGIC || blockSize != slot.size || rowId != slot.rowId) {
-            throw new NexException("registro corrompido na tabela " + schema.name);
+            throw new NexException("corrupt record in table " + schema.name);
         }
         if (declared <= 0 || Format.slotExtent(declared) != slot.size || buffer.remaining() < declared) {
-            throw new NexException("registro corrompido na tabela " + schema.name);
+            throw new NexException("corrupt record in table " + schema.name);
         }
         byte[] payload = new byte[declared];
         buffer.get(payload);
@@ -978,7 +978,7 @@ final class TableStore implements AutoCloseable {
 
     private byte[] readBlob(long offset, long length) {
         if (length < 0 || length > Integer.MAX_VALUE) {
-            throw new NexException("BLOB corrompido na tabela " + schema.name);
+            throw new NexException("corrupt BLOB in table " + schema.name);
         }
         byte[] cached = blobCache.get(offset);
         if (cached != null && cached.length == length) {
@@ -992,7 +992,7 @@ final class TableStore implements AutoCloseable {
         long blockSize = buffer.getLong();
         long payloadLength = buffer.getLong();
         if (magic != Format.BLOB_MAGIC || blockSize != extent || payloadLength != length) {
-            throw new NexException("BLOB corrompido na tabela " + schema.name);
+            throw new NexException("corrupt BLOB in table " + schema.name);
         }
         byte[] data = new byte[(int) length];
         buffer.get(data);
@@ -1149,7 +1149,7 @@ final class TableStore implements AutoCloseable {
             Object value = logical(row.cells[columnIndex], column);
             if (value == null) {
                 if (index.primary) {
-                    throw new NexException("chave primária não aceita NULL em " + target.name + "." + column.name);
+                    throw new NexException("primary key does not accept NULL in " + target.name + "." + column.name);
                 }
                 return null;
             }
@@ -1211,7 +1211,7 @@ final class TableStore implements AutoCloseable {
         if (cell.offset > 0) {
             return readBlob(cell.offset, cell.length);
         }
-        throw new NexException("valor inválido na coluna " + column.name);
+        throw new NexException("invalid value in column " + column.name);
     }
 
     private static byte[] blobBlock(byte[] payload, long extent) {
@@ -1240,11 +1240,11 @@ final class TableStore implements AutoCloseable {
         long end = Format.HEADER_SIZE;
         for (Write write : ordered) {
             if (write.offset < end) {
-                throw new NexException("falha interna: gravações sobrepostas");
+                throw new NexException("internal failure: overlapping writes");
             }
             end = write.offset + write.bytes.length;
             if (end > finalSize) {
-                throw new NexException("falha interna: gravação além do fim do arquivo");
+                throw new NexException("internal failure: write past the end of the file");
             }
         }
     }
@@ -1257,14 +1257,14 @@ final class TableStore implements AutoCloseable {
                 continue;
             }
             if (extent.offset < 0 || extent.offset + extent.length > capacity) {
-                throw new NexException("espaço livre fora da tabela " + name);
+                throw new NexException("free space is outside table " + name);
             }
             if (overlaps(extent.offset, extent.length, metaAt, metaSpan)) {
-                throw new NexException("espaço livre invade os metadados de " + name);
+                throw new NexException("free space overlaps the metadata of " + name);
             }
             for (StoredRow row : live) {
                 if (row.slotOffset >= 0 && overlaps(extent.offset, extent.length, row.slotOffset, row.slotSize)) {
-                    throw new NexException("espaço livre invade um registro de " + name);
+                    throw new NexException("free space overlaps a record of " + name);
                 }
             }
         }
@@ -1297,14 +1297,14 @@ final class TableStore implements AutoCloseable {
 
     private void writeAt(long logical, byte[] data) {
         if (logical < 0 || data.length < 0 || logical + data.length > capacity) {
-            throw new NexException("gravação fora da área da tabela " + (schema == null ? "" : schema.name));
+            throw new NexException("write outside the table area " + (schema == null ? "" : schema.name));
         }
         file.writeBytes(base + logical, data);
     }
 
     private byte[] readAt(long logical, int length) {
         if (logical < 0 || length < 0 || logical + length > capacity) {
-            throw new NexException("leitura fora da área da tabela " + (schema == null ? "" : schema.name));
+            throw new NexException("read outside the table area " + (schema == null ? "" : schema.name));
         }
         return file.readBytes(base + logical, length);
     }
@@ -1315,21 +1315,21 @@ final class TableStore implements AutoCloseable {
 
     private static void validate(Schema schema) {
         if (schema.columns.isEmpty()) {
-            throw new NexException("a tabela precisa de ao menos uma coluna");
+            throw new NexException("the table requires at least one column");
         }
         if (schema.columns.size() > Format.MAX_COLUMNS) {
-            throw new NexException("a tabela excede " + Format.MAX_COLUMNS + " colunas");
+            throw new NexException("the table exceeds " + Format.MAX_COLUMNS + " columns");
         }
         if (RecordCodec.maxPayloadSize(schema) > Format.MAX_PAYLOAD) {
-            throw new NexException("registro muito grande; use BLOB para campos longos");
+            throw new NexException("record is too large; use BLOB for long fields");
         }
         Set<String> names = new HashSet<>();
         for (Column column : schema.columns) {
             if (!names.add(Names.fold(column.name))) {
-                throw new NexException("coluna duplicada: " + column.name);
+                throw new NexException("duplicate column: " + column.name);
             }
             if (column.autoIncrement && !column.type.exactInteger()) {
-                throw new NexException("AUTOINCREMENT só é permitido em SMALLINT, INTEGER ou BIGINT");
+                throw new NexException("AUTOINCREMENT is only allowed on SMALLINT, INTEGER, or BIGINT");
             }
         }
         rejectBlobKey(schema, schema.primaryKey);
@@ -1338,7 +1338,7 @@ final class TableStore implements AutoCloseable {
         }
         for (IndexDef index : schema.indexes) {
             if (index.columns.length == 0) {
-                throw new NexException("índice precisa de ao menos uma coluna");
+                throw new NexException("index requires at least one column");
             }
             rejectBlobKey(schema, index.columns);
         }
@@ -1347,7 +1347,7 @@ final class TableStore implements AutoCloseable {
     private static void rejectBlobKey(Schema schema, int[] indexes) {
         for (int index : indexes) {
             if (schema.columns.get(index).type == DataType.BLOB) {
-                throw new NexException("BLOB não pode ser chave");
+                throw new NexException("BLOB cannot be a key");
             }
         }
     }

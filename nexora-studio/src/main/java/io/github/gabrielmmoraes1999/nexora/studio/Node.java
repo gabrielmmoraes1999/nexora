@@ -3,7 +3,7 @@ package io.github.gabrielmmoraes1999.nexora.studio;
 import java.util.Objects;
 
 /**
- * Item do explorador. Não carrega Swing: o mesmo valor identifica a aba e o menu.
+ * Explorer item. It does not load Swing: the same value identifies the tab and the menu.
  */
 public record Node(Kind kind, String databaseId, String title, String schema, String name) {
 

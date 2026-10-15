@@ -26,16 +26,16 @@ import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 
 /**
- * Registro sequencial ao lado do {@code .db}. Cada commit acrescenta a
- * transação confirmada e o REDO das páginas, os dois comprimidos. O arquivo
- * não mostra o SQL nem os valores. O checkpoint marca até onde as páginas
- * acompanham o log, sem apagar o histórico. O log só volta ao cabeçalho no
- * backup: a partir daí ele guarda as transações feitas depois.
+ * Sequential record beside the {@code .db}. Each commit appends the
+ * committed transaction and the page REDO, both compressed. The file
+ * does not show the SQL or the values. The checkpoint marks how far the pages
+ * follow the log, without erasing the history. The log returns to the header only on
+ * backup: from then on it stores the transactions made afterward.
  */
 final class TransactionLog implements AutoCloseable {
 
     /**
-     * Teste de queda: depois que o REDO está no disco e antes de aplicar as páginas.
+     * Crash test: after the REDO is on disk and before the pages are applied.
      */
     static volatile boolean crashAfterRedo;
 
@@ -46,7 +46,7 @@ final class TransactionLog implements AutoCloseable {
     private int pageSize;
     private long epoch = 1;
     /**
-     * Fim do prefixo íntegro. Um registro rasgado no final não entra aqui.
+     * End of the intact prefix. A torn record at the end is not included here.
      */
     private long consistentEnd;
 
@@ -72,7 +72,7 @@ final class TransactionLog implements AutoCloseable {
         Path path = beside(database);
         try {
             if (Files.exists(path) && Files.size(path) > 0) {
-                throw new NexException("o log de transação já existe");
+                throw new NexException("transaction log already exists");
             }
             if (Files.exists(path)) {
                 Files.delete(path);
@@ -93,14 +93,14 @@ final class TransactionLog implements AutoCloseable {
                 try {
                     Files.deleteIfExists(path);
                 } catch (IOException ignored) {
-                    // o arquivo incompleto fica para a próxima tentativa
+                    // the incomplete file is left for the next attempt
                 }
                 throw exception;
             }
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("não foi possível criar o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("could not create the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -109,8 +109,8 @@ final class TransactionLog implements AutoCloseable {
     }
 
     /**
-     * Não há log ao lado do banco: o arquivo não existe ou está vazio,
-     * mesmo depois de retomar uma cópia interrompida.
+     * There is no log beside the database: the file does not exist or is empty,
+     * even after resuming an interrupted copy.
      */
     static boolean missing(Path database) {
         Path path = beside(database);
@@ -118,19 +118,19 @@ final class TransactionLog implements AutoCloseable {
             absorbPending(path);
             return !Files.isRegularFile(path) || Files.size(path) == 0;
         } catch (IOException exception) {
-            throw new NexException("não foi possível abrir o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("could not open the transaction log: " + exception.getMessage(), exception);
         }
     }
 
-    /** Abre um log avulso, o que o aplicador vai sobrepor ao banco. */
+    /** Opens a standalone log, the one the applier will apply onto the database. */
     static TransactionLog openFile(Path logFile, long logId, int pageSize) {
         return openAt(logFile, logId, pageSize, false, true);
     }
 
-    /** Abre o log só para ler as transações, sem exigir o par do banco. */
+    /** Opens the log only to read transactions, without requiring the database pair. */
     static TransactionLog inspect(Path logFile) {
         if (logFile == null) {
-            throw new NexException("o log de transação é obrigatório");
+            throw new NexException("transaction log is required");
         }
         return openAt(logFile, 0L, 0, false, false);
     }
@@ -145,7 +145,7 @@ final class TransactionLog implements AutoCloseable {
                 absorbPending(path);
             }
             if (!Files.isRegularFile(path) || Files.size(path) == 0) {
-                throw new NexException("log de transação ausente");
+                throw new NexException("transaction log is missing");
             }
             FileChannel channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
             TransactionLog log = new TransactionLog(path, channel);
@@ -161,7 +161,7 @@ final class TransactionLog implements AutoCloseable {
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("não foi possível abrir o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("could not open the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -170,7 +170,7 @@ final class TransactionLog implements AutoCloseable {
     }
 
     /**
-     * O backup já copiou o par. O log vivo passa a guardar só o que vier depois.
+     * The backup already copied the pair. The live log stores only what comes afterward.
      */
     void restart(long newEpoch) {
         epoch = newEpoch;
@@ -178,7 +178,7 @@ final class TransactionLog implements AutoCloseable {
         force();
     }
 
-    /** Atualiza a geração no cabeçalho e preserva os registros já gravados. */
+    /** Updates the generation in the header and keeps the records already written. */
     void adoptEpoch(long newEpoch) {
         epoch = newEpoch;
         byte[] header = Format.readFully(channel, 0, Format.LOG_HEADER_SIZE);
@@ -188,8 +188,8 @@ final class TransactionLog implements AutoCloseable {
     }
 
     /**
-     * Substitui este log pelo conteúdo de {@code source}. Um arquivo
-     * {@code .log.apply} ao lado permite retomar se a cópia parar no meio.
+     * Replaces this log with the contents of {@code source}. A
+     * {@code .log.apply} file beside it allows resume if the copy stops halfway.
      */
     void copyFrom(TransactionLog source) {
         Path pending = pendingPath(path);
@@ -199,7 +199,7 @@ final class TransactionLog implements AutoCloseable {
             deleteQuiet(pending);
             consistentEnd = size();
         } catch (IOException exception) {
-            throw new NexException("falha ao copiar o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("failed to copy the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -207,11 +207,11 @@ final class TransactionLog implements AutoCloseable {
         try {
             writeChannel(channel, size(), target);
         } catch (IOException exception) {
-            throw new NexException("falha ao copiar o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("failed to copy the transaction log: " + exception.getMessage(), exception);
         }
     }
 
-    /** Os primeiros {@code length} bytes dos dois logs são iguais. */
+    /** The first {@code length} bytes of the two logs are equal. */
     boolean matches(TransactionLog other, long length) {
         if (length < 0 || length > size() || length > other.size()) {
             return false;
@@ -231,7 +231,7 @@ final class TransactionLog implements AutoCloseable {
         try {
             return channel.size();
         } catch (IOException exception) {
-            throw new NexException("falha ao ler o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("failed to read the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -271,7 +271,7 @@ final class TransactionLog implements AutoCloseable {
         append(Format.RECORD_CHECKPOINT, new byte[0]);
     }
 
-    /** Grava o SQL confirmado neste commit. O aplicador executa esses comandos. */
+    /** Writes the SQL committed in this commit. The applier runs these statements. */
     void appendTransaction(List<Applied> statements) {
         if (statements == null || statements.isEmpty()) {
             return;
@@ -291,21 +291,21 @@ final class TransactionLog implements AutoCloseable {
     }
 
     /**
-     * Transações cujo registro começa em {@code from} ou depois.
-     * Cada lote é um commit, com o offset final do registro.
+     * Transactions whose record starts at {@code from} or later.
+     * Each batch is a commit, with the record's ending offset.
      */
     List<Batch> readTransactions(long from) {
         return readTransactions(from, null);
     }
 
     /**
-     * Transações cujo registro começa em {@code from} ou depois.
-     * {@code seen} recebe o offset já lido, para o export mostrar o andamento.
+     * Transactions whose record starts at {@code from} or later.
+     * {@code seen} receives the offset already read, so the export can show progress.
      */
     List<Batch> readTransactions(long from, LongConsumer seen) {
         long size = size();
         if (size < Format.LOG_HEADER_SIZE) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         List<Batch> batches = new ArrayList<>();
         long at = Format.LOG_HEADER_SIZE;
@@ -322,19 +322,19 @@ final class TransactionLog implements AutoCloseable {
             int expected = Format.crc(record, 4, recordLength - 8);
             if (stored != expected) {
                 if (at + recordLength < size) {
-                    throw new NexException("log de transação está corrompido");
+                    throw new NexException("transaction log is corrupt");
                 }
                 break;
             }
             int type = ByteBuffer.wrap(record, 4, 4).order(Format.ORDER).getInt();
             long lsn = ByteBuffer.wrap(record, 8, 8).order(Format.ORDER).getLong();
             if (lsn != at) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             if (at >= from && type == Format.RECORD_TRANSACTION) {
                 batches.add(new Batch(at + recordLength, decodeTransaction(readable(record))));
             } else if (type != Format.RECORD_REDO && type != Format.RECORD_CHECKPOINT && type != Format.RECORD_TRANSACTION) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             at += recordLength;
         }
@@ -345,14 +345,14 @@ final class TransactionLog implements AutoCloseable {
     }
 
     /**
-     * Reaplica os REDO completos que começam em {@code checkpointLsn} ou depois.
-     * Registro incompleto ou com CRC inválido no fim do arquivo é descartado.
+     * Reapplies complete REDO records that start at {@code checkpointLsn} or later.
+     * An incomplete record or one with an invalid CRC at the end of the file is discarded.
      */
     boolean replay(long checkpointLsn, BiConsumer<Long, List<Span>> redo) {
         long size = size();
         consistentEnd = Math.min(size, Format.LOG_HEADER_SIZE);
         if (size < Format.LOG_HEADER_SIZE) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         long at = Format.LOG_HEADER_SIZE;
         boolean applied = false;
@@ -367,7 +367,7 @@ final class TransactionLog implements AutoCloseable {
             int expected = Format.crc(record, 4, recordLength - 8);
             if (stored != expected) {
                 if (at + recordLength < size) {
-                    throw new NexException("log de transação está corrompido");
+                    throw new NexException("transaction log is corrupt");
                 }
                 consistentEnd = at;
                 break;
@@ -375,14 +375,14 @@ final class TransactionLog implements AutoCloseable {
             int type = ByteBuffer.wrap(record, 4, 4).order(Format.ORDER).getInt();
             long lsn = ByteBuffer.wrap(record, 8, 8).order(Format.ORDER).getLong();
             if (lsn != at) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             if (at >= checkpointLsn && type == Format.RECORD_REDO) {
                 byte[] plain = readable(record);
                 redo.accept(fileSizeOf(plain), spansOf(plain));
                 applied = true;
             } else if (type != Format.RECORD_REDO && type != Format.RECORD_CHECKPOINT && type != Format.RECORD_TRANSACTION) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             at += recordLength;
             consistentEnd = at;
@@ -394,7 +394,7 @@ final class TransactionLog implements AutoCloseable {
         try {
             channel.force(true);
         } catch (IOException exception) {
-            throw new NexException("falha ao sincronizar o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("failed to sync the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -405,7 +405,7 @@ final class TransactionLog implements AutoCloseable {
             }
             consistentEnd = size;
         } catch (IOException exception) {
-            throw new NexException("falha ao ajustar o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("failed to resize the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -416,12 +416,12 @@ final class TransactionLog implements AutoCloseable {
                 lock.release();
             }
         } catch (IOException ignored) {
-            // o canal será fechado em seguida
+            // the channel is closed next
         }
         try {
             channel.close();
         } catch (IOException ignored) {
-            // o bloqueio deixa de valer quando o processo solta o arquivo
+            // the lock ends when the process releases the file
         }
         lock = null;
     }
@@ -446,7 +446,7 @@ final class TransactionLog implements AutoCloseable {
 
     private static final int MAX_PLAIN = 256 * 1024 * 1024;
 
-    /** Comprime o corpo do registro e embaralha os bytes para o arquivo não expor o texto. */
+    /** Compresses the record body and scrambles the bytes so the file does not expose the text. */
     private static byte[] pack(byte[] payload) {
         byte[] compressed = deflate(payload);
         byte[] packed = new byte[4 + compressed.length];
@@ -458,7 +458,7 @@ final class TransactionLog implements AutoCloseable {
 
     private static byte[] readable(byte[] record) {
         if (record.length < 20) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         byte[] plain = unpack(Arrays.copyOfRange(record, 16, record.length - 4));
         byte[] logical = new byte[20 + plain.length];
@@ -470,22 +470,22 @@ final class TransactionLog implements AutoCloseable {
 
     private static byte[] unpack(byte[] packed) {
         if (packed.length < 4) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         byte[] copy = packed.clone();
         mask(copy);
         int rawLength = ByteBuffer.wrap(copy, 0, 4).order(Format.ORDER).getInt();
         if (rawLength < 0 || rawLength > MAX_PLAIN) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         try {
             byte[] plain = inflate(Arrays.copyOfRange(copy, 4, copy.length), rawLength);
             if (plain.length != rawLength) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             return plain;
         } catch (DataFormatException exception) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
     }
 
@@ -520,14 +520,14 @@ final class TransactionLog implements AutoCloseable {
             byte[] buffer = new byte[8192];
             while (!inflater.finished()) {
                 if (inflater.needsInput()) {
-                    throw new DataFormatException("bloco incompleto");
+                    throw new DataFormatException("incomplete block");
                 }
                 int count = inflater.inflate(buffer);
                 if (count == 0) {
-                    throw new DataFormatException("bloco incompleto");
+                    throw new DataFormatException("incomplete block");
                 }
                 if (out.size() > MAX_PLAIN - count) {
-                    throw new DataFormatException("bloco grande demais");
+                    throw new DataFormatException("block is too large");
                 }
                 out.write(buffer, 0, count);
             }
@@ -551,22 +551,22 @@ final class TransactionLog implements AutoCloseable {
 
     private void checkHeader(long expectedId, int expectedPage, boolean matchIdentity) {
         if (size() < Format.LOG_HEADER_SIZE) {
-            throw new NexException("log de transação ausente");
+            throw new NexException("transaction log is missing");
         }
         byte[] header = Format.readFully(channel, 0, Format.LOG_HEADER_SIZE);
         if (!Arrays.equals(header, 0, Format.LOG_MAGIC.length, Format.LOG_MAGIC, 0, Format.LOG_MAGIC.length)) {
-            throw new NexException(matchIdentity ? "log não pertence a este banco" : "arquivo não é um log de transação");
+            throw new NexException(matchIdentity ? "log does not belong to this database" : "file is not a transaction log");
         }
         ByteBuffer buffer = ByteBuffer.wrap(header).order(Format.ORDER);
         int version = buffer.getShort(Format.VERSION_OFFSET) & 0xFFFF;
         if (version != Format.LOG_VERSION) {
-            throw new NexException("versão de log não suportada: " + version);
+            throw new NexException("unsupported log version: " + version);
         }
         logId = buffer.getLong(Format.LOG_ID_AT);
         pageSize = buffer.getInt(Format.LOG_PAGE_AT);
         epoch = buffer.getLong(Format.LOG_EPOCH_AT);
         if (matchIdentity && (logId != expectedId || pageSize != expectedPage)) {
-            throw new NexException("log não pertence a este banco");
+            throw new NexException("log does not belong to this database");
         }
     }
 
@@ -595,8 +595,8 @@ final class TransactionLog implements AutoCloseable {
     }
 
     /**
-     * Conclui uma cópia interrompida. Se o log vivo já está maior, a cópia
-     * pendente ficou para trás e pode sair.
+     * Finishes an interrupted copy. If the live log is already larger, the pending
+     * copy fell behind and can be removed.
      */
     private static void absorbPending(Path path) throws IOException {
         Path pending = pendingPath(path);
@@ -644,7 +644,7 @@ final class TransactionLog implements AutoCloseable {
         try {
             Files.deleteIfExists(file);
         } catch (IOException ignored) {
-            // a próxima abertura retoma o que ficou
+            // the next open resumes what was left
         }
     }
 
@@ -663,23 +663,23 @@ final class TransactionLog implements AutoCloseable {
         long fileSize = buffer.getLong();
         int count = buffer.getInt();
         if (fileSize < 0 || count < 0) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         List<Span> spans = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             if (buffer.remaining() < 13) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             int kind = buffer.get() & 0xFF;
             long offset = buffer.getLong();
             int length = buffer.getInt();
             if ((kind != 0 && kind != 1) || offset < 0 || length < 0) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             byte[] data = null;
             if (kind == 0) {
                 if (buffer.remaining() < length) {
-                    throw new NexException("log de transação está corrompido");
+                    throw new NexException("transaction log is corrupt");
                 }
                 data = new byte[length];
                 buffer.get(data);
@@ -687,7 +687,7 @@ final class TransactionLog implements AutoCloseable {
             spans.add(new Span(offset, length, data));
         }
         if (buffer.remaining() != 0) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         return spans;
     }
@@ -700,12 +700,12 @@ final class TransactionLog implements AutoCloseable {
                 lock = null;
             }
             if (lock == null) {
-                throw new NexException("o banco já está aberto");
+                throw new NexException("database is already open");
             }
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("não foi possível bloquear o log de transação: " + exception.getMessage(), exception);
+            throw new NexException("could not lock the transaction log: " + exception.getMessage(), exception);
         }
     }
 
@@ -775,7 +775,7 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
-    /** Um comando SQL confirmado, com o esquema da sessão e os parâmetros. */
+    /** A committed SQL statement, with the session schema and the parameters. */
     static final class Applied {
         final String schema;
         final String sql;
@@ -788,7 +788,7 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
-    /** Um commit do log: os comandos e o offset em que o registro termina. */
+    /** A log commit: the statements and the offset where the record ends. */
     static final class Batch {
         final long end;
         final List<Applied> statements;
@@ -855,29 +855,29 @@ final class TransactionLog implements AutoCloseable {
             out.u8(13);
             out.u32(number);
         } else {
-            throw new NexException("tipo de parâmetro não suportado no log: " + value.getClass().getName());
+            throw new NexException("unsupported parameter type in the log: " + value.getClass().getName());
         }
     }
 
     private static List<Applied> decodeTransaction(byte[] record) {
         ByteBuffer buffer = ByteBuffer.wrap(record, 16, record.length - 20).order(Format.ORDER);
         if (buffer.remaining() < 4) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         int count = buffer.getInt();
         if (count < 0) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         List<Applied> statements = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             String schema = readUtf(buffer);
             String sql = readUtf(buffer);
             if (buffer.remaining() < 4) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             int params = buffer.getInt();
             if (params < 0) {
-                throw new NexException("log de transação está corrompido");
+                throw new NexException("transaction log is corrupt");
             }
             Object[] values = new Object[params];
             for (int p = 0; p < params; p++) {
@@ -886,14 +886,14 @@ final class TransactionLog implements AutoCloseable {
             statements.add(new Applied(schema, sql, values));
         }
         if (buffer.remaining() != 0) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         return statements;
     }
 
     private static Object readParam(ByteBuffer buffer) {
         if (buffer.remaining() < 1) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         int tag = buffer.get() & 0xFF;
         return switch (tag) {
@@ -907,7 +907,7 @@ final class TransactionLog implements AutoCloseable {
             case 7 -> {
                 int length = readInt(buffer);
                 if (length < 0 || buffer.remaining() < length) {
-                    throw new NexException("log de transação está corrompido");
+                    throw new NexException("transaction log is corrupt");
                 }
                 byte[] data = new byte[length];
                 buffer.get(data);
@@ -923,27 +923,27 @@ final class TransactionLog implements AutoCloseable {
             case 15 -> java.sql.Time.valueOf(LocalTime.parse(readUtf(buffer)));
             case 16 -> java.sql.Timestamp.valueOf(LocalDateTime.parse(readUtf(buffer)));
             case 17 -> new java.util.Date(readLong(buffer));
-            default -> throw new NexException("log de transação está corrompido");
+            default -> throw new NexException("transaction log is corrupt");
         };
     }
 
     private static int readByte(ByteBuffer buffer) {
         if (buffer.remaining() < 1) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         return buffer.get() & 0xFF;
     }
 
     private static int readInt(ByteBuffer buffer) {
         if (buffer.remaining() < 4) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         return buffer.getInt();
     }
 
     private static long readLong(ByteBuffer buffer) {
         if (buffer.remaining() < 8) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         return buffer.getLong();
     }
@@ -951,7 +951,7 @@ final class TransactionLog implements AutoCloseable {
     private static String readUtf(ByteBuffer buffer) {
         int length = readInt(buffer);
         if (length < 0 || buffer.remaining() < length) {
-            throw new NexException("log de transação está corrompido");
+            throw new NexException("transaction log is corrupt");
         }
         byte[] data = new byte[length];
         buffer.get(data);

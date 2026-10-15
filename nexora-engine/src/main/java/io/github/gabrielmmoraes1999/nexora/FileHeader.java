@@ -19,14 +19,14 @@ final class FileHeader {
 
     static FileHeader parse(byte[] header) {
         if (header.length < Format.HEADER_SIZE) {
-            throw new NexException("cabeçalho da tabela está incompleto");
+            throw new NexException("table header is incomplete");
         }
         if (!Arrays.equals(header, 0, Format.MAGIC.length, Format.MAGIC, 0, Format.MAGIC.length)) {
-            throw new NexException("arquivo não é uma tabela do Nexora");
+            throw new NexException("file is not a Nexora table");
         }
         int version = version(header);
         if (version != Format.VERSION) {
-            throw new NexException("versão de arquivo não suportada: " + version);
+            throw new NexException("unsupported file version: " + version);
         }
         return parseSlots(header);
     }
@@ -66,7 +66,7 @@ final class FileHeader {
             best = b;
         }
         if (best == null) {
-            throw new NexException("cabeçalho da tabela está corrompido");
+            throw new NexException("table header is corrupt");
         }
         return best;
     }

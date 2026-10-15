@@ -73,19 +73,19 @@ final class ObjectPane extends JPanel {
 
     private String caption() {
         String kind = switch (node.kind()) {
-            case TABLE -> "Tabela";
-            case SYSTEM_TABLE -> "Tabela de sistema";
-            case VIEW -> "Visão";
+            case TABLE -> "Table";
+            case SYSTEM_TABLE -> "System table";
+            case VIEW -> "View";
             case PROCEDURE -> "Procedure";
             case TRIGGER -> "Trigger";
-            case GENERATOR -> "Gerador";
-            case ROLE -> "Papel";
-            case USER, FOLDER -> "Usuários";
-            case CONNECTIONS -> "Conexões";
-            case PRIVILEGES -> "Privilégios";
-            case CONFIG -> "Configuração";
-            case INFO -> "Propriedades";
-            default -> "Objeto";
+            case GENERATOR -> "Generator";
+            case ROLE -> "Role";
+            case USER, FOLDER -> "Users";
+            case CONNECTIONS -> "Connections";
+            case PRIVILEGES -> "Privileges";
+            case CONFIG -> "Configuration";
+            case INFO -> "Properties";
+            default -> "Object";
         };
         String name = node.place().isBlank() ? node.title() : node.place();
         return kind + "   " + name;
@@ -104,7 +104,7 @@ final class ObjectPane extends JPanel {
             case PRIVILEGES -> privileges(null, null);
             case CONFIG -> config();
             case INFO -> info();
-            default -> new JLabel("Nada para abrir neste item.");
+            default -> new JLabel("Nothing to open for this item.");
         };
     }
 
@@ -116,8 +116,8 @@ final class ObjectPane extends JPanel {
         JTable grants = Tables.create();
         JTextArea ddl = scriptArea();
         data = new DataPane(hub, node.databaseId(), node.schema(), node.name(), editableShape);
-        tabs.addTab("Colunas", wrap(columns, buttons(
-                button("Nova coluna", () -> {
+        tabs.addTab("Columns", wrap(columns, buttons(
+                button("New column", () -> {
                     Connection connection = requireQuiet();
                     if (connection != null && Dialogs.column(hub.owner(), connection, node.schema(), node.name())) {
                         hub.refreshOutline(node.databaseId());
@@ -130,33 +130,33 @@ final class ObjectPane extends JPanel {
                         }
                     }
                 }, editableShape),
-                button("Excluir coluna", () -> dropColumn(columns, ddl), editableShape))));
-        tabs.addTab("Dados", data);
-        tabs.addTab("Índices", wrap(indexes, buttons(
-                button("Novo índice", () -> newIndex(indexes, ddl), editableShape),
-                button("Excluir índice", () -> dropIndex(indexes, ddl), editableShape))));
+                button("Delete column", () -> dropColumn(columns, ddl), editableShape))));
+        tabs.addTab("Data", data);
+        tabs.addTab("Indexes", wrap(indexes, buttons(
+                button("New index", () -> newIndex(indexes, ddl), editableShape),
+                button("Delete index", () -> dropIndex(indexes, ddl), editableShape))));
         JTabbedPane constraints = new JTabbedPane();
         primaryKeys = Tables.create();
         foreignKeys = Tables.create();
         uniqueKeys = Tables.create();
         constraints.addTab("Primary key", wrap(Look.scroll(primaryKeys), buttons(
-                button("Excluir", () -> dropConstraint(primaryKeys, columns, indexes, ddl), editableShape))));
+                button("Delete", () -> dropConstraint(primaryKeys, columns, indexes, ddl), editableShape))));
         constraints.addTab("Foreign keys", wrap(Look.scroll(foreignKeys), buttons(
-                button("Excluir", () -> dropConstraint(foreignKeys, columns, indexes, ddl), editableShape))));
+                button("Delete", () -> dropConstraint(foreignKeys, columns, indexes, ddl), editableShape))));
         constraints.addTab("Uniques", wrap(Look.scroll(uniqueKeys), buttons(
-                button("Excluir", () -> dropConstraint(uniqueKeys, columns, indexes, ddl), editableShape))));
+                button("Delete", () -> dropConstraint(uniqueKeys, columns, indexes, ddl), editableShape))));
         tabs.addTab("Constraints", constraints);
         tabs.addTab("Triggers", Look.scroll(triggers));
-        tabs.addTab("Privilégios", wrap(grants, buttons(
-                button("Conceder", () -> {
+        tabs.addTab("Privileges", wrap(grants, buttons(
+                button("Grant", () -> {
                     if (Dialogs.grant(hub.owner(), requireQuiet(), node.schema(), node.name())) {
                         reloadGrants(grants);
                     }
                 }, true),
-                button("Revogar", () -> revoke(grants), true))));
+                button("Revoke", () -> revoke(grants), true))));
         tabs.addTab("DDL", wrap(scriptScroll(ddl), buttons(
-                button("Copiar", () -> copy(ddl.getText()), true),
-                button("Abrir no editor", () -> hub.openSql(node.databaseId(), "DDL " + node.name(), ddl.getText()), true))));
+                button("Copy", () -> copy(ddl.getText()), true),
+                button("Open in editor", () -> hub.openSql(node.databaseId(), "DDL " + node.name(), ddl.getText()), true))));
         tabs.addChangeListener(event -> {
             if (tabs.getSelectedComponent() == data && !data.loaded()) {
                 data.load();
@@ -184,10 +184,10 @@ final class ObjectPane extends JPanel {
             for (Outline.TriggerInfo trigger : Outline.triggers(connection)) {
                 if (SqlNames.same(trigger.relation(), catalog) || SqlNames.same(trigger.relation(), node.name())) {
                     triggerRows.add(List.of(trigger.name(), trigger.type(), trigger.position(),
-                            trigger.inactive() ? "não" : "sim", trigger.owner()));
+                            trigger.inactive() ? "no" : "yes", trigger.owner()));
                 }
             }
-            Tables.show(triggers, List.of("Nome", "Quando", "Posição", "Ativo", "Dono"), triggerRows);
+            Tables.show(triggers, List.of("Name", "When", "Position", "Active", "Owner"), triggerRows);
             fillGrants(grants, connection, catalog);
             ddl.setText(script(connection));
             ddl.setCaretPosition(0);
@@ -201,11 +201,11 @@ final class ObjectPane extends JPanel {
         JTextArea source = scriptArea();
         JTextArea ddl = scriptArea();
         data = new DataPane(hub, node.databaseId(), node.schema(), node.name(), false);
-        tabs.addTab("Código", wrap(scriptScroll(source), buttons(
-                button("Abrir no editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true))));
-        tabs.addTab("Dados", data);
+        tabs.addTab("Code", wrap(scriptScroll(source), buttons(
+                button("Open in editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true))));
+        tabs.addTab("Data", data);
         tabs.addTab("DDL", wrap(scriptScroll(ddl), buttons(
-                button("Copiar", () -> copy(ddl.getText()), true))));
+                button("Copy", () -> copy(ddl.getText()), true))));
         Connection connection = hub.connection(node.databaseId());
         if (connection != null) {
             try {
@@ -242,26 +242,26 @@ final class ObjectPane extends JPanel {
                 source.setCaretPosition(0);
                 List<List<Object>> rows = new ArrayList<>();
                 for (Ddl.Field field : routine.parameters()) {
-                    rows.add(List.of(field.input() ? "entrada" : "saída", field.name(),
+                    rows.add(List.of(field.input() ? "input" : "output", field.name(),
                             Ddl.typeSql(field.typeName(), field.size(), field.scale())));
                 }
-                Tables.show(parameters, List.of("Direção", "Nome", "Tipo"), rows);
+                Tables.show(parameters, List.of("Direction", "Name", "Type"), rows);
             } catch (SQLException exception) {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }
         }
         JTabbedPane pages = new JTabbedPane();
-        pages.addTab("Código", wrap(scriptScroll(source), buttons(
-                button("Abrir no editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true),
-                button("Copiar", () -> copy(source.getText()), true))));
-        pages.addTab("Parâmetros", Look.scroll(parameters));
+        pages.addTab("Code", wrap(scriptScroll(source), buttons(
+                button("Open in editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true),
+                button("Copy", () -> copy(source.getText()), true))));
+        pages.addTab("Parameters", Look.scroll(parameters));
         return pages;
     }
 
     private java.awt.Component trigger() {
         JTextArea source = scriptArea();
         JLabel state = new JLabel(" ");
-        JButton toggle = Look.button("Ativar");
+        JButton toggle = Look.button("Activate");
         Connection connection = hub.connection(node.databaseId());
         if (connection != null) {
             try {
@@ -269,8 +269,8 @@ final class ObjectPane extends JPanel {
                 source.setText(Ddl.trigger(trigger.name(), trigger.relation(), trigger.inactive(), trigger.type(),
                         trigger.position(), trigger.source()));
                 source.setCaretPosition(0);
-                state.setText(trigger.inactive() ? "Inativo" : "Ativo");
-                toggle.setText(trigger.inactive() ? "Ativar" : "Desativar");
+                state.setText(trigger.inactive() ? "Inactive" : "Active");
+                toggle.setText(trigger.inactive() ? "Activate" : "Deactivate");
                 boolean[] inactive = {trigger.inactive()};
                 toggle.addActionListener(event -> {
                     Connection current = hub.connection(node.databaseId());
@@ -281,10 +281,10 @@ final class ObjectPane extends JPanel {
                         Commands.run(current, "ALTER TRIGGER " + SqlNames.quote(node.name()) + " "
                                 + (inactive[0] ? "ACTIVE" : "INACTIVE"));
                         inactive[0] = !inactive[0];
-                        toggle.setText(inactive[0] ? "Ativar" : "Desativar");
-                        state.setText(inactive[0] ? "Inativo" : "Ativo");
+                        toggle.setText(inactive[0] ? "Activate" : "Deactivate");
+                        state.setText(inactive[0] ? "Inactive" : "Active");
                         hub.refreshOutline(node.databaseId());
-                        hub.message(inactive[0] ? "trigger desativado" : "trigger ativado");
+                        hub.message(inactive[0] ? "trigger deactivated" : "trigger activated");
                     } catch (SQLException exception) {
                         Dialogs.error(hub.owner(), Dialogs.message(exception));
                     }
@@ -294,7 +294,7 @@ final class ObjectPane extends JPanel {
             }
         }
         return wrap(scriptScroll(source), buttons(toggle,
-                button("Abrir no editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true)));
+                button("Open in editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true)));
     }
 
     private java.awt.Component generator() {
@@ -304,7 +304,7 @@ final class ObjectPane extends JPanel {
         JLabel current = new JLabel("—");
         current.setFont(Look.UI_BOLD);
         JTextField value = new JTextField(12);
-        JButton apply = Look.primary("Definir valor");
+        JButton apply = Look.primary("Set value");
         Connection connection = hub.connection(node.databaseId());
         if (connection != null) {
             try {
@@ -329,13 +329,13 @@ final class ObjectPane extends JPanel {
                 constraints.anchor = java.awt.GridBagConstraints.LINE_START;
                 constraints.gridx = 0;
                 constraints.gridy = 0;
-                panel.add(new JLabel("Valor atual"), constraints);
+                panel.add(new JLabel("Current value"), constraints);
                 constraints.gridx = 1;
                 panel.add(current, constraints);
                 constraints.gridy = 1;
                 constraints.gridx = 0;
-                panel.add(new JLabel("Início " + generator.initial() + "   passo " + generator.increment()
-                        + "   dono " + generator.owner()), constraints);
+                panel.add(new JLabel("Start " + generator.initial() + "   step " + generator.increment()
+                        + "   owner " + generator.owner()), constraints);
                 constraints.gridwidth = 2;
                 constraints.gridy = 2;
                 panel.add(value, constraints);
@@ -359,23 +359,23 @@ final class ObjectPane extends JPanel {
                 List<List<Object>> rows = new ArrayList<>();
                 for (Outline.MemberInfo member : Outline.members(connection)) {
                     if (SqlNames.same(member.role(), node.name())) {
-                        rows.add(List.of(member.user(), member.adminOption() ? "sim" : "não", member.grantor()));
+                        rows.add(List.of(member.user(), member.adminOption() ? "yes" : "no", member.grantor()));
                     }
                 }
-                Tables.show(members, List.of("Usuário", "Admin", "Concedido por"), rows);
+                Tables.show(members, List.of("User", "Admin", "Granted by"), rows);
             } catch (SQLException exception) {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }
         };
         load.run();
-        JButton grant = Look.button("Conceder a usuário");
+        JButton grant = Look.button("Grant to user");
         grant.addActionListener(event -> {
-            String user = Dialogs.ask(hub.owner(), "Conceder papel", "Usuário ou PUBLIC", "");
+            String user = Dialogs.ask(hub.owner(), "Grant role", "User or PUBLIC", "");
             if (user == null) {
                 return;
             }
             int choice = javax.swing.JOptionPane.showConfirmDialog(hub.owner(),
-                    "Conceder ADMIN OPTION para " + user + "?", "Papel",
+                    "Grant ADMIN OPTION to " + user + "?", "Role",
                     javax.swing.JOptionPane.YES_NO_CANCEL_OPTION);
             if (choice == javax.swing.JOptionPane.CANCEL_OPTION || choice == javax.swing.JOptionPane.CLOSED_OPTION) {
                 return;
@@ -399,10 +399,10 @@ final class ObjectPane extends JPanel {
         JTable table = Tables.create();
         Runnable load = () -> fillUsers(table);
         load.run();
-        JButton create = Look.button("Novo");
-        JButton password = Look.button("Senha");
-        JButton active = Look.button("Ativar/desativar");
-        JButton admin = Look.button("Administrador");
+        JButton create = Look.button("New");
+        JButton password = Look.button("Password");
+        JButton active = Look.button("Activate/deactivate");
+        JButton admin = Look.button("Administrator");
         create.addActionListener(event -> {
             Connection connection = hub.connection(node.databaseId());
             if (connection != null && Dialogs.user(hub.owner(), connection)) {
@@ -412,7 +412,7 @@ final class ObjectPane extends JPanel {
         });
         password.addActionListener(event -> withUser(table, (connection, name) -> {
             if (Dialogs.changePassword(hub.owner(), connection, name)) {
-                hub.message("senha alterada");
+                hub.message("password changed");
             }
         }));
         active.addActionListener(event -> withUser(table, (connection, name) -> {
@@ -436,7 +436,7 @@ final class ObjectPane extends JPanel {
             load.run();
             hub.refreshOutline(node.databaseId());
         }));
-        JButton refresh = Look.button("Atualizar");
+        JButton refresh = Look.button("Refresh");
         refresh.addActionListener(event -> load.run());
         return wrap(Look.scroll(table), buttons(create, password, active, admin, refresh));
     }
@@ -451,7 +451,7 @@ final class ObjectPane extends JPanel {
             for (Outline.UserInfo user : Outline.users(connection)) {
                 rows.add(List.of(user.name(), user.active(), user.admin(), user.first(), user.last()));
             }
-            Tables.show(table, List.of("Usuário", "Ativo", "Admin", "Nome", "Sobrenome"), rows);
+            Tables.show(table, List.of("User", "Active", "Admin", "Name", "Last name"), rows);
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
         }
@@ -470,20 +470,20 @@ final class ObjectPane extends JPanel {
                     rows.add(List.of(link.id(), link.user(), link.state(), link.connectedAt(),
                             link.protocol(), link.address(), link.host(), link.osUser(), link.process()));
                 }
-                Tables.show(table, List.of("Id", "Usuário", "Estado", "Entrada", "Protocolo", "Endereço", "Host",
-                        "Usuário SO", "Processo"), rows);
+                Tables.show(table, List.of("Id", "User", "State", "Connected", "Protocol", "Address", "Host",
+                        "OS user", "Process"), rows);
             } catch (SQLException exception) {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }
         };
         load.run();
-        JButton drop = Look.button("Encerrar");
+        JButton drop = Look.button("End");
         drop.addActionListener(event -> {
             if (table.getSelectedRow() < 0) {
                 return;
             }
             Object id = Tables.row(table, table.getSelectedRow()).get(0);
-            if (!Dialogs.confirm(hub.owner(), "Encerrar a conexão " + id + "?")) {
+            if (!Dialogs.confirm(hub.owner(), "End connection " + id + "?")) {
                 return;
             }
             Connection connection = hub.connection(node.databaseId());
@@ -497,7 +497,7 @@ final class ObjectPane extends JPanel {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }
         });
-        JButton refresh = Look.button("Atualizar");
+        JButton refresh = Look.button("Refresh");
         refresh.addActionListener(event -> load.run());
         return wrap(Look.scroll(table), buttons(refresh, drop));
     }
@@ -516,14 +516,14 @@ final class ObjectPane extends JPanel {
             }
         };
         load.run();
-        JButton grant = Look.button("Conceder");
+        JButton grant = Look.button("Grant");
         grant.addActionListener(event -> {
             Connection connection = hub.connection(node.databaseId());
             if (connection != null && Dialogs.grant(hub.owner(), connection, schema, table)) {
                 load.run();
             }
         });
-        JButton revoke = Look.button("Revogar");
+        JButton revoke = Look.button("Revoke");
         revoke.addActionListener(event -> {
             if (revoke(grid)) {
                 load.run();
@@ -544,20 +544,20 @@ final class ObjectPane extends JPanel {
                 for (Outline.ConfigInfo item : Outline.config(connection)) {
                     rows.add(List.of(item.key(), item.value()));
                 }
-                Tables.show(table, List.of("Chave", "Valor"), rows);
+                Tables.show(table, List.of("Key", "Value"), rows);
             } catch (SQLException exception) {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }
         };
         load.run();
-        JButton edit = Look.button("Alterar valor");
+        JButton edit = Look.button("Change value");
         edit.addActionListener(event -> {
             if (table.getSelectedRow() < 0) {
                 return;
             }
             List<Object> row = Tables.row(table, table.getSelectedRow());
             String key = String.valueOf(row.get(0));
-            String value = Dialogs.ask(hub.owner(), "Configuração", key, String.valueOf(row.get(1)));
+            String value = Dialogs.ask(hub.owner(), "Configuration", key, String.valueOf(row.get(1)));
             if (value == null) {
                 return;
             }
@@ -574,7 +574,7 @@ final class ObjectPane extends JPanel {
                 Dialogs.error(hub.owner(), Dialogs.message(exception));
             }
         });
-        JButton refresh = Look.button("Atualizar");
+        JButton refresh = Look.button("Refresh");
         refresh.addActionListener(event -> load.run());
         return wrap(Look.scroll(table), buttons(edit, refresh));
     }
@@ -584,7 +584,7 @@ final class ObjectPane extends JPanel {
         panel.setBorder(new EmptyBorder(16, 16, 16, 16));
         Connection connection = hub.connection(node.databaseId());
         if (connection == null) {
-            return new JLabel("Banco desconectado.");
+            return new JLabel("Database disconnected.");
         }
         try {
             Outline.DatabaseInfo info = Outline.database(connection);
@@ -595,16 +595,16 @@ final class ObjectPane extends JPanel {
                 }
             }
             String[][] rows = {
-                    {"Nome", info.name()},
-                    {"Descrição", info.description()},
-                    {"Dono", info.owner()},
-                    {"Criado", info.created()},
-                    {"Formato", Integer.toString(info.format())},
-                    {"Dialeto", Integer.toString(info.dialect())},
-                    {"Página", Integer.toString(info.pageSize())},
+                    {"Name", info.name()},
+                    {"Description", info.description()},
+                    {"Owner", info.owner()},
+                    {"Created", info.created()},
+                    {"Format", Integer.toString(info.format())},
+                    {"Dialect", Integer.toString(info.dialect())},
+                    {"Page", Integer.toString(info.pageSize())},
                     {"Charset", charset},
-                    {"Usuário", connection.getMetaData().getUserName()},
-                    {"Esquema", connection.getSchema()}
+                    {"User", connection.getMetaData().getUserName()},
+                    {"Schema", connection.getSchema()}
             };
             java.awt.GridBagConstraints constraints = new java.awt.GridBagConstraints();
             constraints.insets = new java.awt.Insets(4, 6, 4, 12);
@@ -676,10 +676,10 @@ final class ObjectPane extends JPanel {
         }
         String name = String.valueOf(Tables.row(indexes, indexes.getSelectedRow()).get(0));
         if (name.equalsIgnoreCase("PRIMARY") || Ddl.generatedUnique(name)) {
-            Dialogs.error(hub.owner(), "Este índice pertence a uma constraint. Exclua a chave na aba Constraints.");
+            Dialogs.error(hub.owner(), "This index belongs to a constraint. Delete the key on the Constraints tab.");
             return;
         }
-        if (!Dialogs.confirm(hub.owner(), "Excluir o índice " + name + "?")) {
+        if (!Dialogs.confirm(hub.owner(), "Delete index " + name + "?")) {
             return;
         }
         Connection connection = requireQuiet();
@@ -701,7 +701,7 @@ final class ObjectPane extends JPanel {
             return;
         }
         String name = String.valueOf(Tables.row(keys, keys.getSelectedRow()).get(0));
-        if (!Dialogs.confirm(hub.owner(), "Excluir a constraint " + name + "?")) {
+        if (!Dialogs.confirm(hub.owner(), "Delete constraint " + name + "?")) {
             return;
         }
         Connection connection = requireQuiet();
@@ -728,7 +728,7 @@ final class ObjectPane extends JPanel {
             return;
         }
         String name = String.valueOf(Tables.row(columns, columns.getSelectedRow()).get(0));
-        if (!Dialogs.confirm(hub.owner(), "Excluir a coluna " + name + "?")) {
+        if (!Dialogs.confirm(hub.owner(), "Delete column " + name + "?")) {
             return;
         }
         Connection connection = requireQuiet();
@@ -770,10 +770,10 @@ final class ObjectPane extends JPanel {
             table = node.name();
         }
         if ("OWNER".equalsIgnoreCase(privilege)) {
-            Dialogs.error(hub.owner(), "OWNER não se revoga. O dono permanece.");
+            Dialogs.error(hub.owner(), "OWNER cannot be revoked. The owner stays.");
             return false;
         }
-        if (!Dialogs.confirm(hub.owner(), "Revogar " + privilege + " de " + user + " em " + table + "?")) {
+        if (!Dialogs.confirm(hub.owner(), "Revoke " + privilege + " from " + user + " on " + table + "?")) {
             return false;
         }
         Connection connection = requireQuiet();
@@ -809,15 +809,15 @@ final class ObjectPane extends JPanel {
                 continue;
             }
             if (global) {
-                rows.add(List.of(grant.user(), grant.table(), grant.privilege(), grant.grantOption() ? "sim" : "não", grant.grantor()));
+                rows.add(List.of(grant.user(), grant.table(), grant.privilege(), grant.grantOption() ? "yes" : "no", grant.grantor()));
             } else {
-                rows.add(List.of(grant.user(), grant.privilege(), grant.grantOption() ? "sim" : "não", grant.grantor()));
+                rows.add(List.of(grant.user(), grant.privilege(), grant.grantOption() ? "yes" : "no", grant.grantor()));
             }
         }
         if (global) {
-            Tables.show(table, List.of("Usuário", "Tabela", "Privilégio", "Repasse", "Concedido por"), rows);
+            Tables.show(table, List.of("User", "Table", "Privilege", "Grant option", "Granted by"), rows);
         } else {
-            Tables.show(table, List.of("Usuário", "Privilégio", "Repasse", "Concedido por"), rows);
+            Tables.show(table, List.of("User", "Privilege", "Grant option", "Granted by"), rows);
         }
     }
 
@@ -864,7 +864,7 @@ final class ObjectPane extends JPanel {
             }
         }
         if (reference) {
-            Tables.show(table, List.of("Constraint Name", "On Field", "Referência", "Update Rule", "Delete Rule",
+            Tables.show(table, List.of("Constraint Name", "On Field", "Reference", "Update Rule", "Delete Rule",
                     "Index Name", "Index Sorting"), rows);
         } else {
             Tables.show(table, List.of("Constraint Name", "On Field", "Index Name", "Index Sorting"), rows);
@@ -875,25 +875,25 @@ final class ObjectPane extends JPanel {
         List<List<Object>> rows = new ArrayList<>();
         for (Ddl.ColumnInfo column : columns) {
             rows.add(List.of(column.name(), Ddl.typeSql(column.typeName(), column.size(), column.scale()),
-                    column.nullable() ? "sim" : "não",
+                    column.nullable() ? "yes" : "no",
                     column.primaryKeyPosition() == 0 ? "" : Integer.toString(column.primaryKeyPosition()),
-                    column.autoIncrement() ? "sim" : "",
+                    column.autoIncrement() ? "yes" : "",
                     column.defaultSql() == null ? "" : column.defaultSql()));
         }
-        Tables.show(table, List.of("Nome", "Tipo", "Nulo", "PK", "Auto", "Default"), rows);
+        Tables.show(table, List.of("Name", "Type", "Null", "PK", "Auto", "Default"), rows);
     }
 
     private static void fillIndexes(JTable table, List<Ddl.IndexInfo> indexes) {
         List<List<Object>> rows = new ArrayList<>();
         for (Ddl.IndexInfo index : indexes) {
-            rows.add(List.of(index.name(), index.unique() ? "sim" : "não", String.join(", ", index.columns())));
+            rows.add(List.of(index.name(), index.unique() ? "yes" : "no", String.join(", ", index.columns())));
         }
-        Tables.show(table, List.of("Nome", "Único", "Colunas"), rows);
+        Tables.show(table, List.of("Name", "Unique", "Columns"), rows);
     }
 
     private void withUser(JTable table, UserAction action) {
         if (table.getSelectedRow() < 0) {
-            Dialogs.error(hub.owner(), "escolha um usuário");
+            Dialogs.error(hub.owner(), "select a user");
             return;
         }
         Connection connection = hub.connection(node.databaseId());
@@ -910,7 +910,7 @@ final class ObjectPane extends JPanel {
     private Connection requireQuiet() {
         Connection connection = hub.connection(node.databaseId());
         if (connection == null) {
-            Dialogs.error(hub.owner(), "banco desconectado");
+            Dialogs.error(hub.owner(), "database disconnected");
         }
         return connection;
     }
@@ -921,14 +921,14 @@ final class ObjectPane extends JPanel {
                 return trigger;
             }
         }
-        throw new SQLException("trigger não encontrado: " + name);
+        throw new SQLException("trigger not found: " + name);
     }
 
     private static boolean bool(Object value) {
         if (value instanceof Boolean bool) {
             return bool;
         }
-        return "true".equalsIgnoreCase(String.valueOf(value)) || "sim".equalsIgnoreCase(String.valueOf(value));
+        return "true".equalsIgnoreCase(String.valueOf(value)) || "yes".equalsIgnoreCase(String.valueOf(value));
     }
 
     private static JTextArea scriptArea() {

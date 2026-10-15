@@ -14,8 +14,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Fotografia do catálogo e leituras pontuais das tabelas {@code NEX$}.
- * Uma falha de permissão numa tabela de sistema não esconde as tabelas do usuário.
+ * Snapshot of the catalog and point reads of the {@code NEX$} tables.
+ * A permission failure on a system table does not hide the user's tables.
  */
 public record Outline(
         List<RelationName> tables,
@@ -153,7 +153,7 @@ public record Outline(
         }
         triggers.sort(Comparator.comparing(TriggerRef::name, String.CASE_INSENSITIVE_ORDER));
         List<GeneratorRef> generators = new ArrayList<>();
-        for (Row row : tryQuery(connection, warnings, "geradores",
+        for (Row row : tryQuery(connection, warnings, "generators",
                 "SELECT NEX$SCHEMA_NAME, NEX$GENERATOR_NAME, NEX$CURRENT_VALUE FROM NEX$GENERATORS")) {
             String schema = row.text("NEX$SCHEMA_NAME");
             String name = row.text("NEX$GENERATOR_NAME");
@@ -164,9 +164,9 @@ public record Outline(
         }
         generators.sort(Comparator.comparing(GeneratorRef::schema, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(GeneratorRef::name, String.CASE_INSENSITIVE_ORDER));
-        List<String> roles = names(tryQuery(connection, warnings, "papéis",
+        List<String> roles = names(tryQuery(connection, warnings, "roles",
                 "SELECT NEX$ROLE_NAME FROM NEX$ROLES"), "NEX$ROLE_NAME");
-        List<String> users = names(tryQuery(connection, warnings, "usuários",
+        List<String> users = names(tryQuery(connection, warnings, "users",
                 "SELECT NEX$USER_NAME FROM NEX$USERS"), "NEX$USER_NAME");
         return new Outline(tables, systemTables, views, procedures, triggers, generators, schemas, roles, users, warnings);
     }
@@ -424,7 +424,7 @@ public record Outline(
             break;
         }
         if (found == null) {
-            throw new SQLException("procedure não encontrada: " + name);
+            throw new SQLException("procedure not found: " + name);
         }
         List<Parameter> parameters = new ArrayList<>();
         for (Row row : query(connection, """
@@ -466,7 +466,7 @@ public record Outline(
             return new ViewInfo(schema, name, row.text("NEX$VIEW_SOURCE"), row.text("NEX$RELATION_NAME"),
                     splitColumns(row.text("NEX$COLUMNS")), row.text("NEX$OWNER_NAME"));
         }
-        throw new SQLException("view não encontrada: " + name);
+        throw new SQLException("view not found: " + name);
     }
 
     public static GeneratorInfo generator(Connection connection, String schema, String name) throws SQLException {
@@ -481,7 +481,7 @@ public record Outline(
                         row.number("NEX$INCREMENT"), row.number("NEX$CURRENT_VALUE"), row.text("NEX$OWNER_NAME"));
             }
         }
-        throw new SQLException("gerador não encontrado: " + name);
+        throw new SQLException("generator not found: " + name);
     }
 
     public static List<GrantInfo> grants(Connection connection) throws SQLException {
@@ -543,7 +543,7 @@ public record Outline(
                 FROM NEX$DATABASE
                 """);
         if (rows.isEmpty()) {
-            throw new SQLException("NEX$DATABASE não devolveu linha");
+            throw new SQLException("NEX$DATABASE returned no row");
         }
         Row row = rows.get(0);
         return new DatabaseInfo(row.text("NEX$DATABASE_NAME"), row.text("NEX$DESCRIPTION"), row.text("NEX$OWNER_NAME"),

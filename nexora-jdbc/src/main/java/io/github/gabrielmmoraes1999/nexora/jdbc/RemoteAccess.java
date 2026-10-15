@@ -54,7 +54,7 @@ final class RemoteAccess implements DatabaseAccess {
                 throw new SQLException(Wire.decodeError(response.body()), "42000");
             }
             if (response.opcode() != Wire.OK) {
-                throw new SQLException("resposta inválida do motor", "08001");
+                throw new SQLException("invalid response from the server", "08001");
             }
             return new RemoteAccess(socket, input, output, Wire.decodeLoginOk(response.body()));
         } catch (SQLException exception) {
@@ -62,7 +62,7 @@ final class RemoteAccess implements DatabaseAccess {
             throw exception;
         } catch (IOException exception) {
             closeQuietly(socket);
-            throw new SQLException("não foi possível conectar em " + host + ":" + port, "08001", exception);
+            throw new SQLException("could not connect to " + host + ":" + port, "08001", exception);
         }
     }
 
@@ -149,7 +149,7 @@ final class RemoteAccess implements DatabaseAccess {
                 Wire.writeFrame(output, Wire.LOGOUT, new byte[0]);
                 read();
             } catch (IOException ignored) {
-                // o motor pode já ter caído
+                // the server may already be down
             } finally {
                 closeQuietly(socket);
             }
@@ -197,7 +197,7 @@ final class RemoteAccess implements DatabaseAccess {
             throw new SQLException(Wire.decodeError(response.body()), "42000");
         }
         if (response.opcode() != Wire.OK) {
-            throw new SQLException("resposta inválida do motor", "08001");
+            throw new SQLException("invalid response from the server", "08001");
         }
         return response;
     }
@@ -214,19 +214,19 @@ final class RemoteAccess implements DatabaseAccess {
 
     private void ensureOpen() throws SQLException {
         if (closed) {
-            throw new SQLException("a conexão está fechada", "08003");
+            throw new SQLException("the connection is closed", "08003");
         }
     }
 
     private static SQLException failed(IOException exception) {
-        return new SQLException("conexão com o motor falhou", "08001", exception);
+        return new SQLException("connection to the server failed", "08001", exception);
     }
 
     private static void closeQuietly(Socket socket) {
         try {
             socket.close();
         } catch (IOException ignored) {
-            // a conexão já caiu
+            // the connection is already down
         }
     }
 }

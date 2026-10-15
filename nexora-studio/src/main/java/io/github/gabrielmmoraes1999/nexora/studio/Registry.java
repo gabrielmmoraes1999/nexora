@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Registro local dos bancos. O arquivo é {@code ~/.nexora/studio.json}.
+ * Local registry of databases. The file is {@code ~/.nexora/studio.json}.
  */
 public final class Registry {
 
@@ -28,19 +28,19 @@ public final class Registry {
         }
         Object parsed = Json.parse(Files.readString(file));
         if (!(parsed instanceof Map<?, ?> root)) {
-            throw new IOException("registro inválido");
+            throw new IOException("invalid registry");
         }
         Object raw = root.get("databases");
         if (raw == null) {
             return new ArrayList<>();
         }
         if (!(raw instanceof List<?> list)) {
-            throw new IOException("registro inválido");
+            throw new IOException("invalid registry");
         }
         List<DatabaseEntry> entries = new ArrayList<>();
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> map)) {
-                throw new IOException("registro inválido");
+                throw new IOException("invalid registry");
             }
             entries.add(new DatabaseEntry(
                     text(map, "id"),

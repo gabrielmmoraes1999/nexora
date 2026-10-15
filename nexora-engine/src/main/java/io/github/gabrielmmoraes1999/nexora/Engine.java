@@ -73,7 +73,7 @@ final class Engine implements AutoCloseable {
                 Files.deleteIfExists(storage.path());
                 Files.deleteIfExists(TransactionLog.beside(storage.path()));
             } catch (IOException ignored) {
-                // o arquivo incompleto fica para a próxima tentativa
+                // the incomplete file is left for the next attempt
             }
             throw exception;
         }
@@ -134,10 +134,10 @@ final class Engine implements AutoCloseable {
         String active = normalizeRole(role);
         if (active != null) {
             if (findRole(active) == null) {
-                throw new NexException("papel não encontrado: " + active);
+                throw new NexException("role not found: " + active);
             }
             if (!account.admin && !member(active, account.user)) {
-                throw new NexException("usuário " + account.user + " não tem o papel " + active);
+                throw new NexException("user " + account.user + " does not have role " + active);
             }
         }
         return attach(account, active, remote);
@@ -174,7 +174,7 @@ final class Engine implements AutoCloseable {
     SqlResult execute(Session session, String sql, Object[] parameters) {
         checkOpen();
         if (session != null && session.closed()) {
-            throw new NexException("sessão encerrada");
+            throw new NexException("session closed");
         }
         boolean outer = contextDepth == 0;
         Session previousConnected = connected;
@@ -227,7 +227,7 @@ final class Engine implements AutoCloseable {
         for (int i = 0; i < parsed.statements().size() - 1; i++) {
             if (parsed.statements().get(i) instanceof Select || parsed.statements().get(i) instanceof SelectProcedure
                     || parsed.statements().get(i) instanceof ExecuteProcedure) {
-                throw new NexException("SELECT precisa ser o último comando do script");
+                throw new NexException("SELECT must be the last statement in the script");
             }
         }
         this.params = bound;
@@ -274,7 +274,7 @@ final class Engine implements AutoCloseable {
     void useSchema(Session session, String name) {
         checkOpen();
         if (session == null || session.closed()) {
-            throw new NexException("sessão encerrada");
+            throw new NexException("session closed");
         }
         session.schema(canonicalSchema(name));
     }
@@ -419,7 +419,7 @@ final class Engine implements AutoCloseable {
                     rollback();
                 }
             } catch (RuntimeException ignored) {
-                // o fechamento descarta a transação aberta
+                // closing discards the open transaction
             }
         } finally {
             closed = true;
@@ -434,15 +434,15 @@ final class Engine implements AutoCloseable {
 
     private SqlResult executeOne(Stmt statement) {
         if (inTransaction && isDdl(statement)) {
-            throw new NexException("DDL não pode ser executado dentro de uma transação. Faça COMMIT ou ROLLBACK antes.");
+            throw new NexException("DDL cannot run inside a transaction. COMMIT or ROLLBACK first.");
         }
         return switch (statement) {
             case BeginTx ignored -> {
                 if (actor != null && transactions.containsKey(actor)) {
-                    throw new NexException("já existe uma transação aberta");
+                    throw new NexException("a transaction is already open");
                 }
                 if (actor == null && inTransaction) {
-                    throw new NexException("já existe uma transação aberta");
+                    throw new NexException("a transaction is already open");
                 }
                 OpenTxn txn = new OpenTxn(nextTransaction++);
                 if (actor != null) {
@@ -459,7 +459,7 @@ final class Engine implements AutoCloseable {
                 OpenTxn txn = owner == null ? null : transactions.get(owner);
                 if (txn == null) {
                     if (!inTransaction) {
-                        throw new NexException("não há transação aberta");
+                        throw new NexException("there is no open transaction");
                     }
                     flush();
                     inTransaction = false;
@@ -477,7 +477,7 @@ final class Engine implements AutoCloseable {
                 } else if (inTransaction) {
                     rollback();
                 } else {
-                    throw new NexException("não há transação aberta");
+                    throw new NexException("there is no open transaction");
                 }
                 yield SqlResult.update(0);
             }
@@ -601,7 +601,7 @@ final class Engine implements AutoCloseable {
                             ? "PK_" + table.schema().name : add.constraint();
                     String index = add.index() == null || add.index().isBlank() ? constraint : add.index();
                     claim(table.schema(), constraint, index, true);
-                    table.addPrimaryKey(resolve(table.schema().columns, add.columns(), "chave primária"),
+                    table.addPrimaryKey(resolve(table.schema().columns, add.columns(), "primary key"),
                             constraint, index, add.descending());
                     return 0;
                 });
@@ -644,7 +644,7 @@ final class Engine implements AutoCloseable {
                     }
                     UniqueKey unique = uniqueNamed(table.schema(), drop.name());
                     if (unique == null) {
-                        throw new NexException("restrição não encontrada: " + drop.name());
+                        throw new NexException("constraint not found: " + drop.name());
                     }
                     guardUniqueReferenced(table, unique);
                     table.dropUnique(unique.name);
@@ -689,7 +689,7 @@ final class Engine implements AutoCloseable {
                     TableStore table = require(drop.table());
                     UniqueKey unique = uniqueNamed(table.schema(), drop.name());
                     if (unique == null) {
-                        throw new NexException("chave única não encontrada: " + drop.name());
+                        throw new NexException("unique key not found: " + drop.name());
                     }
                     guardUniqueReferenced(table, unique);
                     table.dropUnique(unique.name);
@@ -713,24 +713,24 @@ final class Engine implements AutoCloseable {
 
     private void create(CreateTable statement) {
         Relation rel = relation(statement.name());
-        Names.checkName(rel.name(), "tabela");
+        Names.checkName(rel.name(), "table");
         if (SystemTables.isSystem(rel.name())) {
-            throw new NexException("nome de tabela reservado: " + rel.name());
+            throw new NexException("reserved table name: " + rel.name());
         }
         if (findView(statement.name()) != null) {
-            throw new NexException("view já existe: " + shown(statement.name()));
+            throw new NexException("view already exists: " + shown(statement.name()));
         }
         String key = rel.key();
         if (tables.containsKey(key)) {
             if (statement.ifNotExists()) {
                 return;
             }
-            throw new NexException("tabela já existe: " + shown(statement.name()));
+            throw new NexException("table already exists: " + shown(statement.name()));
         }
         Schema schema = compile(rel.name(), statement.columns(), statement.primaryKey(), statement.uniques());
         if (statement.primaryConstraint() != null || statement.primaryIndex() != null || statement.primaryDescending()) {
             if (schema.primaryKey.length == 0) {
-                throw new NexException("USING INDEX exige uma chave primária");
+                throw new NexException("USING INDEX requires a primary key");
             }
             String constraint = statement.primaryConstraint() == null ? schema.primaryConstraint : statement.primaryConstraint();
             String index = statement.primaryIndex() == null ? constraint : statement.primaryIndex();
@@ -751,14 +751,14 @@ final class Engine implements AutoCloseable {
     private void drop(DropTable statement) {
         Relation rel = relation(statement.name());
         if (SystemTables.isSystem(rel.name())) {
-            throw new NexException("tabela de sistema não pode ser removida: " + shown(statement.name()));
+            throw new NexException("system table cannot be removed: " + shown(statement.name()));
         }
         TableStore table = findTable(statement.name());
         if (table == null) {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("tabela não encontrada: " + shown(statement.name()));
+            throw new NexException("table not found: " + shown(statement.name()));
         }
         guardDdl(statement.name());
         String storedName = Relation.catalogName(table.namespace(), table.schema().name);
@@ -779,20 +779,20 @@ final class Engine implements AutoCloseable {
     }
 
     private void createIndex(CreateIndex statement) {
-        Names.checkName(statement.name(), "índice");
+        Names.checkName(statement.name(), "index");
         guardDdl(statement.table());
         TableStore table = require(statement.table());
         rejectBorrowed(table);
         if (reservedIndexName(statement.name())) {
-            throw new NexException("nome de índice reservado: " + statement.name());
+            throw new NexException("reserved index name: " + statement.name());
         }
         if (table.hasIndex(statement.name())) {
             if (statement.ifNotExists()) {
                 return;
             }
-            throw new NexException("índice já existe: " + statement.name());
+            throw new NexException("index already exists: " + statement.name());
         }
-        int[] columns = resolve(table.schema().columns, statement.columns(), "índice");
+        int[] columns = resolve(table.schema().columns, statement.columns(), "index");
         mutating(statement.table(), () -> {
             require(statement.table()).createIndex(statement.name(), columns, statement.unique());
             return 0;
@@ -804,13 +804,13 @@ final class Engine implements AutoCloseable {
         TableStore table = require(statement.table());
         rejectBorrowed(table);
         if (table.schema().ownsIndex(statement.name()) || reservedIndexName(statement.name())) {
-            throw new NexException("DROP INDEX não remove PRIMARY KEY, FOREIGN KEY nem UNIQUE declarado na tabela");
+            throw new NexException("DROP INDEX does not remove a PRIMARY KEY, FOREIGN KEY, or UNIQUE declared on the table");
         }
         if (!table.hasIndex(statement.name())) {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("índice não encontrado: " + statement.name());
+            throw new NexException("index not found: " + statement.name());
         }
         mutating(statement.table(), () -> {
             require(statement.table()).dropIndex(statement.name());
@@ -823,13 +823,13 @@ final class Engine implements AutoCloseable {
     }
 
     private void claim(Schema schema, String constraint, String index, boolean replacingPrimary) {
-        Names.checkName(constraint, "restrição");
-        Names.checkName(index, "índice");
+        Names.checkName(constraint, "constraint");
+        Names.checkName(index, "index");
         if (nameUsed(schema, constraint, replacingPrimary)) {
-            throw new NexException("restrição já existe: " + constraint);
+            throw new NexException("constraint already exists: " + constraint);
         }
         if (!Names.same(constraint, index) && nameUsed(schema, index, replacingPrimary)) {
-            throw new NexException("índice já existe: " + index);
+            throw new NexException("index already exists: " + index);
         }
     }
 
@@ -874,16 +874,16 @@ final class Engine implements AutoCloseable {
                 return candidate;
             }
         }
-        throw new NexException("não foi possível nomear a chave estrangeira");
+        throw new NexException("could not name the foreign key");
     }
 
     private ForeignKey buildForeignKey(Schema child, String childNamespace, String constraint, List<String> columnNames,
                                        String index, boolean descending, String refTable, List<String> refColumnNames,
                                        ReferentialAction onUpdate, ReferentialAction onDelete) {
-        int[] columns = resolve(child.columns, columnNames, "chave estrangeira");
+        int[] columns = resolve(child.columns, columnNames, "foreign key");
         for (int column : columns) {
             if (child.columns.get(column).type == DataType.BLOB) {
-                throw new NexException("BLOB não pode ser chave");
+                throw new NexException("BLOB cannot be a key");
             }
         }
         Relation parentId = relation(refTable);
@@ -893,9 +893,9 @@ final class Engine implements AutoCloseable {
         String[] referencedColumns;
         DataType[] referencedTypes;
         if (self) {
-            int[] refs = refColumnNames.isEmpty() ? child.primaryKey : resolve(child.columns, refColumnNames, "chave referenciada");
+            int[] refs = refColumnNames.isEmpty() ? child.primaryKey : resolve(child.columns, refColumnNames, "referenced key");
             if (refs.length == 0) {
-                throw new NexException("informe as colunas referenciadas de " + child.name);
+                throw new NexException("specify the referenced columns of " + child.name);
             }
             ensureReferencedKey(child, refs);
             referencedSchema = childNamespace;
@@ -910,9 +910,9 @@ final class Engine implements AutoCloseable {
             TableStore parent = require(refTable);
             int[] refs = refColumnNames.isEmpty()
                     ? parent.schema().primaryKey
-                    : resolve(parent.schema().columns, refColumnNames, "chave referenciada");
+                    : resolve(parent.schema().columns, refColumnNames, "referenced key");
             if (refs.length == 0) {
-                throw new NexException("informe as colunas referenciadas de " + parent.schema().name);
+                throw new NexException("specify the referenced columns of " + parent.schema().name);
             }
             ensureReferencedKey(parent.schema(), refs);
             referencedSchema = parent.namespace();
@@ -925,11 +925,11 @@ final class Engine implements AutoCloseable {
             }
         }
         if (columns.length != referencedColumns.length) {
-            throw new NexException("a chave estrangeira e a chave referenciada têm quantidades diferentes de colunas");
+            throw new NexException("the foreign key and the referenced key have different numbers of columns");
         }
         for (int i = 0; i < columns.length; i++) {
             if (child.columns.get(columns[i]).type != referencedTypes[i]) {
-                throw new NexException("tipo incompatível na chave estrangeira: " + child.columns.get(columns[i]).name);
+                throw new NexException("incompatible type in foreign key: " + child.columns.get(columns[i]).name);
             }
         }
         String constraintName = constraint == null || constraint.isBlank() ? freshForeignName(child, columns) : constraint;
@@ -948,7 +948,7 @@ final class Engine implements AutoCloseable {
             for (int index : columns) {
                 Column column = child.columns.get(index);
                 if (column.notNull) {
-                    throw new NexException(clause + " SET NULL exige coluna anulável: " + column.name);
+                    throw new NexException(clause + " SET NULL requires a nullable column: " + column.name);
                 }
             }
         }
@@ -956,10 +956,10 @@ final class Engine implements AutoCloseable {
             for (int index : columns) {
                 Column column = child.columns.get(index);
                 if (!column.hasDefault) {
-                    throw new NexException(clause + " SET DEFAULT exige valor padrão em " + column.name);
+                    throw new NexException(clause + " SET DEFAULT requires a default value on " + column.name);
                 }
                 if (column.notNull && column.defaultValue == null) {
-                    throw new NexException(clause + " SET DEFAULT não pode ser NULL em " + column.name);
+                    throw new NexException(clause + " SET DEFAULT cannot be NULL on " + column.name);
                 }
             }
         }
@@ -974,7 +974,7 @@ final class Engine implements AutoCloseable {
                 return;
             }
         }
-        throw new NexException("a chave estrangeira precisa referenciar a chave primária ou uma chave UNIQUE");
+        throw new NexException("the foreign key must reference the primary key or a UNIQUE key");
     }
 
     private void checkForeignRows(TableStore child, ForeignKey key) {
@@ -986,7 +986,7 @@ final class Engine implements AutoCloseable {
                 continue;
             }
             if (!keyExists(parent, parentColumns, values, key.columns)) {
-                throw new NexException("chave estrangeira " + key.name + " não encontra o registro em " + referencedLabel(key));
+                throw new NexException("foreign key " + key.name + " does not find the row in " + referencedLabel(key));
             }
         }
     }
@@ -1002,7 +1002,7 @@ final class Engine implements AutoCloseable {
             }
             TableStore parent = parentOf(key);
             if (!keyExists(parent, referencedIndexes(parent.schema(), key), values, key.columns, excluded, excludedId)) {
-                throw new NexException("chave estrangeira " + key.name + " não encontra o registro em " + referencedLabel(key));
+                throw new NexException("foreign key " + key.name + " does not find the row in " + referencedLabel(key));
             }
         }
     }
@@ -1010,8 +1010,8 @@ final class Engine implements AutoCloseable {
     private void blockReferentialUpdate(TableStore parent, Object[] oldValues, Object[] newValues, long exceptId) {
         for (ReferenceHit hit : incoming(parent, oldValues, exceptId)) {
             if (hit.key.onUpdate.restricts() && keyChanged(oldValues, newValues, hit.parentColumns)) {
-                throw new NexException("chave estrangeira " + hit.key.name + " em " + hit.child.schema().name
-                        + " ainda aponta para este registro");
+                throw new NexException("foreign key " + hit.key.name + " in " + hit.child.schema().name
+                        + " still references this row");
             }
         }
     }
@@ -1041,8 +1041,8 @@ final class Engine implements AutoCloseable {
         List<ReferenceHit> hits = incoming(parent, values, exceptId);
         for (ReferenceHit hit : hits) {
             if (hit.key.onDelete.restricts()) {
-                throw new NexException("chave estrangeira " + hit.key.name + " em " + hit.child.schema().name
-                        + " ainda aponta para este registro");
+                throw new NexException("foreign key " + hit.key.name + " in " + hit.child.schema().name
+                        + " still references this row");
             }
         }
         List<Planned> planned = new ArrayList<>();
@@ -1323,8 +1323,8 @@ final class Engine implements AutoCloseable {
                     }
                 }
                 if (!covered) {
-                    throw new NexException("chave primária em uso pela chave estrangeira " + key.name
-                            + " em " + other.schema().name);
+                    throw new NexException("primary key is in use by foreign key " + key.name
+                            + " in " + other.schema().name);
                 }
             }
         }
@@ -1340,8 +1340,8 @@ final class Engine implements AutoCloseable {
                 if (coveredWithout(schema, unique)) {
                     continue;
                 }
-                throw new NexException("chave única em uso pela chave estrangeira " + key.name
-                        + " em " + other.schema().name);
+                throw new NexException("unique key is in use by foreign key " + key.name
+                        + " in " + other.schema().name);
             }
         }
     }
@@ -1368,10 +1368,10 @@ final class Engine implements AutoCloseable {
     }
 
     private UniqueKey buildUnique(Schema schema, String constraint, List<String> columnNames) {
-        int[] columns = resolve(schema.columns, columnNames, "chave única");
+        int[] columns = resolve(schema.columns, columnNames, "unique key");
         for (int column : columns) {
             if (schema.columns.get(column).type == DataType.BLOB) {
-                throw new NexException("BLOB não pode ser chave");
+                throw new NexException("BLOB cannot be a key");
             }
         }
         String name = constraint == null || constraint.isBlank() ? schema.freshUniqueName() : constraint;
@@ -1386,7 +1386,7 @@ final class Engine implements AutoCloseable {
             }
             for (ForeignKey key : other.schema().foreignKeys) {
                 if (pointsAt(key, table)) {
-                    throw new NexException("tabela em uso pela chave estrangeira " + key.name + " em " + other.schema().name);
+                    throw new NexException("table is in use by foreign key " + key.name + " in " + other.schema().name);
                 }
             }
         }
@@ -1403,7 +1403,7 @@ final class Engine implements AutoCloseable {
                 }
                 for (String referenced : key.referencedColumns) {
                     if (Names.same(referenced, column)) {
-                        throw new NexException("coluna em uso pela chave estrangeira " + key.name + " em " + other.schema().name);
+                        throw new NexException("column is in use by foreign key " + key.name + " in " + other.schema().name);
                     }
                 }
             }
@@ -1413,7 +1413,7 @@ final class Engine implements AutoCloseable {
     private TableStore parentOf(ForeignKey key) {
         TableStore parent = tables.get(Relation.key(key.referencedSchema, key.referencedTable));
         if (parent == null) {
-            throw new NexException("tabela referenciada não encontrada: " + referencedLabel(key));
+            throw new NexException("referenced table not found: " + referencedLabel(key));
         }
         return parent;
     }
@@ -1423,7 +1423,7 @@ final class Engine implements AutoCloseable {
         for (int i = 0; i < key.referencedColumns.length; i++) {
             int found = schema.indexOf(key.referencedColumns[i]);
             if (found < 0) {
-                throw new NexException("coluna referenciada não encontrada: " + key.referencedColumns[i]);
+                throw new NexException("referenced column not found: " + key.referencedColumns[i]);
             }
             indexes[i] = found;
         }
@@ -1465,24 +1465,24 @@ final class Engine implements AutoCloseable {
                 Evaluator evaluator = evaluator(null, null);
                 if (statement.columns().isEmpty()) {
                     if (expressions.size() != schema.columns.size()) {
-                        throw new NexException("quantidade de valores não corresponde às colunas de " + schema.name);
+                        throw new NexException("value count does not match the columns of " + schema.name);
                     }
                     for (int i = 0; i < expressions.size(); i++) {
                         values[i] = prepared(schema, schema.columns.get(i), evaluator.eval(expressions.get(i)));
                     }
                 } else {
                     if (expressions.size() != statement.columns().size()) {
-                        throw new NexException("quantidade de valores não corresponde às colunas informadas");
+                        throw new NexException("value count does not match the supplied columns");
                     }
                     Set<String> used = new HashSet<>();
                     for (int i = 0; i < expressions.size(); i++) {
                         String name = statement.columns().get(i);
                         if (!used.add(Names.fold(name))) {
-                            throw new NexException("coluna repetida no INSERT: " + name);
+                            throw new NexException("duplicate column in INSERT: " + name);
                         }
                         int index = schema.indexOf(name);
                         if (index < 0) {
-                            throw new NexException("coluna não encontrada: " + name);
+                            throw new NexException("column not found: " + name);
                         }
                         values[index] = prepared(schema, schema.columns.get(index), evaluator.eval(expressions.get(i)));
                     }
@@ -1510,10 +1510,10 @@ final class Engine implements AutoCloseable {
             Set<String> used = new HashSet<>();
             for (Assignment assignment : statement.sets()) {
                 if (!used.add(Names.fold(assignment.column()))) {
-                    throw new NexException("coluna repetida no UPDATE: " + assignment.column());
+                    throw new NexException("duplicate column in UPDATE: " + assignment.column());
                 }
                 if (schema.indexOf(assignment.column()) < 0) {
-                    throw new NexException("coluna não encontrada: " + assignment.column());
+                    throw new NexException("column not found: " + assignment.column());
                 }
             }
             Evaluator evaluator = evaluator(table, null);
@@ -1645,7 +1645,7 @@ final class Engine implements AutoCloseable {
         Schema schema = table.schema();
         List<SelectItem> items = statement.star() ? star(schema) : statement.items();
         if (items.isEmpty()) {
-            throw new NexException("SELECT precisa de ao menos uma expressão");
+            throw new NexException("SELECT needs at least one expression");
         }
         boolean aggregate = false;
         boolean scalar = false;
@@ -1657,7 +1657,7 @@ final class Engine implements AutoCloseable {
             }
         }
         if (aggregate && scalar) {
-            throw new NexException("não é possível misturar agregação e colunas sem GROUP BY");
+            throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         Evaluator evaluator = evaluator(table, statement.alias());
         List<StoredRow> matched = match(table, evaluator, statement.where());
@@ -1698,11 +1698,11 @@ final class Engine implements AutoCloseable {
 
     private SqlResult queryWithoutTable(Select statement) {
         if (statement.star()) {
-            throw new NexException("SELECT * precisa de uma tabela");
+            throw new NexException("SELECT * needs a table");
         }
         List<SelectItem> items = statement.items();
         if (items.isEmpty()) {
-            throw new NexException("SELECT precisa de ao menos uma expressão");
+            throw new NexException("SELECT needs at least one expression");
         }
         boolean aggregate = false;
         boolean scalar = false;
@@ -1714,7 +1714,7 @@ final class Engine implements AutoCloseable {
             }
         }
         if (aggregate && scalar) {
-            throw new NexException("não é possível misturar agregação e colunas sem GROUP BY");
+            throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         Schema schema = new Schema("", List.of(), new int[0], List.of(), List.of());
         Evaluator evaluator = evaluator(null, null);
@@ -1756,14 +1756,14 @@ final class Engine implements AutoCloseable {
 
     private SqlResult queryView(Select statement) {
         if (viewDepth >= 16) {
-            throw new NexException("view passou de 16 níveis");
+            throw new NexException("view exceeded 16 levels");
         }
         viewDepth++;
         try {
             guardAccess(statement.table(), "SELECT");
             StoredView view = findView(statement.table());
             if (view == null) {
-                throw new NexException("view não encontrada: " + statement.table());
+                throw new NexException("view not found: " + statement.table());
             }
             Session previous = actor;
             actor = ownerSession(view.owner());
@@ -1774,7 +1774,7 @@ final class Engine implements AutoCloseable {
                 actor = previous;
             }
             if (produced.columns().size() != view.columns().size()) {
-                throw new NexException("a view " + view.name() + " não corresponde ao SELECT gravado");
+                throw new NexException("the view " + view.name() + " does not match the stored SELECT");
             }
             Schema schema = new Schema(view.name(), viewColumns(view, produced.columns()), new int[0], List.of(), List.of());
             return projectView(statement, schema, produced, view.schema(), view.name());
@@ -1786,7 +1786,7 @@ final class Engine implements AutoCloseable {
     private SqlResult projectView(Select statement, Schema schema, SqlResult produced, String namespace, String viewName) {
         List<SelectItem> items = statement.star() ? star(schema) : statement.items();
         if (items.isEmpty()) {
-            throw new NexException("SELECT precisa de ao menos uma expressão");
+            throw new NexException("SELECT needs at least one expression");
         }
         boolean aggregate = false;
         boolean scalar = false;
@@ -1798,7 +1798,7 @@ final class Engine implements AutoCloseable {
             }
         }
         if (aggregate && scalar) {
-            throw new NexException("não é possível misturar agregação e colunas sem GROUP BY");
+            throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         Evaluator evaluator = evaluator(null, statement.alias());
         evaluator.useView(schema, namespace + "." + viewName);
@@ -1880,11 +1880,11 @@ final class Engine implements AutoCloseable {
             return projected.values[index];
         }
         if (distinct) {
-            throw new NexException("ORDER BY com DISTINCT precisa usar colunas da lista do SELECT");
+            throw new NexException("ORDER BY with DISTINCT must use columns from the SELECT list");
         }
         if (projected.row == null) {
             if (projected.source == null) {
-                throw new NexException("ORDER BY inválido");
+                throw new NexException("invalid ORDER BY");
             }
             evaluator.bindView(projected.source);
             return evaluator.eval(order.expr());
@@ -1896,7 +1896,7 @@ final class Engine implements AutoCloseable {
     private Integer selectIndex(Expr expr, List<SelectItem> items) {
         if (expr instanceof Literal literal && literal.value() instanceof Long number) {
             if (number < 1 || number > items.size()) {
-                throw new NexException("ORDER BY " + number + " está fora da lista do SELECT");
+                throw new NexException("ORDER BY " + number + " is outside the SELECT list");
             }
             return number.intValue() - 1;
         }
@@ -1929,7 +1929,7 @@ final class Engine implements AutoCloseable {
     private List<Projected> page(List<Projected> projected, Long limit, Long offset) {
         long skip = offset == null ? 0 : offset;
         if (skip < 0 || (limit != null && limit < 0)) {
-            throw new NexException("LIMIT e OFFSET não podem ser negativos");
+            throw new NexException("LIMIT and OFFSET cannot be negative");
         }
         if (skip >= projected.size()) {
             return List.of();
@@ -2329,7 +2329,7 @@ final class Engine implements AutoCloseable {
                         }
                     }
                 } catch (RuntimeException ignored) {
-                    // a próxima abertura zera o espaço que ficou pendente
+                    // the next open zeroes the space left pending
                 }
                 for (TableStore table : dirty) {
                     TableStore.Plan plan = plans.get(table);
@@ -2351,7 +2351,7 @@ final class Engine implements AutoCloseable {
             if (exception instanceof NexException nex) {
                 throw nex;
             }
-            throw new NexException("falha ao confirmar alterações: " + exception.getMessage(), exception);
+            throw new NexException("failed to commit changes: " + exception.getMessage(), exception);
         }
         if (reclaimed) {
             compactFile();
@@ -2360,7 +2360,7 @@ final class Engine implements AutoCloseable {
 
     private boolean shouldShrink(TableStore table) {
         long wanted = DatabaseFile.capacityFor(table.packedBytes(), storage.pageSize());
-        // Metade exata fica: o próximo insert ocupa essa página e o empacotar devolveria o mesmo corte.
+        // An exact half remains: the next insert fills that page and packing would return the same split.
         return wanted < table.capacity() && wanted * 2 < table.capacity();
     }
 
@@ -2401,7 +2401,7 @@ final class Engine implements AutoCloseable {
             storage.relocate(from, destination, capacity, entries);
             candidate.retarget(destination, capacity);
         }
-        throw new NexException("falha interna ao compactar o banco");
+        throw new NexException("internal failure while compacting the database");
     }
 
     private void rollback() {
@@ -2424,9 +2424,9 @@ final class Engine implements AutoCloseable {
         List<String> columnPrimary = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (ColDef definition : definitions) {
-            Names.checkName(definition.name(), "coluna");
+            Names.checkName(definition.name(), "column");
             if (!seen.add(Names.fold(definition.name()))) {
-                throw new NexException("coluna duplicada: " + definition.name());
+                throw new NexException("duplicate column: " + definition.name());
             }
             if (definition.primaryKey()) {
                 columnPrimary.add(definition.name());
@@ -2434,12 +2434,12 @@ final class Engine implements AutoCloseable {
             columns.add(column(definition));
         }
         if (columnPrimary.size() > 1) {
-            throw new NexException("chave primária composta deve ser declarada como PRIMARY KEY (a, b)");
+            throw new NexException("composite primary key must be declared as PRIMARY KEY (a, b)");
         }
         if (!columnPrimary.isEmpty() && !primary.isEmpty()) {
-            throw new NexException("chave primária repetida");
+            throw new NexException("duplicate primary key");
         }
-        int[] primaryIndexes = resolve(columns, primary.isEmpty() ? columnPrimary : primary, "chave primária");
+        int[] primaryIndexes = resolve(columns, primary.isEmpty() ? columnPrimary : primary, "primary key");
         for (int index : primaryIndexes) {
             Column column = columns.get(index);
             if (!column.notNull) {
@@ -2451,7 +2451,7 @@ final class Engine implements AutoCloseable {
         for (int i = 0; i < definitions.size(); i++) {
             if (definitions.get(i).unique() && !definitions.get(i).primaryKey()) {
                 if (columns.get(i).type == DataType.BLOB) {
-                    throw new NexException("BLOB não pode ser chave");
+                    throw new NexException("BLOB cannot be a key");
                 }
                 schema = schema.withUnique(new UniqueKey(schema.freshUniqueName(), new int[]{i}));
             }
@@ -2463,7 +2463,7 @@ final class Engine implements AutoCloseable {
     }
 
     private Column column(ColDef definition) {
-        Names.checkName(definition.name(), "coluna");
+        Names.checkName(definition.name(), "column");
         Object def = null;
         if (definition.hasDefault() && definition.defaultValue() != null) {
             def = Values.coerce(definition.type(), definition.length(), definition.scale(), definition.defaultValue());
@@ -2478,7 +2478,7 @@ final class Engine implements AutoCloseable {
         Set<String> seen = new HashSet<>();
         for (int i = 0; i < names.size(); i++) {
             if (!seen.add(Names.fold(names.get(i)))) {
-                throw new NexException("coluna repetida " + kindPlace(kind) + ": " + names.get(i));
+                throw new NexException("duplicate column " + kindPlace(kind) + ": " + names.get(i));
             }
             int found = -1;
             for (int column = 0; column < columns.size(); column++) {
@@ -2488,7 +2488,7 @@ final class Engine implements AutoCloseable {
                 }
             }
             if (found < 0) {
-                throw new NexException("coluna não encontrada " + kindPlace(kind) + ": " + names.get(i));
+                throw new NexException("column not found " + kindPlace(kind) + ": " + names.get(i));
             }
             indexes[i] = found;
         }
@@ -2496,13 +2496,13 @@ final class Engine implements AutoCloseable {
     }
 
     private static String kindPlace(String kind) {
-        return kind.equals("índice") ? "no índice" : "na " + kind;
+        return kind.equals("index") ? "in the index" : "in the " + kind;
     }
 
     private TableStore require(String name) {
         TableStore table = findTable(name);
         if (table == null) {
-            throw new NexException("tabela não encontrada: " + shown(name));
+            throw new NexException("table not found: " + shown(name));
         }
         return table;
     }
@@ -2552,7 +2552,7 @@ final class Engine implements AutoCloseable {
     private String canonicalSchema(String name) {
         TableStore table = systemTable(SystemTables.SCHEMAS);
         if (table == null) {
-            throw new NexException("esquema não encontrado: " + name);
+            throw new NexException("schema not found: " + name);
         }
         int index = table.schema().indexOf("NEX$SCHEMA_NAME");
         for (StoredRow row : table.scan()) {
@@ -2561,7 +2561,7 @@ final class Engine implements AutoCloseable {
                 return text;
             }
         }
-        throw new NexException("esquema não encontrado: " + name);
+        throw new NexException("schema not found: " + name);
     }
 
     private ColumnMeta columnMeta(SelectItem item, Schema schema, String namespace, String tableName) {
@@ -2596,10 +2596,10 @@ final class Engine implements AutoCloseable {
             if (expected == 1) {
                 return new Object[]{null};
             }
-            throw new NexException("uso ambíguo de null; passe os parâmetros em new Object[]{...}");
+            throw new NexException("ambiguous use of null; pass the parameters in new Object[]{...}");
         }
         if (parameters.length != expected) {
-            throw new NexException("quantidade de parâmetros não corresponde aos '?' do SQL");
+            throw new NexException("parameter count does not match the '?' in the SQL");
         }
         return parameters;
     }
@@ -2631,7 +2631,7 @@ final class Engine implements AutoCloseable {
             String key = id.key();
             if (tables.containsKey(key)) {
                 store.close();
-                throw new NexException("tabela duplicada: " + store.schema().name);
+                throw new NexException("duplicate table: " + store.schema().name);
             }
             tables.put(key, store);
         }
@@ -2652,7 +2652,7 @@ final class Engine implements AutoCloseable {
             }
         }
         if (any && missing) {
-            throw new NexException("tabelas de sistema incompletas");
+            throw new NexException("incomplete system tables");
         }
         if (any) {
             return;
@@ -2722,19 +2722,19 @@ final class Engine implements AutoCloseable {
 
     private Account authenticate(String user, String password) {
         if (user == null || user.isBlank() || password == null || password.isEmpty()) {
-            throw new NexException("usuário e senha são obrigatórios");
+            throw new NexException("user and password are required");
         }
         String name = user.trim().toUpperCase(Locale.ROOT);
         SqlResult result = systemExecute(
                 "SELECT NEX$PASSWORD, NEX$ACTIVE, NEX$ADMIN FROM NEX$USERS WHERE NEX$USER_NAME = ?", name);
         if (result.size() != 1) {
             Password.rejectUnknown(password);
-            throw new NexException("usuário ou senha inválidos");
+            throw new NexException("invalid user or password");
         }
         Row row = result.rows().get(0);
         boolean active = Boolean.TRUE.equals(row.getBoolean("NEX$ACTIVE"));
         if (!Password.verify(row.getString("NEX$PASSWORD"), password) || !active) {
-            throw new NexException("usuário ou senha inválidos");
+            throw new NexException("invalid user or password");
         }
         return new Account(name, Boolean.TRUE.equals(row.getBoolean("NEX$ADMIN")));
     }
@@ -2860,7 +2860,7 @@ final class Engine implements AutoCloseable {
 
     private void guardDdl(String table) {
         if (SystemTables.isSystem(Relation.parse(table).name())) {
-            throw new NexException("tabela de sistema não pode ser alterada: " + shown(table));
+            throw new NexException("system table cannot be altered: " + shown(table));
         }
         if (findTable(table) == null) {
             return;
@@ -2868,7 +2868,7 @@ final class Engine implements AutoCloseable {
         if (bypass || (actor != null && actor.admin) || owns(table)) {
             return;
         }
-        throw new NexException("somente o dono ou o DBA altera a estrutura de " + shown(table));
+        throw new NexException("only the owner or the DBA can alter the structure of " + shown(table));
     }
 
     private void guardMutation(String table, String privilege) {
@@ -2878,10 +2878,10 @@ final class Engine implements AutoCloseable {
                 return;
             }
             if (SystemTables.readOnly(bare)) {
-                throw new NexException("tabela de sistema é somente leitura: " + shown(table));
+                throw new NexException("system table is read-only: " + shown(table));
             }
             if (actor == null || !actor.admin) {
-                throw new NexException("somente o DBA altera a tabela " + shown(table));
+                throw new NexException("only the DBA can alter table " + shown(table));
             }
             return;
         }
@@ -2899,8 +2899,8 @@ final class Engine implements AutoCloseable {
                 || (actor != null && actor.role != null && holds(actor.role, table, privilege))) {
             return;
         }
-        String who = actor == null ? "sessão" : actor.user;
-        throw new NexException("usuário " + who + " não tem " + privilege + " em " + shown(table));
+        String who = actor == null ? "session" : actor.user;
+        throw new NexException("user " + who + " does not have " + privilege + " on " + shown(table));
     }
 
     private void grant(Grant statement) {
@@ -2912,7 +2912,7 @@ final class Engine implements AutoCloseable {
         String grantor = actor == null ? SystemTables.PUBLIC : actor.user;
         for (String privilege : statement.privileges()) {
             if (!canGrant(table, privilege)) {
-                throw new NexException("usuário " + grantor + " não pode conceder " + privilege + " em " + table);
+                throw new NexException("user " + grantor + " cannot grant " + privilege + " on " + table);
             }
             savePrivilege(grantee, table, privilege, statement.grantOption(), grantor);
         }
@@ -2923,8 +2923,8 @@ final class Engine implements AutoCloseable {
         String grantee = normalizeUser(statement.user());
         for (String privilege : statement.privileges()) {
             if (!canRevoke(table, grantee, privilege)) {
-                String who = actor == null ? "sessão" : actor.user;
-                throw new NexException("usuário " + who + " não pode revogar " + privilege + " em " + table);
+                String who = actor == null ? "session" : actor.user;
+                throw new NexException("user " + who + " cannot revoke " + privilege + " on " + table);
             }
             systemExecute("""
                     DELETE FROM NEX$PRIVILEGES
@@ -2947,7 +2947,7 @@ final class Engine implements AutoCloseable {
     private void savePrivilege(String user, String table, String privilege, boolean grantOption, String grantor) {
         String storedTable = canonicalTable(table);
         if (storedTable.length() > 128) {
-            throw new NexException("nome qualificado excede 128 caracteres");
+            throw new NexException("qualified name exceeds 128 characters");
         }
         SqlResult existing = systemExecute("""
                 SELECT NEX$PRIVILEGE FROM NEX$PRIVILEGES
@@ -2970,7 +2970,7 @@ final class Engine implements AutoCloseable {
 
     private String userTable(String name) {
         if (SystemTables.isSystem(Relation.parse(name).name())) {
-            throw new NexException("não há autorização em tabela de sistema: " + shown(name));
+            throw new NexException("there is no authorization on system table: " + shown(name));
         }
         TableStore table = findTable(name);
         if (table != null) {
@@ -2980,7 +2980,7 @@ final class Engine implements AutoCloseable {
         if (view != null) {
             return view.storedKey();
         }
-        throw new NexException("tabela ou view não encontrada: " + shown(name));
+        throw new NexException("table or view not found: " + shown(name));
     }
 
     private String canonicalTable(String name) {
@@ -3004,7 +3004,7 @@ final class Engine implements AutoCloseable {
         SqlResult rows = systemExecute(
                 "SELECT NEX$ACTIVE FROM NEX$USERS WHERE NEX$USER_NAME = ?", name);
         if (rows.size() != 1 || !Boolean.TRUE.equals(rows.rows().get(0).getBoolean(0))) {
-            throw new NexException("usuário não encontrado: " + name);
+            throw new NexException("user not found: " + name);
         }
     }
 
@@ -3045,15 +3045,15 @@ final class Engine implements AutoCloseable {
     }
 
     private void createSchema(CreateSchema statement) {
-        Names.checkName(statement.name(), "esquema");
+        Names.checkName(statement.name(), "schema");
         if (SystemTables.isSystem(statement.name())) {
-            throw new NexException("nome de esquema reservado: " + statement.name());
+            throw new NexException("reserved schema name: " + statement.name());
         }
         if (schemaExists(statement.name())) {
             if (statement.ifNotExists()) {
                 return;
             }
-            throw new NexException("esquema já existe: " + statement.name());
+            throw new NexException("schema already exists: " + statement.name());
         }
         systemExecute(
                 "INSERT INTO NEX$SCHEMAS (NEX$SCHEMA_NAME, NEX$OWNER_NAME) VALUES (?, ?)",
@@ -3062,18 +3062,18 @@ final class Engine implements AutoCloseable {
 
     private void dropSchema(DropSchema statement) {
         if (Names.same(statement.name(), Relation.PUBLIC)) {
-            throw new NexException("o esquema public não pode ser removido");
+            throw new NexException("the public schema cannot be removed");
         }
         if (!schemaExists(statement.name())) {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("esquema não encontrado: " + statement.name());
+            throw new NexException("schema not found: " + statement.name());
         }
         String schema = canonicalSchema(statement.name());
         for (Session session : attachments.values()) {
             if (!session.closed() && Names.same(session.schema(), schema)) {
-                throw new NexException("esquema em uso: " + schema);
+                throw new NexException("schema is in use: " + schema);
             }
         }
         List<TableStore> tablesInSchema = new ArrayList<>();
@@ -3103,7 +3103,7 @@ final class Engine implements AutoCloseable {
             occupied = true;
         }
         if (occupied && !statement.cascade()) {
-            throw new NexException("esquema não está vazio: " + schema);
+            throw new NexException("schema is not empty: " + schema);
         }
         for (StoredProcedure procedure : proceduresInSchema) {
             deleteProcedure(procedure.schema(), procedure.name());
@@ -3141,7 +3141,7 @@ final class Engine implements AutoCloseable {
 
     private void setSchema(SetSchema statement) {
         if (connected == null) {
-            throw new NexException("não há sessão para definir o esquema");
+            throw new NexException("there is no session to set the schema");
         }
         connected.schema(canonicalSchema(statement.name()));
     }
@@ -3149,19 +3149,19 @@ final class Engine implements AutoCloseable {
     private void createRole(CreateRole statement) {
         String name = normalizeRole(statement.name());
         if (name == null) {
-            throw new NexException("nome reservado: NONE");
+            throw new NexException("reserved name: NONE");
         }
         if (SystemTables.isSystem(name) || Names.same(name, SystemTables.PUBLIC)) {
-            throw new NexException("nome reservado: " + name);
+            throw new NexException("reserved name: " + name);
         }
         if (findRole(name) != null) {
             if (statement.ifNotExists()) {
                 return;
             }
-            throw new NexException("papel já existe: " + name);
+            throw new NexException("role already exists: " + name);
         }
         if (userExists(name)) {
-            throw new NexException("já existe um usuário com esse nome: " + name);
+            throw new NexException("a user with this name already exists: " + name);
         }
         systemExecute("INSERT INTO NEX$ROLES (NEX$ROLE_NAME, NEX$OWNER_NAME) VALUES (?, ?)", name, ownerName());
     }
@@ -3173,10 +3173,10 @@ final class Engine implements AutoCloseable {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("papel não encontrado: " + statement.name());
+            throw new NexException("role not found: " + statement.name());
         }
         TableStore table = require(SystemTables.ROLES);
-        guardRoutine("o papel", name, text(table, row, "NEX$OWNER_NAME"), null);
+        guardRoutine("the role", name, text(table, row, "NEX$OWNER_NAME"), null);
         systemExecute("DELETE FROM NEX$ROLE_MEMBERS WHERE NEX$ROLE_NAME = ?", name);
         systemExecute("DELETE FROM NEX$PRIVILEGES WHERE NEX$USER_NAME = ?", name);
         deleteCatalog(SystemTables.ROLES, "NEX$ROLE_NAME", name);
@@ -3190,8 +3190,8 @@ final class Engine implements AutoCloseable {
         }
         String owner = text(require(SystemTables.ROLES), findRole(role), "NEX$OWNER_NAME");
         if (!canGrantRole(role, owner)) {
-            String who = actor == null ? "sessão" : actor.user;
-            throw new NexException("usuário " + who + " não pode conceder o papel " + role);
+            String who = actor == null ? "session" : actor.user;
+            throw new NexException("user " + who + " cannot grant role " + role);
         }
         String grantor = actor == null ? SystemTables.PUBLIC : actor.user;
         if (memberRow(role, user) != null) {
@@ -3213,11 +3213,11 @@ final class Engine implements AutoCloseable {
         String user = normalizeUser(statement.user());
         String owner = text(require(SystemTables.ROLES), findRole(role), "NEX$OWNER_NAME");
         if (!canGrantRole(role, owner)) {
-            String who = actor == null ? "sessão" : actor.user;
-            throw new NexException("usuário " + who + " não pode revogar o papel " + role);
+            String who = actor == null ? "session" : actor.user;
+            throw new NexException("user " + who + " cannot revoke role " + role);
         }
         if (memberRow(role, user) == null) {
-            throw new NexException("usuário " + user + " não tem o papel " + role);
+            throw new NexException("user " + user + " does not have role " + role);
         }
         if (statement.adminOptionOnly()) {
             systemExecute("""
@@ -3235,22 +3235,22 @@ final class Engine implements AutoCloseable {
         try {
             id = Values.toLong(value);
         } catch (NexException exception) {
-            throw new NexException("DROP CONNECTION espera o número da conexão");
+            throw new NexException("DROP CONNECTION expects the connection number");
         }
         SqlResult rows = systemExecute(
                 "SELECT NEX$USER_NAME, NEX$STATE FROM NEX$CONNECTIONS WHERE NEX$ATTACHMENT_ID = ?", id);
         if (rows.size() != 1) {
-            throw new NexException("conexão não encontrada: " + id);
+            throw new NexException("connection not found: " + id);
         }
         String user = rows.rows().get(0).getString("NEX$USER_NAME");
         String state = rows.rows().get(0).getString("NEX$STATE");
         if (state == null || !state.equalsIgnoreCase("ACTIVE")) {
-            throw new NexException("conexão não está ativa: " + id);
+            throw new NexException("connection is not active: " + id);
         }
         Session who = connected != null ? connected : actor;
         if (who == null || (!who.admin && !Names.same(who.user, user))) {
-            String name = who == null ? "sessão" : who.user;
-            throw new NexException("usuário " + name + " não pode derrubar a conexão " + id);
+            String name = who == null ? "session" : who.user;
+            throw new NexException("user " + name + " cannot drop connection " + id);
         }
         Session target = attachments.get(id);
         if (target != null) {
@@ -3274,7 +3274,7 @@ final class Engine implements AutoCloseable {
     private String requireRole(String name) {
         String role = normalizeRole(name);
         if (role == null || findRole(role) == null) {
-            throw new NexException("papel não encontrado: " + name);
+            throw new NexException("role not found: " + name);
         }
         return role;
     }
@@ -3284,7 +3284,7 @@ final class Engine implements AutoCloseable {
             return null;
         }
         String normalized = name.trim().toUpperCase(Locale.ROOT);
-        Names.checkName(normalized, "papel");
+        Names.checkName(normalized, "role");
         return normalized;
     }
 
@@ -3346,7 +3346,7 @@ final class Engine implements AutoCloseable {
 
     private String normalizeUser(String name) {
         String normalized = name.trim().toUpperCase(Locale.ROOT);
-        Names.checkName(normalized, "usuário");
+        Names.checkName(normalized, "user");
         return normalized;
     }
 
@@ -3435,7 +3435,7 @@ final class Engine implements AutoCloseable {
             }
         }
         if (remaining == 0) {
-            throw new NexException("o banco precisa manter ao menos um DBA ativo");
+            throw new NexException("the database must keep at least one active DBA");
         }
     }
 
@@ -3460,7 +3460,7 @@ final class Engine implements AutoCloseable {
         }
         if (Names.same(column.name, "NEX$PASSWORD") && value instanceof String text) {
             if (text.isEmpty()) {
-                throw new NexException("senha é obrigatória");
+                throw new NexException("password is required");
             }
             return Password.hash(text);
         }
@@ -3490,7 +3490,7 @@ final class Engine implements AutoCloseable {
             case "CURRENT_ROLE" -> connectedRole();
             case "CURRENT_CONNECTION" -> connectedId();
             case "CURRENT_TRANSACTION" -> currentTransaction();
-            default -> throw new NexException("contexto desconhecido: " + name);
+            default -> throw new NexException("unknown context: " + name);
         };
     }
 
@@ -3517,7 +3517,7 @@ final class Engine implements AutoCloseable {
     private long connectedId() {
         Session session = connected != null ? connected : actor;
         if (session == null) {
-            throw new NexException("não há conexão corrente");
+            throw new NexException("there is no current connection");
         }
         return session.attachmentId;
     }
@@ -3531,7 +3531,7 @@ final class Engine implements AutoCloseable {
 
     private static LocalTime truncateTime(LocalTime time, int precision) {
         if (precision < 0 || precision > 3) {
-            throw new NexException("precisão de hora deve estar entre 0 e 3");
+            throw new NexException("time precision must be between 0 and 3");
         }
         int factor = switch (precision) {
             case 0 -> 0;
@@ -3574,7 +3574,7 @@ final class Engine implements AutoCloseable {
     private StoredRow rowById(TableStore table, long id) {
         StoredRow row = table.row(id);
         if (row == null) {
-            throw new NexException("registro não encontrado");
+            throw new NexException("record not found");
         }
         return row;
     }
@@ -3614,7 +3614,7 @@ final class Engine implements AutoCloseable {
 
     private void enterRoutine() {
         if (++routineDepth > 32) {
-            throw new NexException("procedure ou trigger passou de 32 chamadas encadeadas");
+            throw new NexException("procedure or trigger exceeded 32 nested calls");
         }
     }
 
@@ -3624,11 +3624,11 @@ final class Engine implements AutoCloseable {
 
     private long nextGenerator(String name, Long step) {
         Relation rel = relation(name);
-        Names.checkName(rel.name(), "gerador");
+        Names.checkName(rel.name(), "generator");
         TableStore table = require(SystemTables.GENERATORS);
         StoredRow row = findGenerator(name);
         if (row == null) {
-            throw new NexException("gerador não encontrado: " + shown(name));
+            throw new NexException("generator not found: " + shown(name));
         }
         int currentIndex = table.schema().indexOf("NEX$CURRENT_VALUE");
         int incrementIndex = table.schema().indexOf("NEX$INCREMENT");
@@ -3642,7 +3642,7 @@ final class Engine implements AutoCloseable {
         try {
             updated = Math.addExact(current, delta);
         } catch (ArithmeticException exception) {
-            throw new NexException("gerador estourou o limite de BIGINT: " + name);
+            throw new NexException("generator exceeded the BIGINT limit: " + name);
         }
         Cell[] cells = row.copyCells();
         cells[currentIndex] = TableStore.toCell(table.schema().columns.get(currentIndex), updated);
@@ -3654,15 +3654,15 @@ final class Engine implements AutoCloseable {
     private void createGenerator(CreateGenerator statement) {
         Relation rel = relation(statement.name());
         if (SystemTables.isSystem(rel.name())) {
-            throw new NexException("nome reservado: " + rel.name());
+            throw new NexException("reserved name: " + rel.name());
         }
-        Names.checkName(rel.name(), "gerador");
+        Names.checkName(rel.name(), "generator");
         if (findGenerator(statement.name()) != null) {
-            throw new NexException("gerador já existe: " + shown(statement.name()));
+            throw new NexException("generator already exists: " + shown(statement.name()));
         }
         long increment = statement.increment() == null ? 1L : statement.increment();
         if (increment == 0) {
-            throw new NexException("INCREMENT BY não pode ser zero");
+            throw new NexException("INCREMENT BY cannot be zero");
         }
         long initial = statement.start() == null ? 0L : statement.start();
         long current = statement.start() == null ? 0L : Math.subtractExact(initial, increment);
@@ -3680,10 +3680,10 @@ final class Engine implements AutoCloseable {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("gerador não encontrado: " + shown(statement.name()));
+            throw new NexException("generator not found: " + shown(statement.name()));
         }
         Relation rel = relation(statement.name());
-        guardRoutine("o gerador", shown(statement.name()), text(require(SystemTables.GENERATORS), row, "NEX$OWNER_NAME"), null);
+        guardRoutine("the generator", shown(statement.name()), text(require(SystemTables.GENERATORS), row, "NEX$OWNER_NAME"), null);
         deleteGenerator(rel.schema(), rel.name());
     }
 
@@ -3691,11 +3691,11 @@ final class Engine implements AutoCloseable {
         TableStore table = require(SystemTables.GENERATORS);
         StoredRow row = findGenerator(statement.name());
         if (row == null) {
-            throw new NexException("gerador não encontrado: " + shown(statement.name()));
+            throw new NexException("generator not found: " + shown(statement.name()));
         }
         Object raw = evaluator(null, null).eval(statement.value());
         if (raw == null) {
-            throw new NexException("valor do gerador não pode ser nulo");
+            throw new NexException("generator value cannot be null");
         }
         long value = Values.toLong(raw);
         long increment = Values.toLong(table.value(row, table.schema().indexOf("NEX$INCREMENT")));
@@ -3704,7 +3704,7 @@ final class Engine implements AutoCloseable {
             try {
                 current = Math.subtractExact(value, increment);
             } catch (ArithmeticException exception) {
-                throw new NexException("valor do gerador estourou o limite de BIGINT");
+                throw new NexException("generator value exceeded the BIGINT limit");
             }
         }
         int currentIndex = table.schema().indexOf("NEX$CURRENT_VALUE");
@@ -3717,14 +3717,14 @@ final class Engine implements AutoCloseable {
     private void createProcedure(CreateProcedure statement) {
         Relation rel = relation(statement.name());
         if (SystemTables.isSystem(rel.name())) {
-            throw new NexException("nome reservado: " + rel.name());
+            throw new NexException("reserved name: " + rel.name());
         }
         Names.checkName(rel.name(), "procedure");
         if (statement.source().length() > Format.MAX_CHAR) {
-            throw new NexException("código da procedure passa de " + Format.MAX_CHAR + " caracteres");
+            throw new NexException("procedure source exceeds " + Format.MAX_CHAR + " characters");
         }
         if (findProcedure(statement.name()) != null) {
-            throw new NexException("procedure já existe: " + shown(statement.name()));
+            throw new NexException("procedure already exists: " + shown(statement.name()));
         }
         Set<String> names = new HashSet<>();
         rejectDuplicate(names, statement.inputs());
@@ -3733,7 +3733,7 @@ final class Engine implements AutoCloseable {
         rejectDuplicate(names, routine.locals());
         for (CursorDef cursor : routine.cursors()) {
             if (!names.add(Names.fold(cursor.name()))) {
-                throw new NexException("nome duplicado: " + cursor.name());
+                throw new NexException("duplicate name: " + cursor.name());
             }
         }
         String owner = ownerName();
@@ -3769,9 +3769,9 @@ final class Engine implements AutoCloseable {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("procedure não encontrada: " + shown(statement.name()));
+            throw new NexException("procedure not found: " + shown(statement.name()));
         }
-        guardRoutine("a procedure", procedure.label(), procedure.owner(), null);
+        guardRoutine("the procedure", procedure.label(), procedure.owner(), null);
         deleteProcedure(procedure.schema(), procedure.name());
     }
 
@@ -3779,7 +3779,7 @@ final class Engine implements AutoCloseable {
         ProcedureRows called = callProcedure(statement, selectable);
         if (!statement.returning().isEmpty()) {
             if (called.rows.isEmpty()) {
-                throw new NexException("procedure não devolveu valores: " + statement.name());
+                throw new NexException("procedure did not return values: " + statement.name());
             }
             Object[] values = called.rows.get(0);
             for (int i = 0; i < statement.returning().size(); i++) {
@@ -3801,19 +3801,19 @@ final class Engine implements AutoCloseable {
     private ProcedureRows callProcedure(ExecuteProcedure statement, boolean selectable) {
         StoredProcedure procedure = findProcedure(statement.name());
         if (procedure == null) {
-            throw new NexException("procedure não encontrada: " + shown(statement.name()));
+            throw new NexException("procedure not found: " + shown(statement.name()));
         }
         String label = procedure.label();
         List<ParamDef> inputs = parameters(procedure.schema(), procedure.name(), 0);
         List<ParamDef> outputs = parameters(procedure.schema(), procedure.name(), 1);
         if (selectable && outputs.isEmpty()) {
-            throw new NexException("procedure sem RETURNS não pode ser usada no FROM: " + label);
+            throw new NexException("procedure without RETURNS cannot be used in FROM: " + label);
         }
         if (statement.arguments().size() != inputs.size()) {
-            throw new NexException("procedure " + label + " espera " + inputs.size() + " argumentos");
+            throw new NexException("procedure " + label + " expects " + inputs.size() + " arguments");
         }
         if (!statement.returning().isEmpty() && statement.returning().size() != outputs.size()) {
-            throw new NexException("RETURNING_VALUES não corresponde aos retornos de " + label);
+            throw new NexException("RETURNING_VALUES does not match the returns of " + label);
         }
         Object[] args = new Object[inputs.size()];
         for (int i = 0; i < inputs.size(); i++) {
@@ -3873,7 +3873,7 @@ final class Engine implements AutoCloseable {
                 new ExecuteProcedure(statement.procedure(), statement.arguments(), List.of()), true);
         List<SelectItem> items = statement.star() ? starOutputs(called.outputs) : statement.items();
         if (items.isEmpty()) {
-            throw new NexException("SELECT precisa de ao menos uma expressão");
+            throw new NexException("SELECT needs at least one expression");
         }
         Schema schema = outputSchema(called.name, called.outputs);
         List<ColumnMeta> columns = new ArrayList<>();
@@ -3900,7 +3900,7 @@ final class Engine implements AutoCloseable {
                 for (OrderItem order : statement.orderBy()) {
                     Integer index = selectIndex(order.expr(), items);
                     if (index == null) {
-                        throw new NexException("ORDER BY de procedure precisa usar colunas da lista do SELECT");
+                        throw new NexException("procedure ORDER BY must use columns from the SELECT list");
                     }
                     int cmp = compareValues(left.values[index], right.values[index]);
                     if (order.descending()) {
@@ -3923,24 +3923,24 @@ final class Engine implements AutoCloseable {
 
     private void createTrigger(CreateTrigger statement) {
         if (SystemTables.isSystem(statement.name())) {
-            throw new NexException("nome reservado: " + statement.name());
+            throw new NexException("reserved name: " + statement.name());
         }
         if (statement.source().length() > Format.MAX_CHAR) {
-            throw new NexException("código do trigger passa de " + Format.MAX_CHAR + " caracteres");
+            throw new NexException("trigger source exceeds " + Format.MAX_CHAR + " characters");
         }
         TableStore relation = require(statement.table());
         guardDdl(relation.schema().name);
         if (SystemTables.isSystem(relation.schema().name)) {
-            throw new NexException("tabela de sistema não pode ter trigger: " + relation.schema().name);
+            throw new NexException("system table cannot have a trigger: " + relation.schema().name);
         }
         if (findRow(SystemTables.TRIGGERS, "NEX$TRIGGER_NAME", statement.name()) != null) {
-            throw new NexException("trigger já existe: " + statement.name());
+            throw new NexException("trigger already exists: " + statement.name());
         }
         SqlParser.parseRoutine(statement.source());
         String type = statement.phase() + " " + String.join(" OR ", statement.events());
         String relationName = Relation.catalogName(relation.namespace(), relation.schema().name);
         if (relationName.length() > 128) {
-            throw new NexException("nome qualificado excede 128 caracteres");
+            throw new NexException("qualified name exceeds 128 characters");
         }
         systemExecute("""
                 INSERT INTO NEX$TRIGGERS (
@@ -3957,10 +3957,10 @@ final class Engine implements AutoCloseable {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("trigger não encontrado: " + statement.name());
+            throw new NexException("trigger not found: " + statement.name());
         }
         TableStore table = require(SystemTables.TRIGGERS);
-        guardRoutine("o trigger", statement.name(), text(table, row, "NEX$OWNER_NAME"), text(table, row, "NEX$RELATION_NAME"));
+        guardRoutine("the trigger", statement.name(), text(table, row, "NEX$OWNER_NAME"), text(table, row, "NEX$RELATION_NAME"));
         deleteCatalog(SystemTables.TRIGGERS, "NEX$TRIGGER_NAME", statement.name());
     }
 
@@ -3968,9 +3968,9 @@ final class Engine implements AutoCloseable {
         TableStore table = require(SystemTables.TRIGGERS);
         StoredRow row = findRow(SystemTables.TRIGGERS, "NEX$TRIGGER_NAME", statement.name());
         if (row == null) {
-            throw new NexException("trigger não encontrado: " + statement.name());
+            throw new NexException("trigger not found: " + statement.name());
         }
-        guardRoutine("o trigger", statement.name(), text(table, row, "NEX$OWNER_NAME"), text(table, row, "NEX$RELATION_NAME"));
+        guardRoutine("the trigger", statement.name(), text(table, row, "NEX$OWNER_NAME"), text(table, row, "NEX$RELATION_NAME"));
         int index = table.schema().indexOf("NEX$TRIGGER_INACTIVE");
         Cell[] cells = row.copyCells();
         cells[index] = TableStore.toCell(table.schema().columns.get(index), statement.inactive());
@@ -4084,7 +4084,7 @@ final class Engine implements AutoCloseable {
                 int turns = 0;
                 while (truthRoutine(loop.condition())) {
                     if (++turns > 100_000) {
-                        throw new NexException("WHILE passou de 100000 voltas");
+                        throw new NexException("WHILE exceeded 100000 iterations");
                     }
                     runPsql(loop.body());
                     if (psqlHalt) {
@@ -4095,7 +4095,7 @@ final class Engine implements AutoCloseable {
             case PsqlExit ignored -> psqlHalt = true;
             case PsqlSuspend ignored -> {
                 if (frame == null) {
-                    throw new NexException("SUSPEND só pode ser usado em procedure");
+                    throw new NexException("SUSPEND can only be used in a procedure");
                 }
                 frame.rows.add(outputValues());
                 frame.suspended = true;
@@ -4105,7 +4105,7 @@ final class Engine implements AutoCloseable {
             }
             case PsqlException error -> {
                 Object message = evalRoutine(error.message());
-                throw new NexException(message == null ? "exceção" : String.valueOf(message));
+                throw new NexException(message == null ? "exception" : String.valueOf(message));
             }
             case PsqlInsert insert -> scope.rowCount = insert(insert.statement());
             case PsqlUpdate update -> scope.rowCount = update(update.statement());
@@ -4130,14 +4130,14 @@ final class Engine implements AutoCloseable {
             return;
         }
         if (Names.same(assign.qualifier(), "OLD")) {
-            throw new NexException("OLD é somente leitura");
+            throw new NexException("OLD is read-only");
         }
-        throw new NexException("qualificador desconhecido: " + assign.qualifier());
+        throw new NexException("unknown qualifier: " + assign.qualifier());
     }
 
     private void selectInto(PsqlSelectInto statement) {
         if (statement.targets().size() != statement.expressions().size()) {
-            throw new NexException("SELECT INTO precisa da mesma quantidade de variáveis e expressões");
+            throw new NexException("SELECT INTO needs the same number of variables and expressions");
         }
         List<SelectItem> items = new ArrayList<>();
         for (int i = 0; i < statement.expressions().size(); i++) {
@@ -4152,7 +4152,7 @@ final class Engine implements AutoCloseable {
             scope.preferVariables = previous;
         }
         if (result.size() > 1) {
-            throw new NexException("SELECT INTO retornou mais de uma linha");
+            throw new NexException("SELECT INTO returned more than one row");
         }
         if (result.size() == 0) {
             scope.rowCount = 0;
@@ -4172,11 +4172,11 @@ final class Engine implements AutoCloseable {
         Map<String, OpenCursor> map = new LinkedHashMap<>();
         for (CursorDef cursor : routine.cursors()) {
             if (scope.hasVariable(cursor.name())) {
-                throw new NexException("nome duplicado: " + cursor.name());
+                throw new NexException("duplicate name: " + cursor.name());
             }
             String key = Names.fold(cursor.name());
             if (map.containsKey(key)) {
-                throw new NexException("cursor duplicado: " + cursor.name());
+                throw new NexException("duplicate cursor: " + cursor.name());
             }
             map.put(key, new OpenCursor(cursor));
         }
@@ -4186,7 +4186,7 @@ final class Engine implements AutoCloseable {
     private void openCursor(String name) {
         OpenCursor cursor = requireCursor(name);
         if (cursor.open) {
-            throw new NexException("cursor já está aberto: " + name);
+            throw new NexException("cursor is already open: " + name);
         }
         SqlResult result = runCursorQuery(cursor.definition.query());
         cursor.rows = result.rows();
@@ -4197,7 +4197,7 @@ final class Engine implements AutoCloseable {
     private void fetchCursor(String name, List<String> targets) {
         OpenCursor cursor = requireCursor(name);
         if (!cursor.open) {
-            throw new NexException("cursor não está aberto: " + name);
+            throw new NexException("cursor is not open: " + name);
         }
         if (cursor.position >= cursor.rows.size()) {
             scope.rowCount = 0;
@@ -4211,7 +4211,7 @@ final class Engine implements AutoCloseable {
     private void closeCursor(String name) {
         OpenCursor cursor = requireCursor(name);
         if (!cursor.open) {
-            throw new NexException("cursor não está aberto: " + name);
+            throw new NexException("cursor is not open: " + name);
         }
         cursor.open = false;
         cursor.rows = List.of();
@@ -4246,7 +4246,7 @@ final class Engine implements AutoCloseable {
 
     private void assignFetched(List<String> targets, Row row) {
         if (targets.size() != row.size()) {
-            throw new NexException("INTO precisa da mesma quantidade de variáveis e colunas");
+            throw new NexException("INTO needs the same number of variables and columns");
         }
         for (int i = 0; i < targets.size(); i++) {
             scope.setVariable(targets.get(i), row.get(i));
@@ -4256,7 +4256,7 @@ final class Engine implements AutoCloseable {
     private OpenCursor requireCursor(String name) {
         OpenCursor cursor = cursors == null ? null : cursors.get(Names.fold(name));
         if (cursor == null) {
-            throw new NexException("cursor não declarado: " + name);
+            throw new NexException("cursor is not declared: " + name);
         }
         return cursor;
     }
@@ -4407,14 +4407,14 @@ final class Engine implements AutoCloseable {
     private void rejectDuplicate(Set<String> names, List<ParamDef> parameters) {
         for (ParamDef parameter : parameters) {
             if (!names.add(Names.fold(parameter.name()))) {
-                throw new NexException("variável duplicada: " + parameter.name());
+                throw new NexException("duplicate variable: " + parameter.name());
             }
         }
     }
 
     private String ownerName() {
         if (actor == null) {
-            throw new NexException("é preciso estar conectado");
+            throw new NexException("must be connected");
         }
         return actor.user;
     }
@@ -4429,7 +4429,7 @@ final class Engine implements AutoCloseable {
         if (relation != null && owns(relation)) {
             return;
         }
-        throw new NexException("somente o dono ou o DBA altera " + kind + " " + name);
+        throw new NexException("only the owner or the DBA can alter " + kind + " " + name);
     }
 
     private StoredRow findRow(String tableName, String column, String name) {
@@ -4440,7 +4440,7 @@ final class Engine implements AutoCloseable {
             Object value = table.value(row, index);
             if (value instanceof String text && Names.same(text, name)) {
                 if (found != null) {
-                    throw new NexException("nome ambíguo: " + name);
+                    throw new NexException("ambiguous name: " + name);
                 }
                 found = row;
             }
@@ -4496,28 +4496,28 @@ final class Engine implements AutoCloseable {
     private void createView(CreateView statement) {
         Relation rel = relation(statement.name());
         if (SystemTables.isSystem(rel.name())) {
-            throw new NexException("nome reservado: " + rel.name());
+            throw new NexException("reserved name: " + rel.name());
         }
         Names.checkName(rel.name(), "view");
         String stored = Relation.catalogName(rel.schema(), rel.name());
         if (stored.length() > 63) {
-            throw new NexException("nome qualificado da view excede 63 caracteres");
+            throw new NexException("qualified view name exceeds 63 characters");
         }
         if (statement.source().length() > Format.MAX_CHAR) {
-            throw new NexException("código da view passa de " + Format.MAX_CHAR + " caracteres");
+            throw new NexException("view source exceeds " + Format.MAX_CHAR + " characters");
         }
         if (findTable(statement.name()) != null) {
-            throw new NexException("tabela já existe: " + shown(statement.name()));
+            throw new NexException("table already exists: " + shown(statement.name()));
         }
         if (findView(statement.name()) != null) {
             if (statement.ifNotExists()) {
                 return;
             }
-            throw new NexException("view já existe: " + shown(statement.name()));
+            throw new NexException("view already exists: " + shown(statement.name()));
         }
         Select select = SqlParser.parseView(statement.source());
         if (relation(select.table()).key().equals(rel.key())) {
-            throw new NexException("view não pode depender de si mesma: " + shown(statement.name()));
+            throw new NexException("view cannot depend on itself: " + shown(statement.name()));
         }
         Schema base = relationSchema(select.table());
         guardAccess(select.table(), "SELECT");
@@ -4529,23 +4529,23 @@ final class Engine implements AutoCloseable {
             }
         } else {
             if (statement.columns().size() != items.size()) {
-                throw new NexException("quantidade de colunas da view não corresponde ao SELECT");
+                throw new NexException("view column count does not match the SELECT");
             }
             names.addAll(statement.columns());
         }
         Set<String> used = new HashSet<>();
         for (String column : names) {
-            Names.checkName(column, "coluna");
+            Names.checkName(column, "column");
             if (column.indexOf(VIEW_COLUMN_SEPARATOR.charAt(0)) >= 0) {
-                throw new NexException("nome de coluna inválido: " + column);
+                throw new NexException("invalid column name: " + column);
             }
             if (!used.add(Names.fold(column))) {
-                throw new NexException("coluna repetida na view: " + column);
+                throw new NexException("duplicate column in the view: " + column);
             }
         }
         String joined = String.join(VIEW_COLUMN_SEPARATOR, names);
         if (joined.length() > Format.MAX_CHAR) {
-            throw new NexException("lista de colunas da view passa de " + Format.MAX_CHAR + " caracteres");
+            throw new NexException("view column list exceeds " + Format.MAX_CHAR + " characters");
         }
         systemExecute("""
                 INSERT INTO NEX$VIEWS (
@@ -4561,9 +4561,9 @@ final class Engine implements AutoCloseable {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("view não encontrada: " + shown(statement.name()));
+            throw new NexException("view not found: " + shown(statement.name()));
         }
-        guardRoutine("a view", view.name(), view.owner(), null);
+        guardRoutine("the view", view.name(), view.owner(), null);
         ensureNoViewDepends(view.storedKey());
         deleteCatalog(SystemTables.VIEWS, "NEX$VIEW_NAME", view.storedKey());
         forgetPrivileges(view.storedKey());
@@ -4571,21 +4571,21 @@ final class Engine implements AutoCloseable {
 
     private void rejectView(String name) {
         if (findView(name) != null) {
-            throw new NexException("view é somente leitura: " + name);
+            throw new NexException("view is read-only: " + name);
         }
     }
 
     private void ensureNoViewDepends(String name) {
         for (StoredView view : allViews()) {
             if (Names.same(view.relation(), name)) {
-                throw new NexException("view " + view.storedKey() + " depende de " + name);
+                throw new NexException("view " + view.storedKey() + " depends on " + name);
             }
         }
     }
 
     private Schema relationSchema(String name) {
         if (name == null) {
-            throw new NexException("view precisa de uma tabela");
+            throw new NexException("view needs a table");
         }
         StoredView view = findView(name);
         if (view == null) {
@@ -4596,7 +4596,7 @@ final class Engine implements AutoCloseable {
 
     private List<Column> viewOutputColumns(StoredView view) {
         if (viewDepth >= 16) {
-            throw new NexException("view passou de 16 níveis");
+            throw new NexException("view exceeded 16 levels");
         }
         viewDepth++;
         try {
@@ -4604,7 +4604,7 @@ final class Engine implements AutoCloseable {
             Schema base = relationSchema(select.table());
             List<SelectItem> items = select.star() ? star(base) : select.items();
             if (items.size() != view.columns().size()) {
-                throw new NexException("a view " + view.name() + " não corresponde ao SELECT gravado");
+                throw new NexException("the view " + view.name() + " does not match the stored SELECT");
             }
             List<Column> columns = new ArrayList<>();
             for (int i = 0; i < items.size(); i++) {
@@ -4654,7 +4654,7 @@ final class Engine implements AutoCloseable {
         TableStore table = require(name);
         String stored = Relation.catalogName(table.namespace(), table.schema().name);
         if (stored.length() > 128) {
-            throw new NexException("nome qualificado excede 128 caracteres");
+            throw new NexException("qualified name exceeds 128 characters");
         }
         return stored;
     }
@@ -4685,7 +4685,7 @@ final class Engine implements AutoCloseable {
                 continue;
             }
             if (found != null) {
-                throw new NexException("nome ambíguo: " + shown(written));
+                throw new NexException("ambiguous name: " + shown(written));
             }
             found = row;
         }
@@ -4743,7 +4743,7 @@ final class Engine implements AutoCloseable {
                 continue;
             }
             if (found != null) {
-                throw new NexException("nome ambíguo: " + shown(name));
+                throw new NexException("ambiguous name: " + shown(name));
             }
             found = readProcedure(table, row);
         }
@@ -4766,7 +4766,7 @@ final class Engine implements AutoCloseable {
         String schema = text(table, row, "NEX$SCHEMA_NAME");
         String name = text(table, row, "NEX$PROCEDURE_NAME");
         if (schema == null || schema.isBlank() || name == null || name.isBlank()) {
-            throw new NexException("catálogo inconsistente na procedure");
+            throw new NexException("inconsistent catalog in the procedure");
         }
         return new StoredProcedure(schema, name, text(table, row, "NEX$PROCEDURE_SOURCE"), text(table, row, "NEX$OWNER_NAME"));
     }
@@ -4813,7 +4813,7 @@ final class Engine implements AutoCloseable {
             Object value = table.value(row, nameIndex);
             if (value instanceof String text && Names.same(text, expected)) {
                 if (found != null) {
-                    throw new NexException("nome ambíguo: " + shown(name));
+                    throw new NexException("ambiguous name: " + shown(name));
                 }
                 found = readView(table, row);
             }
@@ -4856,7 +4856,7 @@ final class Engine implements AutoCloseable {
 
     private void checkOpen() {
         if (closed) {
-            throw new NexException("o banco já foi fechado");
+            throw new NexException("database is already closed");
         }
     }
 
@@ -4927,7 +4927,7 @@ final class Engine implements AutoCloseable {
         }
         for (Map.Entry<Session, OpenTxn> entry : transactions.entrySet()) {
             if (entry.getKey() != actor && entry.getValue().tables.containsKey(table)) {
-                throw new NexException("outra transação está usando a tabela " + table.schema().name);
+                throw new NexException("another transaction is using the table " + table.schema().name);
             }
         }
     }
@@ -4978,7 +4978,7 @@ final class Engine implements AutoCloseable {
         pending.clear();
         OpenTxn txn = transactions.remove(session);
         if (txn == null) {
-            throw new NexException("não há transação aberta");
+            throw new NexException("there is no open transaction");
         }
         if (installed == session) {
             for (TableStore table : txn.tables.keySet()) {
@@ -5037,7 +5037,7 @@ final class Engine implements AutoCloseable {
             try {
                 reloadAll();
             } catch (RuntimeException ignored) {
-                // a falha do flush já explica o erro
+                // the flush failure already explains the error
             }
             throw exception;
         }

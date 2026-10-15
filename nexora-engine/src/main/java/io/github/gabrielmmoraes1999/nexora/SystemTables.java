@@ -3,13 +3,13 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.util.List;
 
 /**
- * Tabelas internas do arquivo, no papel das {@code RDB$} e {@code MON$} do Firebird.
- * {@code NEX$USERS} guarda o login. {@code NEX$PRIVILEGES} guarda o que cada um pode
- * fazer em cada tabela. {@code NEX$CONFIG} guarda opções.
- * {@code NEX$CONNECTIONS} registra só as conexões abertas. {@code NEX$DATABASE} descreve o arquivo.
+ * Internal tables of the file, in the role of Firebird's {@code RDB$} and {@code MON$}.
+ * {@code NEX$USERS} stores the login. {@code NEX$PRIVILEGES} stores what each user can
+ * do on each table. {@code NEX$CONFIG} stores options.
+ * {@code NEX$CONNECTIONS} records only open connections. {@code NEX$DATABASE} describes the file.
  * {@code NEX$GENERATORS}, {@code NEX$PROCEDURES}, {@code NEX$TRIGGERS}, {@code NEX$VIEWS},
- * {@code NEX$ROLES} e {@code NEX$SCHEMAS} guardam o catálogo de geradores, procedures,
- * triggers, views, papéis e esquemas.
+ * {@code NEX$ROLES}, and {@code NEX$SCHEMAS} store the catalog of generators, procedures,
+ * triggers, views, roles, and schemas.
  */
 final class SystemTables {
 

@@ -1358,7 +1358,7 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
         if (iface != null && iface.isInstance(this)) {
             return iface.cast(this);
         }
-        throw new SQLException("não é " + iface);
+        throw new SQLException("is not " + iface);
     }
 
     @Override
@@ -1419,7 +1419,7 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
     private static int integer(Row row, String column) throws SQLException {
         Object value = row.get(column);
         if (!(value instanceof Number number)) {
-            throw new SQLException("coluna " + column + " sem número", "HY000");
+            throw new SQLException("column " + column + " is not a number", "HY000");
         }
         return number.intValue();
     }

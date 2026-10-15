@@ -208,7 +208,7 @@ final class Look {
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) {
-            // o visual do sistema fica como o Java escolheu
+            // the system look stays as Java chose it
         }
     }
 

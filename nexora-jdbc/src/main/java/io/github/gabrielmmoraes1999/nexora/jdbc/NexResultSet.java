@@ -340,14 +340,14 @@ final class NexResultSet implements ResultSet {
     public int findColumn(String columnLabel) throws SQLException {
         checkOpen();
         if (columnLabel == null) {
-            throw new SQLException("nome da coluna é obrigatório");
+            throw new SQLException("column name is required");
         }
         for (int i = 0; i < columns.size(); i++) {
             if (columns.get(i).name().equalsIgnoreCase(columnLabel)) {
                 return i + 1;
             }
         }
-        throw new SQLException("coluna não encontrada: " + columnLabel, "42S22");
+        throw new SQLException("column not found: " + columnLabel, "42S22");
     }
 
     @Override
@@ -476,7 +476,7 @@ final class NexResultSet implements ResultSet {
     public void setFetchDirection(int direction) throws SQLException {
         checkOpen();
         if (direction != FETCH_FORWARD && direction != FETCH_REVERSE && direction != FETCH_UNKNOWN) {
-            throw new SQLException("fetch direction inválida: " + direction);
+            throw new SQLException("invalid fetch direction: " + direction);
         }
         fetchDirection = direction;
     }
@@ -491,7 +491,7 @@ final class NexResultSet implements ResultSet {
     public void setFetchSize(int rows) throws SQLException {
         checkOpen();
         if (rows < 0) {
-            throw new SQLException("fetchSize negativo");
+            throw new SQLException("fetchSize is negative");
         }
         fetchSize = rows;
     }
@@ -727,7 +727,7 @@ final class NexResultSet implements ResultSet {
     @Override
     public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
         if (type == null) {
-            throw new SQLException("tipo é obrigatório");
+            throw new SQLException("type is required");
         }
         Object value = current(columnIndex);
         if (value == null) {
@@ -787,7 +787,7 @@ final class NexResultSet implements ResultSet {
             if (timestamp != null) {
                 return type.cast(timestamp.toLocalTime());
             }
-            throw new SQLException("valor não é TIME", "22007");
+            throw new SQLException("value is not TIME", "22007");
         }
         if (type == Time.class) {
             if (value instanceof LocalTime time) {
@@ -803,7 +803,7 @@ final class NexResultSet implements ResultSet {
             }
             return type.cast(Timestamp.valueOf(timestamp));
         }
-        throw new SQLException("não é possível converter para " + type.getName(), "22023");
+        throw new SQLException("cannot convert to " + type.getName(), "22023");
     }
 
     @Override
@@ -816,7 +816,7 @@ final class NexResultSet implements ResultSet {
         if (iface != null && iface.isInstance(this)) {
             return iface.cast(this);
         }
-        throw new SQLException("não é " + iface);
+        throw new SQLException("is not " + iface);
     }
 
     @Override
@@ -1240,7 +1240,7 @@ final class NexResultSet implements ResultSet {
 
     private void checkOpen() throws SQLException {
         if (closed) {
-            throw new SQLException("o result set está fechado", "HY010");
+            throw new SQLException("the result set is closed", "HY010");
         }
     }
 
@@ -1251,10 +1251,10 @@ final class NexResultSet implements ResultSet {
     private Object current(int columnIndex) throws SQLException {
         checkOpen();
         if (!onRow()) {
-            throw new SQLException("cursor não está em uma linha", "24000");
+            throw new SQLException("cursor is not on a row", "24000");
         }
         if (columnIndex < 1 || columnIndex > columns.size()) {
-            throw new SQLException("índice de coluna fora do intervalo: " + columnIndex, "07009");
+            throw new SQLException("column index out of range: " + columnIndex, "07009");
         }
         Object value = rows.get(cursor)[columnIndex - 1];
         wasNull = value == null;
@@ -1270,7 +1270,7 @@ final class NexResultSet implements ResultSet {
     }
 
     private static SQLException unsupported() {
-        return Jdbc.unsupported("atualização de cursor");
+        return Jdbc.unsupported("cursor update");
     }
 
     private static String asString(Object value) {
@@ -1306,7 +1306,7 @@ final class NexResultSet implements ResultSet {
                 return false;
             }
         }
-        throw new SQLException("valor não é BOOLEAN", "22018");
+        throw new SQLException("value is not BOOLEAN", "22018");
     }
 
     private static Number asNumber(Object value) throws SQLException {
@@ -1320,10 +1320,10 @@ final class NexResultSet implements ResultSet {
             try {
                 return new BigDecimal(text.trim());
             } catch (NumberFormatException exception) {
-                throw new SQLException("valor não é numérico", "22018");
+                throw new SQLException("value is not numeric", "22018");
             }
         }
-        throw new SQLException("valor não é numérico", "22018");
+        throw new SQLException("value is not numeric", "22018");
     }
 
     private static BigDecimal asDecimal(Object value) throws SQLException {
@@ -1350,7 +1350,7 @@ final class NexResultSet implements ResultSet {
         if (value instanceof String text) {
             return text.getBytes(StandardCharsets.UTF_8);
         }
-        throw new SQLException("valor não é BLOB", "22018");
+        throw new SQLException("value is not BLOB", "22018");
     }
 
     private static LocalDate asLocalDate(Object value) throws SQLException {
@@ -1370,10 +1370,10 @@ final class NexResultSet implements ResultSet {
             try {
                 return LocalDate.parse(text.trim().substring(0, Math.min(10, text.trim().length())));
             } catch (DateTimeParseException | StringIndexOutOfBoundsException exception) {
-                throw new SQLException("data inválida", "22007");
+                throw new SQLException("invalid date", "22007");
             }
         }
-        throw new SQLException("valor não é DATE", "22007");
+        throw new SQLException("value is not DATE", "22007");
     }
 
     private static LocalDateTime asLocalDateTime(Object value) throws SQLException {

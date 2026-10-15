@@ -12,14 +12,14 @@ import java.util.Properties;
 import java.util.logging.Logger;
 
 /**
- * Driver JDBC para abrir um arquivo do Nexora no DBeaver e em {@link DriverManager}.
+ * JDBC driver for opening a Nexora file in DBeaver and in {@link DriverManager}.
  *
- * <p>Classe: {@code io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver}<br>
- * Embutido: {@code jdbc:nexora:embedded:C:/dados/loja.db}<br>
- * Rede: {@code jdbc:nexora://192.168.0.10:4580/loja}<br>
- * Usuário inicial: {@code dba}<br>
- * Senha inicial: {@code dba}<br>
- * O arquivo {@code .db} já existe. Quem o cria é o CLI do Nexora. Sem o {@code .log} ao lado, a abertura grava um log novo, só com o cabeçalho, e o log antigo deixa de servir.
+ * <p>Class: {@code io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver}<br>
+ * Embedded: {@code jdbc:nexora:embedded:C:/data/store.db}<br>
+ * Network: {@code jdbc:nexora://192.168.0.10:4580/store}<br>
+ * Initial user: {@code dba}<br>
+ * Initial password: {@code dba}<br>
+ * The {@code .db} file already exists. The Nexora CLI creates it. Without the {@code .log} beside it, opening writes a new log with only the header, and the old log no longer applies.
  */
 public final class NexDriver implements Driver {
 
@@ -48,12 +48,12 @@ public final class NexDriver implements Driver {
             throw new SQLException(exception.getMessage(), "08001", exception);
         }
         if (target.embedded() && target.path().isEmpty()) {
-            throw new SQLException("informe o arquivo na URL jdbc:nexora:<arquivo.db>", "08001");
+            throw new SQLException("specify the file in the URL jdbc:nexora:<file.db>", "08001");
         }
         String user = property(info, "user");
         String password = property(info, "password");
         if (user == null || user.isBlank() || password == null || password.isEmpty()) {
-            throw new SQLException("usuário e senha são obrigatórios", "28000");
+            throw new SQLException("user and password are required", "28000");
         }
         String role = property(info, "roleName");
         if (role == null || role.isBlank()) {
@@ -80,13 +80,13 @@ public final class NexDriver implements Driver {
     public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) {
         DriverPropertyInfo user = new DriverPropertyInfo("user", property(info, "user"));
         user.required = true;
-        user.description = "Usuário do banco. O DBA inicial é dba.";
+        user.description = "Database user. The initial DBA is dba.";
         DriverPropertyInfo password = new DriverPropertyInfo("password", property(info, "password"));
         password.required = true;
-        password.description = "Senha do banco. A senha inicial do DBA é dba.";
+        password.description = "Database password. The initial DBA password is dba.";
         DriverPropertyInfo role = new DriverPropertyInfo("roleName", property(info, "roleName"));
         role.required = false;
-        role.description = "Papel da conexão. Vazio ou NONE entra sem papel.";
+        role.description = "Connection role. Empty or NONE connects without a role.";
         return new DriverPropertyInfo[]{user, password, role};
     }
 

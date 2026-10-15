@@ -9,15 +9,15 @@ import java.text.Normalizer;
 import java.util.Locale;
 
 /**
- * Linha de comando do Nexora. Cria o {@code .db}, faz o backup do par e aplica um log.
- * O JDBC e o motor abrem um arquivo que já existe.
+ * Nexora command line. Creates the {@code .db}, backs up the pair, and applies a log.
+ * JDBC and the server open a file that already exists.
  *
  * <pre>{@code
- * java -jar nexora-cli-1.0.jar create loja.db --page-size 8192 --user DBA --password segredo
- * java -jar nexora-cli-1.0.jar backup completo loja.db C:/dados/backup
- * java -jar nexora-cli-1.0.jar backup modificacao loja.db C:/dados/logs
- * java -jar nexora-cli-1.0.jar apply C:/dados/backup/loja.db loja.log
- * java -jar nexora-cli-1.0.jar export loja.log C:/dados/loja.sql
+ * java -jar nexora-cli-1.0.jar create store.db --page-size 8192 --user DBA --password secret
+ * java -jar nexora-cli-1.0.jar backup full store.db C:/data/backup
+ * java -jar nexora-cli-1.0.jar backup incremental store.db C:/data/logs
+ * java -jar nexora-cli-1.0.jar apply C:/data/backup/store.db store.log
+ * java -jar nexora-cli-1.0.jar export store.log C:/data/store.sql
  * }</pre>
  */
 public final class Cli {
@@ -47,7 +47,7 @@ public final class Cli {
             case "backup" -> backup(args);
             case "apply" -> apply(args);
             case "export" -> export(args);
-            default -> throw new NexException("comando desconhecido: " + args[0] + "\n\n" + uso());
+            default -> throw new NexException("unknown command: " + args[0] + "\n\n" + uso());
         }
     }
 
@@ -63,7 +63,7 @@ public final class Cli {
             String arg = args[i];
             if (!arg.startsWith("-")) {
                 if (arquivo != null) {
-                    throw new NexException("arquivo informado mais de uma vez");
+                    throw new NexException("file specified more than once");
                 }
                 arquivo = arg;
                 continue;
@@ -77,7 +77,7 @@ public final class Cli {
             }
             if (value == null) {
                 if (i + 1 >= args.length || args[i + 1].startsWith("-")) {
-                    throw new NexException("falta o valor de " + key);
+                    throw new NexException("missing value for " + key);
                 }
                 value = args[++i];
             }
@@ -88,11 +88,11 @@ public final class Cli {
                 case "name" -> name = value;
                 case "description" -> description = value;
                 case "charset" -> charset = value;
-                default -> throw new NexException("opção desconhecida: " + key);
+                default -> throw new NexException("unknown option: " + key);
             }
         }
         if (arquivo == null || arquivo.isBlank()) {
-            throw new NexException("informe o arquivo .db");
+            throw new NexException("provide the .db file");
         }
         Path path = Path.of(arquivo);
         DatabaseOptions options = new DatabaseOptions(
@@ -103,14 +103,14 @@ public final class Cli {
                 description == null ? "Nexora" : description,
                 charset == null ? "UTF8" : charset);
         Database.create(path, options);
-        System.out.println("banco criado: " + path.toAbsolutePath().normalize());
-        System.out.println("página: " + options.pageSize());
-        System.out.println("usuário: " + options.user());
-        System.out.println("nome: " + options.name());
+        System.out.println("database created: " + path.toAbsolutePath().normalize());
+        System.out.println("page size: " + options.pageSize());
+        System.out.println("user: " + options.user());
+        System.out.println("name: " + options.name());
     }
 
     private static void backup(String[] args) {
-        String kind = "completo";
+        String kind = "full";
         int dbAt = 1;
         if (args.length >= 2 && backupKind(args[1]) != null) {
             kind = backupKind(args[1]);
@@ -118,41 +118,41 @@ public final class Cli {
         }
         if (args.length != dbAt + 2 || args[dbAt].isBlank() || args[dbAt + 1].isBlank()) {
             throw new NexException("""
-                    uso: backup completo <arquivo.db> <pasta>
-                    uso: backup modificacao <arquivo.db> <pasta>""");
+                    usage: backup full <file.db> <directory>
+                    usage: backup incremental <file.db> <directory>""");
         }
         Path database = Path.of(args[dbAt]);
         Path directory = Path.of(args[dbAt + 1]);
-        if (kind.equals("modificacao")) {
+        if (kind.equals("incremental")) {
             Database.backupLog(database, directory);
-            System.out.println("backup de modificação gravado em: " + directory.toAbsolutePath().normalize());
+            System.out.println("incremental backup written to: " + directory.toAbsolutePath().normalize());
             return;
         }
         Database.backup(database, directory);
-        System.out.println("backup completo gravado em: " + directory.toAbsolutePath().normalize());
+        System.out.println("full backup written to: " + directory.toAbsolutePath().normalize());
     }
 
     private static String backupKind(String text) {
         String kind = Normalizer.normalize(text, Normalizer.Form.NFD).replaceAll("\\p{M}", "").toLowerCase(Locale.ROOT);
         return switch (kind) {
-            case "completo", "modificacao" -> kind;
+            case "full", "incremental" -> kind;
             default -> null;
         };
     }
 
     private static void apply(String[] args) {
         if (args.length != 3 || args[1].isBlank() || args[2].isBlank()) {
-            throw new NexException("uso: apply <arquivo.db> <arquivo.log>");
+            throw new NexException("usage: apply <file.db> <file.log>");
         }
         Path database = Path.of(args[1]);
         Path log = Path.of(args[2]);
         Database.applyLog(database, log);
-        System.out.println("log aplicado em: " + database.toAbsolutePath().normalize());
+        System.out.println("log applied to: " + database.toAbsolutePath().normalize());
     }
 
     private static void export(String[] args) {
         if (args.length != 3 || args[1].isBlank() || args[2].isBlank()) {
-            throw new NexException("uso: export <arquivo.log> <arquivo.sql>");
+            throw new NexException("usage: export <file.log> <file.sql>");
         }
         Path source = Path.of(args[1]);
         Path sql = Path.of(args[2]);
@@ -162,46 +162,46 @@ public final class Cli {
                 return;
             }
             shown[0] = percent;
-            System.out.print("\rexportando: " + percent + "%");
+            System.out.print("\rexporting: " + percent + "%");
             System.out.flush();
         });
         System.out.println();
-        System.out.println("sql gravado em: " + sql.toAbsolutePath().normalize());
+        System.out.println("sql written to: " + sql.toAbsolutePath().normalize());
     }
 
     static String uso() {
         return """
-                Uso:
-                  java -jar nexora-cli-1.0.jar <comando> [argumentos]
+                Usage:
+                  java -jar nexora-cli-1.0.jar <command> [arguments]
 
-                Comandos:
-                  create <arquivo.db>          cria o .db, o .log e o usuário DBA
-                  backup completo <arquivo.db> <pasta>     copia o .db e o .log e zera o log vivo
-                  backup modificacao <arquivo.db> <pasta>  copia só o .log
-                  backup <arquivo.db> <pasta>              o mesmo que completo
-                  apply <arquivo.db> <arquivo.log>  aplica o log sobre o .db
-                  export <arquivo.log> <arquivo.sql>  grava o SQL do log
+                Commands:
+                  create <file.db>          creates the .db, the .log, and the DBA user
+                  backup full <file.db> <directory>         copies the .db and the .log and resets the live log
+                  backup incremental <file.db> <directory>  copies only the .log
+                  backup <file.db> <directory>              same as full
+                  apply <file.db> <file.log>  applies the log onto the .db
+                  export <file.log> <file.sql>  writes the SQL from the log
 
-                A página não muda depois da criação.
-                O JDBC e o motor abrem um arquivo que já existe.
-                O log guarda as mudanças desde a criação ou o último backup completo.
-                O backup de modificação deixa o log vivo no lugar.
-                export também aceita o .db e usa o .log ao lado.
+                The page size does not change after creation.
+                JDBC and the server open a file that already exists.
+                The log stores changes since creation or the last full backup.
+                The incremental backup leaves the live log in place.
+                export also accepts the .db and uses the .log beside it.
 
-                Opções de create:
-                  --page-size <n>          4096, 8192, 16384 ou 32768 (padrão 8192)
-                  --user <nome>            usuário DBA (padrão DBA)
-                  --password <senha>       senha do DBA (padrão dba)
-                  --name <nome>            nome do banco (padrão: nome do arquivo)
-                  --description <texto>    descrição (padrão Nexora)
-                  --charset <conjunto>     padrão UTF8
+                create options:
+                  --page-size <n>          4096, 8192, 16384, or 32768 (default 8192)
+                  --user <name>            DBA user (default DBA)
+                  --password <password>    DBA password (default dba)
+                  --name <name>            database name (default: file name)
+                  --description <text>     description (default Nexora)
+                  --charset <set>          default UTF8
 
-                Exemplo:
-                  java -jar nexora-cli-1.0.jar create C:/dados/loja.db --page-size 16384 --password segredo --name LOJA
-                  java -jar nexora-cli-1.0.jar backup completo C:/dados/loja.db C:/dados/backup
-                  java -jar nexora-cli-1.0.jar backup modificacao C:/dados/loja.db C:/dados/logs
-                  java -jar nexora-cli-1.0.jar apply C:/dados/backup/loja.db C:/dados/loja.log
-                  java -jar nexora-cli-1.0.jar export C:/dados/loja.log C:/dados/loja.sql
+                Example:
+                  java -jar nexora-cli-1.0.jar create C:/data/store.db --page-size 16384 --password secret --name STORE
+                  java -jar nexora-cli-1.0.jar backup full C:/data/store.db C:/data/backup
+                  java -jar nexora-cli-1.0.jar backup incremental C:/data/store.db C:/data/logs
+                  java -jar nexora-cli-1.0.jar apply C:/data/backup/store.db C:/data/store.log
+                  java -jar nexora-cli-1.0.jar export C:/data/store.log C:/data/store.sql
                 """;
     }
 
@@ -221,7 +221,7 @@ public final class Cli {
         try {
             return Integer.parseInt(value);
         } catch (NumberFormatException exception) {
-            throw new NexException("tamanho de página inválido: use 4096, 8192, 16384 ou 32768");
+            throw new NexException("invalid page size: use 4096, 8192, 16384, or 32768");
         }
     }
 

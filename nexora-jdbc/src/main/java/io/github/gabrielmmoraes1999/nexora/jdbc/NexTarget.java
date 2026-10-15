@@ -3,7 +3,7 @@ package io.github.gabrielmmoraes1999.nexora.jdbc;
 import io.github.gabrielmmoraes1999.nexora.NexException;
 
 /**
- * Destino de uma URL JDBC: arquivo local ou banco publicado pelo motor.
+ * Target of a JDBC URL: a local file or a database published by the server.
  */
 final class NexTarget {
 
@@ -23,7 +23,7 @@ final class NexTarget {
 
     static NexTarget parse(String url) {
         if (url == null || !url.regionMatches(true, 0, NexDriver.URL_PREFIX, 0, NexDriver.URL_PREFIX.length())) {
-            throw new NexException("URL inválida");
+            throw new NexException("invalid URL");
         }
         String rest = url.substring(NexDriver.URL_PREFIX.length()).trim();
         if (rest.regionMatches(true, 0, "embedded:", 0, "embedded:".length())) {
@@ -69,12 +69,12 @@ final class NexTarget {
         if (after.startsWith("[")) {
             int end = after.indexOf(']');
             if (end <= 1) {
-                throw new NexException("informe o host na URL jdbc:nexora://host:porta/nome");
+                throw new NexException("specify the host in the URL jdbc:nexora://host:port/name");
             }
             host = after.substring(1, end).trim();
             tail = after.substring(end + 1);
             if (!tail.startsWith(":")) {
-                throw new NexException("informe a porta na URL jdbc:nexora://host:porta/nome");
+                throw new NexException("specify the port in the URL jdbc:nexora://host:port/name");
             }
             tail = tail.substring(1);
         } else {
@@ -82,31 +82,31 @@ final class NexTarget {
             String hostPort = slash < 0 ? after : after.substring(0, slash);
             int colon = hostPort.lastIndexOf(':');
             if (colon <= 0) {
-                throw new NexException("informe a porta na URL jdbc:nexora://host:porta/nome");
+                throw new NexException("specify the port in the URL jdbc:nexora://host:port/name");
             }
             host = hostPort.substring(0, colon).trim();
             tail = after.substring(colon + 1);
         }
         int slash = tail.indexOf('/');
         if (slash <= 0 || slash == tail.length() - 1) {
-            throw new NexException("informe o nome do banco na URL jdbc:nexora://host:porta/nome");
+            throw new NexException("specify the database name in the URL jdbc:nexora://host:port/name");
         }
         String portText = tail.substring(0, slash).trim();
         String name = tail.substring(slash + 1).trim();
         if (name.isEmpty() || name.indexOf('/') >= 0 || name.indexOf('?') >= 0 || name.indexOf('#') >= 0) {
-            throw new NexException("informe o nome do banco na URL jdbc:nexora://host:porta/nome");
+            throw new NexException("specify the database name in the URL jdbc:nexora://host:port/name");
         }
         int port;
         try {
             port = Integer.parseInt(portText);
         } catch (NumberFormatException exception) {
-            throw new NexException("porta inválida na URL jdbc:nexora://host:porta/nome");
+            throw new NexException("invalid port in the URL jdbc:nexora://host:port/name");
         }
         if (port < 1 || port > 65535) {
-            throw new NexException("porta inválida na URL jdbc:nexora://host:porta/nome");
+            throw new NexException("invalid port in the URL jdbc:nexora://host:port/name");
         }
         if (host.isEmpty()) {
-            throw new NexException("informe o host na URL jdbc:nexora://host:porta/nome");
+            throw new NexException("specify the host in the URL jdbc:nexora://host:port/name");
         }
         return new NexTarget(false, "", host, port, name);
     }

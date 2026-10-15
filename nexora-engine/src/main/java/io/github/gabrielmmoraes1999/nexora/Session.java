@@ -1,8 +1,8 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Uma conexão autenticada no arquivo {@code .db}.
- * O nome do usuário fica em maiúsculas, como no Firebird.
+ * An authenticated connection to the {@code .db} file.
+ * The user name is stored in uppercase, as in Firebird.
  */
 public final class Session {
 
@@ -33,14 +33,14 @@ public final class Session {
     }
 
     /**
-     * Papel escolhido no login. Sem papel, devolve {@code NONE}.
+     * Role chosen at login. Without a role, returns {@code NONE}.
      */
     public String role() {
         return role == null ? "NONE" : role;
     }
 
     /**
-     * Esquema da sessão. O padrão é {@code public}.
+     * Session schema. The default is {@code public}.
      */
     public String schema() {
         return schemaName;
@@ -51,7 +51,7 @@ public final class Session {
     }
 
     /**
-     * A sessão foi encerrada com logout ou {@code DROP CONNECTION}.
+     * The session was closed by logout or {@code DROP CONNECTION}.
      */
     public boolean closed() {
         return closed;

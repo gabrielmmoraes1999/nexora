@@ -29,7 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Grade de uma tabela. A edição usa a chave primária no {@code WHERE}.
+ * Grid for a table. Editing uses the primary key in the {@code WHERE}.
  */
 final class DataPane extends JPanel {
 
@@ -75,12 +75,12 @@ final class DataPane extends JPanel {
     void load() {
         Connection connection = hub.connection(databaseId);
         if (connection == null) {
-            banner.setText("Banco desconectado.");
+            banner.setText("Database disconnected.");
             return;
         }
         String where = filter.getText().trim();
         if (where.indexOf(';') >= 0) {
-            Dialogs.error(hub.owner(), "o filtro não pode ter ponto e vírgula");
+            Dialogs.error(hub.owner(), "the filter cannot contain a semicolon");
             return;
         }
         hub.owner().setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.WAIT_CURSOR));
@@ -139,13 +139,13 @@ final class DataPane extends JPanel {
             }
             editable = wantEdit && !system() && !keys.isEmpty();
             if (!wantEdit) {
-                banner.setText("Somente leitura.");
+                banner.setText("Read-only.");
             } else if (system()) {
-                banner.setText("Tabela de sistema: somente leitura. Use o SQL para o que o DBA pode gravar.");
+                banner.setText("System table: read-only. Use SQL for what the DBA can write.");
             } else if (keys.isEmpty()) {
-                banner.setText("Sem chave primária: a grade é somente leitura.");
+                banner.setText("No primary key: the grid is read-only.");
             } else {
-                banner.setText(rows.size() + " linha(s). Célula vazia grava NULL. Em CHAR e VARCHAR, '' grava texto vazio.");
+                banner.setText(rows.size() + " row(s). An empty cell stores NULL. In CHAR and VARCHAR, '' stores empty text.");
             }
             loaded = true;
             model.fireTableStructureChanged();
@@ -179,22 +179,22 @@ final class DataPane extends JPanel {
     private JPanel toolbar() {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         Look.band(bar);
-        JButton refresh = Look.button("Atualizar");
-        JButton insert = Look.button("Inserir");
-        JButton delete = Look.button("Excluir");
-        JButton copy = Look.button("Copiar");
+        JButton refresh = Look.button("Refresh");
+        JButton insert = Look.button("Insert");
+        JButton delete = Look.button("Delete");
+        JButton copy = Look.button("Copy");
         refresh.addActionListener(event -> load());
         insert.addActionListener(event -> insert());
         delete.addActionListener(event -> delete());
         copy.addActionListener(event -> Tables.copy(grid));
-        filter.setToolTipText("Expressão do WHERE, sem ponto e vírgula");
+        filter.setToolTipText("WHERE expression, without a semicolon");
         bar.add(refresh);
         bar.add(insert);
         bar.add(delete);
         bar.add(copy);
         bar.add(new JLabel("WHERE"));
         bar.add(filter);
-        bar.add(new JLabel("limite"));
+        bar.add(new JLabel("limit"));
         bar.add(limit);
         return bar;
     }
@@ -209,7 +209,7 @@ final class DataPane extends JPanel {
             return;
         }
         Window owner = hub.owner() instanceof Window window ? window : javax.swing.SwingUtilities.getWindowAncestor(hub.owner());
-        javax.swing.JDialog dialog = new javax.swing.JDialog(owner, "Inserir em " + table, Dialog.ModalityType.APPLICATION_MODAL);
+        javax.swing.JDialog dialog = new javax.swing.JDialog(owner, "Insert into " + table, Dialog.ModalityType.APPLICATION_MODAL);
         JPanel form = new JPanel(new GridBagLayout());
         form.setBorder(new EmptyBorder(12, 12, 12, 12));
         List<JTextField> fields = new ArrayList<>();
@@ -226,7 +226,7 @@ final class DataPane extends JPanel {
             form.add(new JLabel(column.name + "  " + column.type), constraints);
             JTextField field = new JTextField(18);
             JCheckBox nil = new JCheckBox("NULL");
-            JCheckBox auto = new JCheckBox("Automático", column.auto);
+            JCheckBox auto = new JCheckBox("Automatic", column.auto);
             fields.add(field);
             nulls.add(nil);
             autos.add(auto);
@@ -251,8 +251,8 @@ final class DataPane extends JPanel {
             constraints.gridx = 3;
             form.add(auto, constraints);
         }
-        JButton ok = Look.primary("Inserir");
-        JButton cancel = Look.button("Cancelar");
+        JButton ok = Look.primary("Insert");
+        JButton cancel = Look.button("Cancel");
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         actions.add(cancel);
         actions.add(ok);
@@ -277,7 +277,7 @@ final class DataPane extends JPanel {
                     }
                 }
                 if (names.isEmpty()) {
-                    throw new IllegalArgumentException("informe ao menos um valor, ou desmarque Automático");
+                    throw new IllegalArgumentException("enter at least one value, or clear Automatic");
                 }
                 StringBuilder sql = new StringBuilder("INSERT INTO ").append(SqlNames.qualify(schema, table)).append(" (");
                 for (int i = 0; i < names.size(); i++) {
@@ -316,7 +316,7 @@ final class DataPane extends JPanel {
         if (selected.length == 0) {
             return;
         }
-        if (!Dialogs.confirm(hub.owner(), "Excluir " + selected.length + " linha(s) de " + table + "?")) {
+        if (!Dialogs.confirm(hub.owner(), "Delete " + selected.length + " row(s) from " + table + "?")) {
             return;
         }
         Connection connection = hub.connection(databaseId);
@@ -331,7 +331,7 @@ final class DataPane extends JPanel {
                 originals.remove(row);
             }
             model.fireTableDataChanged();
-            banner.setText(rows.size() + " linha(s) depois da exclusão.");
+            banner.setText(rows.size() + " row(s) after the delete.");
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
             load();
@@ -354,7 +354,7 @@ final class DataPane extends JPanel {
             }
             int count = statement.executeUpdate();
             if (count != 1) {
-                throw new SQLException("exclusão afetou " + count + " linhas");
+                throw new SQLException("delete affected " + count + " rows");
             }
         }
     }
@@ -362,7 +362,7 @@ final class DataPane extends JPanel {
     private void update(int row, int column, Object value) throws SQLException {
         Connection connection = hub.connection(databaseId);
         if (connection == null) {
-            throw new SQLException("banco desconectado");
+            throw new SQLException("database disconnected");
         }
         List<Integer> keys = keyIndexes();
         StringBuilder sql = new StringBuilder("UPDATE ").append(SqlNames.qualify(schema, table))
@@ -381,7 +381,7 @@ final class DataPane extends JPanel {
             }
             int count = statement.executeUpdate();
             if (count != 1) {
-                throw new SQLException("atualização afetou " + count + " linhas");
+                throw new SQLException("update affected " + count + " rows");
             }
         }
     }

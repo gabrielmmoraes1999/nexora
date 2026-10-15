@@ -18,7 +18,7 @@ final class SqlParser {
 
     static ParsedSql parse(String sql) {
         if (sql == null || sql.isBlank()) {
-            throw new NexException("SQL vazio");
+            throw new NexException("empty SQL");
         }
         SqlParser parser = new SqlParser(sql);
         parser.lex();
@@ -27,38 +27,38 @@ final class SqlParser {
 
     static Select parseView(String source) {
         if (source == null || source.isBlank()) {
-            throw new NexException("view sem SELECT");
+            throw new NexException("view without SELECT");
         }
         SqlParser parser = new SqlParser(source);
         parser.lex();
         if (!parser.peekKeyword("SELECT")) {
-            throw new NexException("view espera SELECT");
+            throw new NexException("view expects SELECT");
         }
         parser.expectKeyword("SELECT");
         Stmt body = parser.select();
         if (parser.parameters != 0) {
-            throw new NexException("view não aceita parâmetros");
+            throw new NexException("view does not accept parameters");
         }
         parser.skipSemicolons();
         if (!parser.peek(TokenKind.EOF)) {
-            throw new NexException("texto após o SELECT da view");
+            throw new NexException("text after the view SELECT");
         }
         if (!(body instanceof Select select)) {
-            throw new NexException("view não aceita SELECT de procedure");
+            throw new NexException("view does not accept a procedure SELECT");
         }
         return select;
     }
 
     static Routine parseRoutine(String source) {
         if (source == null || source.isBlank()) {
-            throw new NexException("rotina sem corpo");
+            throw new NexException("routine without a body");
         }
         SqlParser parser = new SqlParser(source);
         parser.lex();
         Routine routine = parser.routineBody();
         parser.skipSemicolons();
         if (!parser.peek(TokenKind.EOF)) {
-            throw parser.error("texto após o END da rotina");
+            throw parser.error("text after the routine END");
         }
         return routine;
     }
@@ -67,7 +67,7 @@ final class SqlParser {
         List<Stmt> statements = new ArrayList<>();
         skipSemicolons();
         if (peek(TokenKind.EOF)) {
-            throw new NexException("SQL vazio");
+            throw new NexException("empty SQL");
         }
         while (!peek(TokenKind.EOF)) {
             statements.add(statement());
@@ -76,7 +76,7 @@ final class SqlParser {
                 continue;
             }
             if (!peek(TokenKind.EOF)) {
-                throw error("faltou ';' entre os comandos");
+                throw error("missing ';' between statements");
             }
         }
         return statements;
@@ -84,7 +84,7 @@ final class SqlParser {
 
     private void skipSemicolons() {
         while (consumeSymbol(";")) {
-            // comandos vazios são ignorados
+            // empty statements are ignored
         }
     }
 
@@ -144,7 +144,7 @@ final class SqlParser {
             optionalKeyword("WORK");
             return new RollbackTx();
         }
-        throw error("comando SQL não reconhecido");
+        throw error("unrecognized SQL statement");
     }
 
     private Stmt grant() {
@@ -210,7 +210,7 @@ final class SqlParser {
         do {
             String privilege = privilegeName();
             if (privileges.stream().anyMatch(item -> item.equals(privilege))) {
-                throw error("privilégio repetido: " + privilege);
+                throw error("duplicate privilege: " + privilege);
             }
             privileges.add(privilege);
         } while (consumeSymbol(","));
@@ -235,7 +235,7 @@ final class SqlParser {
         if (consumeKeyword("DELETE")) {
             return "DELETE";
         }
-        throw error("privilégio esperado: SELECT, INSERT, UPDATE, DELETE ou ALL");
+        throw error("expected privilege: SELECT, INSERT, UPDATE, DELETE, or ALL");
     }
 
     private Stmt create() {
@@ -292,7 +292,7 @@ final class SqlParser {
         }
         expectSymbol(")");
         if (columns.isEmpty()) {
-            throw error("CREATE TABLE precisa de ao menos uma coluna");
+            throw error("CREATE TABLE requires at least one column");
         }
         return new CreateTable(ifNotExists, name, columns, primary, List.copyOf(keys.uniques),
                 keys.primaryConstraint, keys.primaryIndex, keys.primaryDescending, List.copyOf(keys.foreignKeys));
@@ -309,17 +309,17 @@ final class SqlParser {
         List<String> columns = peekSymbol("(") ? columnList() : List.of();
         expectKeyword("AS");
         if (!peekKeyword("SELECT")) {
-            throw error("CREATE VIEW espera SELECT");
+            throw error("CREATE VIEW expects SELECT");
         }
         int start = current().start;
         int before = parameters;
         expectKeyword("SELECT");
         Stmt body = select();
         if (parameters != before) {
-            throw error("CREATE VIEW não aceita parâmetros");
+            throw error("CREATE VIEW does not accept parameters");
         }
         if (!(body instanceof Select)) {
-            throw error("CREATE VIEW não aceita SELECT de procedure");
+            throw error("CREATE VIEW does not accept a procedure SELECT");
         }
         int end = tokens.get(cursor - 1).end;
         return new CreateView(ifNotExists, name, columns, sql.substring(start, end).trim());
@@ -346,7 +346,7 @@ final class SqlParser {
         if (consumeKeyword("PRIMARY")) {
             expectKeyword("KEY");
             if (!primary.isEmpty()) {
-                throw error("a tabela só pode ter uma chave primária");
+                throw error("the table can have only one primary key");
             }
             primary.addAll(columnList());
             Using using = usingIndex();
@@ -370,7 +370,7 @@ final class SqlParser {
         expectKeyword("UNIQUE");
         List<String> columns = columnList();
         if (peekKeyword("USING")) {
-            throw error("USING INDEX vale para PRIMARY KEY e FOREIGN KEY");
+            throw error("USING INDEX applies to PRIMARY KEY and FOREIGN KEY");
         }
         keys.uniques.add(new UniqueClause(name, columns));
     }
@@ -402,13 +402,13 @@ final class SqlParser {
             } else if (consumeKeyword("UPDATE")) {
                 delete = false;
             } else {
-                throw error("ON espera DELETE ou UPDATE");
+                throw error("ON expects DELETE or UPDATE");
             }
             if (delete && sawDelete) {
-                throw error("ON DELETE repetido");
+                throw error("duplicate ON DELETE");
             }
             if (!delete && sawUpdate) {
-                throw error("ON UPDATE repetido");
+                throw error("duplicate ON UPDATE");
             }
             ReferentialAction action = referentialAction();
             if (delete) {
@@ -440,7 +440,7 @@ final class SqlParser {
             expectKeyword("ACTION");
             return ReferentialAction.NO_ACTION;
         }
-        throw error("ação referencial espera NO ACTION, RESTRICT, CASCADE, SET NULL ou SET DEFAULT");
+        throw error("referential action expects NO ACTION, RESTRICT, CASCADE, SET NULL, or SET DEFAULT");
     }
 
     private record Actions(ReferentialAction onUpdate, ReferentialAction onDelete) {
@@ -496,7 +496,7 @@ final class SqlParser {
             return new DropIndex(ifExists, name, expectRelation());
         }
         if (!peekKeyword("TABLE")) {
-            throw error("DROP suporta TABLE, INDEX, SCHEMA, GENERATOR, SEQUENCE, PROCEDURE, TRIGGER, VIEW, ROLE e CONNECTION");
+            throw error("DROP supports TABLE, INDEX, SCHEMA, GENERATOR, SEQUENCE, PROCEDURE, TRIGGER, VIEW, ROLE, and CONNECTION");
         }
         expectKeyword("TABLE");
         boolean ifExists = false;
@@ -516,7 +516,7 @@ final class SqlParser {
             if (consumeKeyword("INACTIVE")) {
                 return new AlterTrigger(name, true);
             }
-            throw error("ALTER TRIGGER aceita ACTIVE ou INACTIVE");
+            throw error("ALTER TRIGGER accepts ACTIVE or INACTIVE");
         }
         if (consumeKeyword("SEQUENCE") || consumeKeyword("GENERATOR")) {
             String name = expectRelation();
@@ -552,7 +552,7 @@ final class SqlParser {
             optionalKeyword("COLUMN");
             return new DropColumn(table, expectIdent());
         }
-        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN, ADD e DROP de PRIMARY KEY, FOREIGN KEY, UNIQUE e CONSTRAINT");
+        throw error("ALTER TABLE supports ADD COLUMN, DROP COLUMN, and ADD and DROP of PRIMARY KEY, FOREIGN KEY, UNIQUE, and CONSTRAINT");
     }
 
     private Stmt addTableConstraint(String table) {
@@ -580,11 +580,11 @@ final class SqlParser {
         if (consumeKeyword("UNIQUE")) {
             List<String> columns = columnList();
             if (peekKeyword("USING")) {
-                throw error("USING INDEX vale para PRIMARY KEY e FOREIGN KEY");
+                throw error("USING INDEX applies to PRIMARY KEY and FOREIGN KEY");
             }
             return new AddUnique(table, columns, name);
         }
-        throw error("ADD CONSTRAINT espera PRIMARY KEY, FOREIGN KEY ou UNIQUE");
+        throw error("ADD CONSTRAINT expects PRIMARY KEY, FOREIGN KEY, or UNIQUE");
     }
 
     private Stmt setGenerator() {
@@ -606,7 +606,7 @@ final class SqlParser {
             expectKeyword("BY");
             increment = signedLong("INCREMENT BY");
             if (increment == 0) {
-                throw error("INCREMENT BY não pode ser zero");
+                throw error("INCREMENT BY cannot be zero");
             }
         }
         return new CreateGenerator(name, start, increment, sequence);
@@ -646,7 +646,7 @@ final class SqlParser {
         do {
             String event = eventName();
             if (events.stream().anyMatch(item -> item.equals(event))) {
-                throw error("evento repetido: " + event);
+                throw error("duplicate event: " + event);
             }
             events.add(event);
         } while (consumeKeyword("OR"));
@@ -654,7 +654,7 @@ final class SqlParser {
         if (consumeKeyword("POSITION")) {
             long raw = signedLong("POSITION");
             if (raw > Integer.MAX_VALUE || raw < Integer.MIN_VALUE) {
-                throw error("POSITION grande demais");
+                throw error("POSITION is too large");
             }
             position = (int) raw;
         }
@@ -674,7 +674,7 @@ final class SqlParser {
         if (consumeKeyword("DELETE")) {
             return "DELETE";
         }
-        throw error("evento esperado: INSERT, UPDATE ou DELETE");
+        throw error("expected event: INSERT, UPDATE, or DELETE");
     }
 
     private List<ParamDef> parameterList(boolean required) {
@@ -713,7 +713,7 @@ final class SqlParser {
         List<String> returning = new ArrayList<>();
         if (consumeKeyword("RETURNING_VALUES")) {
             if (!insideRoutine) {
-                throw error("RETURNING_VALUES só pode ser usado dentro de procedure ou trigger");
+                throw error("RETURNING_VALUES can only be used inside a procedure or trigger");
             }
             do {
                 if (consumeSymbol(":")) {
@@ -758,7 +758,7 @@ final class SqlParser {
         expectKeyword("BEGIN");
         List<Psql> statements = new ArrayList<>();
         while (consumeSymbol(";")) {
-            // comando vazio
+            // empty statement
         }
         while (!peekKeyword("END")) {
             statements.add(psqlStatement());
@@ -767,7 +767,7 @@ final class SqlParser {
             }
             if (consumeSymbol(";")) {
                 while (consumeSymbol(";")) {
-                    // comando vazio
+                    // empty statement
                 }
                 continue;
             }
@@ -847,7 +847,7 @@ final class SqlParser {
         if (looksLikeAssignment()) {
             return assignment();
         }
-        throw error("comando inválido na rotina");
+        throw error("invalid statement in the routine");
     }
 
     private Psql selectInto() {
@@ -859,7 +859,7 @@ final class SqlParser {
         expectKeyword("FROM");
         String table = expectRelation();
         if (peekSymbol("(")) {
-            throw error("SELECT INTO não chama procedure");
+            throw error("SELECT INTO does not call a procedure");
         }
         Expr where = null;
         if (consumeKeyword("WHERE")) {
@@ -894,7 +894,7 @@ final class SqlParser {
             consumeSymbol("*");
             star = true;
             if (peekSymbol(",")) {
-                throw error("SELECT * não combina com outras expressões");
+                throw error("SELECT * cannot be combined with other expressions");
             }
         } else {
             do {
@@ -913,11 +913,11 @@ final class SqlParser {
         }
         expectKeyword("FROM");
         if (peekKeyword("JOIN") || peekKeyword(1, "JOIN")) {
-            throw error("JOIN não é suportado");
+            throw error("JOIN is not supported");
         }
         String table = expectRelation();
         if (peekSymbol("(")) {
-            throw error("cursor não chama procedure");
+            throw error("cursor does not call a procedure");
         }
         String alias = null;
         if (consumeKeyword("AS")) {
@@ -926,14 +926,14 @@ final class SqlParser {
             alias = expectIdent();
         }
         if (peekKeyword("JOIN") || consumeKeyword("JOIN")) {
-            throw error("JOIN não é suportado");
+            throw error("JOIN is not supported");
         }
         Expr where = null;
         if (consumeKeyword("WHERE")) {
             where = expression();
         }
         if (peekKeyword("GROUP") || peekKeyword("HAVING") || peekKeyword("UNION")) {
-            throw error("GROUP BY, HAVING e UNION não são suportados");
+            throw error("GROUP BY, HAVING, and UNION are not supported");
         }
         List<OrderItem> order = new ArrayList<>();
         if (consumeKeyword("ORDER")) {
@@ -948,7 +948,7 @@ final class SqlParser {
             } while (consumeSymbol(","));
         }
         if (peekKeyword("LIMIT") || peekKeyword("OFFSET")) {
-            throw error("cursor aceita WHERE e ORDER BY");
+            throw error("cursor accepts WHERE and ORDER BY");
         }
         return new Select(distinct, star, items, table, alias, where, order, null, null);
     }
@@ -1010,7 +1010,7 @@ final class SqlParser {
             try {
                 value = Math.negateExact(value);
             } catch (ArithmeticException exception) {
-                throw error(label + " grande demais");
+                throw error(label + " is too large");
             }
         }
         return value;
@@ -1024,7 +1024,7 @@ final class SqlParser {
             columns = nameList();
         }
         if (peekKeyword("SELECT")) {
-            throw error("INSERT ... SELECT não é suportado");
+            throw error("INSERT ... SELECT is not supported");
         }
         expectKeyword("VALUES");
         List<List<Expr>> rows = new ArrayList<>();
@@ -1038,7 +1038,7 @@ final class SqlParser {
             }
             expectSymbol(")");
             if (values.isEmpty()) {
-                throw error("VALUES precisa de ao menos um valor");
+                throw error("VALUES requires at least one value");
             }
             rows.add(values);
         } while (consumeSymbol(","));
@@ -1079,7 +1079,7 @@ final class SqlParser {
             consumeSymbol("*");
             star = true;
             if (peekSymbol(",")) {
-                throw error("SELECT * não combina com outras expressões");
+                throw error("SELECT * cannot be combined with other expressions");
             }
         } else {
             do {
@@ -1098,14 +1098,14 @@ final class SqlParser {
         }
         if (!peekKeyword("FROM")) {
             if (star) {
-                throw error("SELECT * precisa de uma tabela");
+                throw error("SELECT * requires a table");
             }
             SelectTail tail = selectTail();
             return new Select(distinct, false, items, null, null, tail.where, tail.order, tail.limit, tail.offset);
         }
         expectKeyword("FROM");
         if (peekKeyword("JOIN") || peekKeyword(1, "JOIN")) {
-            throw error("JOIN não é suportado");
+            throw error("JOIN is not supported");
         }
         String first = expectIdent();
         String table;
@@ -1131,14 +1131,14 @@ final class SqlParser {
                 procedureAlias = expectIdent();
             }
             if (peekKeyword("JOIN") || consumeKeyword("JOIN")) {
-                throw error("JOIN não é suportado");
+                throw error("JOIN is not supported");
             }
             Expr procedureWhere = null;
             if (consumeKeyword("WHERE")) {
                 procedureWhere = expression();
             }
             if (peekKeyword("GROUP") || peekKeyword("HAVING") || peekKeyword("UNION")) {
-                throw error("GROUP BY, HAVING e UNION não são suportados");
+                throw error("GROUP BY, HAVING, and UNION are not supported");
             }
             List<OrderItem> procedureOrder = new ArrayList<>();
             if (consumeKeyword("ORDER")) {
@@ -1162,7 +1162,7 @@ final class SqlParser {
             }
             if (consumeKeyword("OFFSET")) {
                 if (procedureOffset != null) {
-                    throw error("OFFSET repetido");
+                    throw error("duplicate OFFSET");
                 }
                 procedureOffset = expectLong("OFFSET");
             }
@@ -1181,14 +1181,14 @@ final class SqlParser {
 
     private SelectTail selectTail() {
         if (peekKeyword("JOIN") || consumeKeyword("JOIN")) {
-            throw error("JOIN não é suportado");
+            throw error("JOIN is not supported");
         }
         Expr where = null;
         if (consumeKeyword("WHERE")) {
             where = expression();
         }
         if (peekKeyword("GROUP") || peekKeyword("HAVING") || peekKeyword("UNION")) {
-            throw error("GROUP BY, HAVING e UNION não são suportados");
+            throw error("GROUP BY, HAVING, and UNION are not supported");
         }
         List<OrderItem> order = new ArrayList<>();
         if (consumeKeyword("ORDER")) {
@@ -1214,7 +1214,7 @@ final class SqlParser {
         }
         if (consumeKeyword("OFFSET")) {
             if (offset != null) {
-                throw error("OFFSET repetido");
+                throw error("duplicate OFFSET");
             }
             offset = expectLong("OFFSET");
         }
@@ -1257,10 +1257,10 @@ final class SqlParser {
             }
         }
         if (explicitNull && notNull) {
-            throw error("coluna " + name + " não pode ser NULL e NOT NULL");
+            throw error("column " + name + " cannot be both NULL and NOT NULL");
         }
         if (auto && !type.type.exactInteger()) {
-            throw error("AUTOINCREMENT só é permitido em SMALLINT, INTEGER ou BIGINT");
+            throw error("AUTOINCREMENT is only allowed on SMALLINT, INTEGER, or BIGINT");
         }
         validateType(name, type);
         return new ColDef(name, type.type, type.length, type.scale, notNull, primary, unique, auto, hasDefault, def);
@@ -1296,7 +1296,7 @@ final class SqlParser {
             cursor++;
             return token.hex;
         }
-        throw error("DEFAULT aceita apenas um literal");
+        throw error("DEFAULT accepts only a literal");
     }
 
     private TypeSpec parseType() {
@@ -1339,10 +1339,10 @@ final class SqlParser {
         }
         if (consumeKeyword("DECIMAL") || consumeKeyword("NUMERIC")) {
             expectSymbol("(");
-            int precision = expectInt("precisão");
+            int precision = expectInt("precision");
             int scale = 0;
             if (consumeSymbol(",")) {
-                scale = expectInt("escala");
+                scale = expectInt("scale");
             }
             expectSymbol(")");
             return new TypeSpec(DataType.DECIMAL, precision, scale);
@@ -1353,16 +1353,16 @@ final class SqlParser {
             }
             return new TypeSpec(DataType.BLOB, 0, 0);
         }
-        throw error("tipo de dado desconhecido");
+        throw error("unknown data type");
     }
 
     private void validateType(String name, TypeSpec type) {
         if ((type.type == DataType.CHAR || type.type == DataType.VARCHAR)
                 && (type.length < 1 || type.length > Format.MAX_CHAR)) {
-            throw error("tamanho de " + name + " deve estar entre 1 e " + Format.MAX_CHAR);
+            throw error("size of " + name + " must be between 1 and " + Format.MAX_CHAR);
         }
         if (type.type == DataType.DECIMAL && (type.length < 1 || type.length > 38 || type.scale < 0 || type.scale > type.length)) {
-            throw error("DECIMAL inválido em " + name + " (precisão 1..38 e escala até a precisão)");
+            throw error("invalid DECIMAL in " + name + " (precision 1..38 and scale up to the precision)");
         }
     }
 
@@ -1423,7 +1423,7 @@ final class SqlParser {
             }
             expectSymbol(")");
             if (values.isEmpty()) {
-                throw error("IN precisa de ao menos um valor");
+                throw error("IN requires at least one value");
             }
             return new InList(left, values, negated);
         }
@@ -1434,7 +1434,7 @@ final class SqlParser {
             return new Between(left, low, high, negated);
         }
         if (negated) {
-            throw error("NOT precisa acompanhar LIKE, IN ou BETWEEN");
+            throw error("NOT must accompany LIKE, IN, or BETWEEN");
         }
         BinaryOp op = comparisonOp();
         if (op == null) {
@@ -1562,11 +1562,11 @@ final class SqlParser {
             Integer precision = null;
             if (consumeSymbol("(")) {
                 if (!timedContext(name)) {
-                    throw error(name + " não aceita argumentos");
+                    throw error(name + " does not accept arguments");
                 }
-                precision = expectInt("precisão");
+                precision = expectInt("precision");
                 if (precision < 0 || precision > 3) {
-                    throw error("precisão de " + name + " deve estar entre 0 e 3");
+                    throw error("precision of " + name + " must be between 0 and 3");
                 }
                 expectSymbol(")");
             }
@@ -1589,7 +1589,7 @@ final class SqlParser {
             }
             return new ColumnRef(qualifier, name);
         }
-        throw error("expressão inválida");
+        throw error("invalid expression");
     }
 
     private static boolean contextVariable(String name) {
@@ -1614,7 +1614,7 @@ final class SqlParser {
         if (consumeSymbol("*")) {
             star = true;
             if (distinct) {
-                throw error("DISTINCT não combina com *");
+                throw error("DISTINCT cannot be combined with *");
             }
         } else if (!peekSymbol(")")) {
             do {
@@ -1637,14 +1637,14 @@ final class SqlParser {
         } while (consumeSymbol(","));
         expectSymbol(")");
         if (names.isEmpty()) {
-            throw error("a lista de colunas está vazia");
+            throw error("the column list is empty");
         }
         return names;
     }
 
     private int expectLength() {
         expectSymbol("(");
-        int length = expectInt("tamanho");
+        int length = expectInt("size");
         expectSymbol(")");
         return length;
     }
@@ -1652,7 +1652,7 @@ final class SqlParser {
     private int expectInt(String label) {
         long value = expectLong(label);
         if (value > Integer.MAX_VALUE) {
-            throw error(label + " grande demais");
+            throw error(label + " is too large");
         }
         return (int) value;
     }
@@ -1660,14 +1660,14 @@ final class SqlParser {
     private long expectLong(String label) {
         Token token = current();
         if (token.kind != TokenKind.NUMBER) {
-            throw error("esperado número em " + label);
+            throw error("expected a number in " + label);
         }
         cursor++;
         BigDecimal number = new BigDecimal(token.text);
         try {
             return number.longValueExact();
         } catch (ArithmeticException exception) {
-            throw error(label + " precisa ser um inteiro");
+            throw error(label + " must be an integer");
         }
     }
 
@@ -1682,9 +1682,9 @@ final class SqlParser {
     private String expectIdent() {
         Token token = current();
         if (token.kind != TokenKind.IDENT) {
-            throw error("esperado identificador");
+            throw error("expected an identifier");
         }
-        Names.checkName(token.text, "identificador");
+        Names.checkName(token.text, "identifier");
         cursor++;
         return token.text;
     }
@@ -1692,7 +1692,7 @@ final class SqlParser {
     private Token expectNumber() {
         Token token = current();
         if (token.kind != TokenKind.NUMBER) {
-            throw error("esperado número");
+            throw error("expected a number");
         }
         cursor++;
         return token;
@@ -1700,13 +1700,13 @@ final class SqlParser {
 
     private void expectKeyword(String keyword) {
         if (!consumeKeyword(keyword)) {
-            throw error("esperado " + keyword);
+            throw error("expected " + keyword);
         }
     }
 
     private void expectSymbol(String symbol) {
         if (!consumeSymbol(symbol)) {
-            throw error("esperado '" + symbol + "'");
+            throw error("expected '" + symbol + "'");
         }
     }
 
@@ -1796,7 +1796,7 @@ final class SqlParser {
         Token token = current();
         int position = Math.min(token.start, sql.length());
         String near = sql.substring(position, Math.min(sql.length(), position + 24)).replace('\n', ' ');
-        return new NexException(message + " próximo a '" + near + "' (posição " + (position + 1) + ")");
+        return new NexException(message + " near '" + near + "' (position " + (position + 1) + ")");
     }
 
     private void lex() {
@@ -1818,7 +1818,7 @@ final class SqlParser {
             if (current == '/' && index + 1 < length && sql.charAt(index + 1) == '*') {
                 int close = sql.indexOf("*/", index + 2);
                 if (close < 0) {
-                    throw new NexException("comentário não terminado");
+                    throw new NexException("unterminated comment");
                 }
                 index = close + 2;
                 continue;
@@ -1841,7 +1841,7 @@ final class SqlParser {
                     text.append(ch);
                 }
                 if (tokens.isEmpty() || tokens.get(tokens.size() - 1).start != start) {
-                    throw new NexException("texto não terminado (posição " + (start + 1) + ")");
+                    throw new NexException("unterminated string (position " + (start + 1) + ")");
                 }
                 continue;
             }
@@ -1852,7 +1852,7 @@ final class SqlParser {
                     index++;
                 }
                 if (index >= length) {
-                    throw new NexException("literal hexadecimal não terminado");
+                    throw new NexException("unterminated hexadecimal literal");
                 }
                 String hex = sql.substring(hexStart, index);
                 index++;
@@ -1938,7 +1938,7 @@ final class SqlParser {
                     text.append(ch);
                 }
                 if (tokens.isEmpty() || tokens.get(tokens.size() - 1).start != start) {
-                    throw new NexException("identificador não terminado (posição " + (start + 1) + ")");
+                    throw new NexException("unterminated identifier (position " + (start + 1) + ")");
                 }
                 continue;
             }
@@ -1955,21 +1955,21 @@ final class SqlParser {
                 tokens.add(new Token(TokenKind.IDENT, sql.substring(start, index), null, start, index, false, -1));
                 continue;
             }
-            throw new NexException("caractere inválido '" + current + "' (posição " + (start + 1) + ")");
+            throw new NexException("invalid character '" + current + "' (position " + (start + 1) + ")");
         }
         tokens.add(new Token(TokenKind.EOF, "", null, sql.length(), sql.length(), false, -1));
     }
 
     private static byte[] decodeHex(String hex, int position) {
         if ((hex.length() % 2) != 0) {
-            throw new NexException("literal hexadecimal incompleto (posição " + (position + 1) + ")");
+            throw new NexException("incomplete hexadecimal literal (position " + (position + 1) + ")");
         }
         byte[] data = new byte[hex.length() / 2];
         for (int i = 0; i < data.length; i++) {
             int high = Character.digit(hex.charAt(i * 2), 16);
             int low = Character.digit(hex.charAt(i * 2 + 1), 16);
             if (high < 0 || low < 0) {
-                throw new NexException("dígito hexadecimal inválido (posição " + (position + 1) + ")");
+                throw new NexException("invalid hexadecimal digit (position " + (position + 1) + ")");
             }
             data[i] = (byte) ((high << 4) + low);
         }

@@ -12,7 +12,7 @@
 
     <artifactId>nexora-studio</artifactId>
     <name>Nexora Studio</name>
-    <description>Interface administrativa do Nexora. Explorador, editor SQL e grade, no espírito do IBExpert.</description>
+    <description>Administrative interface for Nexora. Explorer, SQL editor, and grid, in the spirit of IBExpert.</description>
 
     <dependencies>
         <dependency>

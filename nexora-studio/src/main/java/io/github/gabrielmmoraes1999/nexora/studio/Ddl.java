@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Texto SQL de criação, extração e remoção. O studio executa esse texto pelo JDBC.
+ * SQL text for creation, extraction, and removal. The studio runs that text through JDBC.
  */
 public final class Ddl {
 
@@ -73,16 +73,16 @@ public final class Ddl {
 
     public static String create(String schema, String table, List<ColumnDraft> columns) {
         if (table == null || table.isBlank()) {
-            throw new IllegalArgumentException("informe o nome da tabela");
+            throw new IllegalArgumentException("enter the table name");
         }
         if (columns == null || columns.isEmpty()) {
-            throw new IllegalArgumentException("a tabela precisa de ao menos uma coluna");
+            throw new IllegalArgumentException("the table needs at least one column");
         }
         List<String> primary = new ArrayList<>();
         for (ColumnDraft column : columns) {
             if (column.primaryKey) {
                 if (column.name == null || column.name.isBlank()) {
-                    throw new IllegalArgumentException("informe o nome da coluna da chave");
+                    throw new IllegalArgumentException("enter the primary key column name");
                 }
                 primary.add(column.name.trim());
             }
@@ -93,13 +93,13 @@ public final class Ddl {
         for (int i = 0; i < columns.size(); i++) {
             ColumnDraft column = columns.get(i);
             if (column.name == null || column.name.isBlank()) {
-                throw new IllegalArgumentException("informe o nome da coluna " + (i + 1));
+                throw new IllegalArgumentException("enter the name of column " + (i + 1));
             }
             if (column.type == null || column.type.isBlank()) {
-                throw new IllegalArgumentException("informe o tipo de " + column.name);
+                throw new IllegalArgumentException("enter the type of " + column.name);
             }
             if (column.autoIncrement && !integerType(column.type)) {
-                throw new IllegalArgumentException("AUTOINCREMENT só vale em SMALLINT, INTEGER ou BIGINT");
+                throw new IllegalArgumentException("AUTOINCREMENT only applies to SMALLINT, INTEGER, or BIGINT");
             }
             if (i > 0) {
                 sql.append(",\n");
@@ -243,10 +243,10 @@ public final class Ddl {
 
     public static String createIndex(boolean unique, String index, String schema, String table, List<String> columns) {
         if (index == null || index.isBlank()) {
-            throw new IllegalArgumentException("informe o nome do índice");
+            throw new IllegalArgumentException("enter the index name");
         }
         if (columns == null || columns.isEmpty()) {
-            throw new IllegalArgumentException("escolha ao menos uma coluna");
+            throw new IllegalArgumentException("select at least one column");
         }
         StringBuilder sql = new StringBuilder("CREATE ");
         if (unique) {
@@ -259,10 +259,10 @@ public final class Ddl {
 
     public static String addColumn(String schema, String table, ColumnDraft column) {
         if (column.name == null || column.name.isBlank()) {
-            throw new IllegalArgumentException("informe o nome da coluna");
+            throw new IllegalArgumentException("enter the column name");
         }
         if (column.type == null || column.type.isBlank()) {
-            throw new IllegalArgumentException("informe o tipo da coluna");
+            throw new IllegalArgumentException("enter the column type");
         }
         StringBuilder sql = new StringBuilder();
         sql.append("ALTER TABLE ").append(SqlNames.qualify(schema, table)).append(" ADD COLUMN ");
@@ -298,13 +298,13 @@ public final class Ddl {
 
     public static String grant(List<String> privileges, String schema, String table, String grantee, boolean grantOption) {
         if (privileges == null || privileges.isEmpty()) {
-            throw new IllegalArgumentException("escolha ao menos um privilégio");
+            throw new IllegalArgumentException("select at least one privilege");
         }
         if (grantee == null || grantee.isBlank()) {
-            throw new IllegalArgumentException("informe o usuário, o papel ou PUBLIC");
+            throw new IllegalArgumentException("enter the user, the role, or PUBLIC");
         }
         if (table == null || table.isBlank()) {
-            throw new IllegalArgumentException("informe a tabela");
+            throw new IllegalArgumentException("enter the table");
         }
         StringBuilder sql = new StringBuilder("GRANT ");
         sql.append(String.join(", ", privileges));
@@ -322,7 +322,7 @@ public final class Ddl {
 
     public static String grantRole(String role, String user, boolean adminOption) {
         if (role == null || role.isBlank() || user == null || user.isBlank()) {
-            throw new IllegalArgumentException("informe o papel e o usuário");
+            throw new IllegalArgumentException("enter the role and the user");
         }
         StringBuilder sql = new StringBuilder("GRANT ").append(SqlNames.quote(role.trim()))
                 .append(" TO ").append(SqlNames.principal(user.trim()));

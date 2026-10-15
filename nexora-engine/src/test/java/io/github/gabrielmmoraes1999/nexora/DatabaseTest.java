@@ -100,7 +100,7 @@ class DatabaseTest {
             for (int i = 0; i < 400; i++) {
                 db.execute("INSERT INTO t VALUES (?, ?)", i, "Ana " + i);
                 long agora = Files.size(file);
-                assertTrue(agora >= anterior, "arquivo encolheu no insert " + i + ": " + anterior + " -> " + agora);
+                assertTrue(agora >= anterior, "file shrank on insert " + i + ": " + anterior + " -> " + agora);
                 anterior = agora;
             }
         }
@@ -119,7 +119,7 @@ class DatabaseTest {
                 db.execute("INSERT INTO t VALUES (?, ?)", i, "Ana");
             }
         }
-        assertTrue(Files.size(file) < 500_000, "arquivo grande demais: " + Files.size(file));
+        assertTrue(Files.size(file) < 500_000, "file is too large: " + Files.size(file));
         try (Database db = open()) {
             assertEquals("Ana", db.query("SELECT nome FROM t WHERE id = 0").rows().get(0).getString("nome"));
             assertEquals(200, db.query("SELECT id FROM t").size());
@@ -160,7 +160,7 @@ class DatabaseTest {
             db.execute("INSERT INTO b VALUES (2, 'c', ?)", payload);
             long depoisDoReuso = Files.size(file);
             assertTrue(depoisDoReuso - depoisDoInsert < payload.length / 2,
-                    "BLOB não foi reutilizado: " + depoisDoInsert + " -> " + depoisDoReuso);
+                    "BLOB was not reused: " + depoisDoInsert + " -> " + depoisDoReuso);
         }
     }
 
@@ -186,7 +186,7 @@ class DatabaseTest {
             assertEquals("fica", db.query("SELECT nome FROM outro").rows().get(0).getString("nome"));
         }
         long vazio = Files.size(file);
-        assertTrue(vazio < cheio / 2, "arquivo não encolheu: " + cheio + " -> " + vazio);
+        assertTrue(vazio < cheio / 2, "file did not shrink: " + cheio + " -> " + vazio);
         try (Database db = open()) {
             assertEquals("fica", db.query("SELECT nome FROM outro").rows().get(0).getString("nome"));
             db.execute("INSERT INTO produto VALUES (1, 'novo', ?)", payload);
@@ -238,7 +238,7 @@ class DatabaseTest {
             db.execute(uma, "UPDATE t SET nome = 'bia' WHERE id = 1");
             db.execute(outra, "UPDATE t SET nome = 'caio' WHERE id = 1");
             NexException conflito = assertThrows(NexException.class, () -> db.execute(uma, "COMMIT"));
-            assertTrue(conflito.getMessage().contains("outra transação"));
+            assertTrue(conflito.getMessage().contains("another transaction"));
             assertEquals("caio", db.execute(outra, "SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
             db.execute(uma, "ROLLBACK");
 
@@ -246,7 +246,7 @@ class DatabaseTest {
             db.execute(uma, "UPDATE t SET nome = 'lia' WHERE id = 3");
             NexException estrutura = assertThrows(NexException.class,
                     () -> db.execute(outra, "CREATE INDEX ix_nome ON t (nome)"));
-            assertTrue(estrutura.getMessage().contains("usando a tabela"));
+            assertTrue(estrutura.getMessage().contains("using the table"));
             db.execute(uma, "COMMIT");
             assertEquals("lia", db.execute(outra, "SELECT nome FROM t WHERE id = 3").rows().get(0).getString("nome"));
             db.logout(outra);
@@ -385,7 +385,7 @@ class DatabaseTest {
             db.execute("CREATE TABLE dup (id INTEGER, nome VARCHAR(10))");
             db.execute("INSERT INTO dup VALUES (1, 'a'), (1, 'b')");
             NexException duplicada = assertThrows(NexException.class, () -> db.execute("ALTER TABLE dup ADD PRIMARY KEY (id)"));
-            assertTrue(duplicada.getMessage().contains("chave primária"));
+            assertTrue(duplicada.getMessage().contains("primary key"));
             assertEquals(2, db.query("SELECT * FROM dup").size());
             assertEquals(0, db.describeTables().stream().filter(table -> table.name().equals("dup"))
                     .findFirst().orElseThrow().columns().get(0).primaryKeyPosition());
@@ -403,7 +403,7 @@ class DatabaseTest {
             db.execute("BEGIN");
             NexException transacao = assertThrows(NexException.class,
                     () -> db.execute("ALTER TABLE aberto ADD PRIMARY KEY (id)"));
-            assertTrue(transacao.getMessage().contains("transação"));
+            assertTrue(transacao.getMessage().contains("transaction"));
             db.execute("ROLLBACK");
             db.execute("ALTER TABLE aberto ADD PRIMARY KEY (id)");
         }
@@ -632,7 +632,7 @@ class DatabaseTest {
             db.execute("BEGIN");
             NexException transacao = assertThrows(NexException.class,
                     () -> db.execute("ALTER TABLE item DROP CONSTRAINT PK_item"));
-            assertTrue(transacao.getMessage().contains("transação"));
+            assertTrue(transacao.getMessage().contains("transaction"));
             db.execute("ROLLBACK");
             assertEquals("PK_item", table(db, "item").primaryConstraint());
 
@@ -751,7 +751,7 @@ class DatabaseTest {
     void segundoAcessoEhRecusadoEnquantoAberto() {
         try (Database primeiro = open()) {
             NexException erro = assertThrows(NexException.class, () -> open());
-            assertTrue(erro.getMessage().contains("aberto"));
+            assertTrue(erro.getMessage().contains("open"));
             assertTrue(primeiro.tables().isEmpty());
         }
         try (Database reaberto = open()) {
@@ -929,7 +929,7 @@ class DatabaseTest {
     @Test
     void arquivoUnicoUsuarioETabelasDeSistema() {
         NexException semSenha = assertThrows(NexException.class, () -> Database.open(arquivo(), "dba", ""));
-        assertTrue(semSenha.getMessage().contains("senha"));
+        assertTrue(semSenha.getMessage().contains("password"));
         assertThrows(NexException.class, () -> Database.open(dir, "dba", "dba"));
         try (Database db = open()) {
             assertTrue(Files.isRegularFile(arquivo()));
@@ -1208,7 +1208,7 @@ class DatabaseTest {
                     END
                     """);
             NexException fechado = assertThrows(NexException.class, () -> db.execute("EXECUTE PROCEDURE fechado"));
-            assertTrue(fechado.getMessage().contains("não está aberto"));
+            assertTrue(fechado.getMessage().contains("is not open"));
             db.execute("""
                     CREATE PROCEDURE duas
                     AS
@@ -1220,7 +1220,7 @@ class DatabaseTest {
                     END
                     """);
             NexException duas = assertThrows(NexException.class, () -> db.execute("EXECUTE PROCEDURE duas"));
-            assertTrue(duas.getMessage().contains("já está aberto"));
+            assertTrue(duas.getMessage().contains("is already open"));
             db.execute("""
                     CREATE TRIGGER item_ai FOR item
                     AFTER INSERT
@@ -1266,11 +1266,11 @@ class DatabaseTest {
             assertEquals("Ana", db.query("SELECT pessoa FROM primeira()").rows().get(0).getString(0));
             NexException gravar = assertThrows(NexException.class,
                     () -> db.execute("INSERT INTO ativo (pessoa) VALUES ('Lia')"));
-            assertTrue(gravar.getMessage().contains("somente leitura"));
+            assertTrue(gravar.getMessage().contains("read-only"));
             assertThrows(NexException.class,
                     () -> db.execute("INSERT INTO NEX$VIEWS (NEX$VIEW_NAME, NEX$VIEW_SOURCE, NEX$RELATION_NAME, NEX$COLUMNS, NEX$OWNER_NAME) VALUES ('x', 'SELECT 1', 'item', 'x', 'DBA')"));
             NexException remover = assertThrows(NexException.class, () -> db.execute("DROP TABLE item"));
-            assertTrue(remover.getMessage().contains("depende"));
+            assertTrue(remover.getMessage().contains("depends"));
             db.execute("INSERT INTO NEX$USERS (NEX$USER_NAME, NEX$PASSWORD) VALUES ('ana', 'ana')");
             Session ana = db.login("ana", "ana");
             assertThrows(NexException.class, () -> db.execute(ana, "SELECT pessoa FROM ativo"));
@@ -1392,7 +1392,7 @@ class DatabaseTest {
             db.execute("DROP CONNECTION " + id);
             NexException derrubada = assertThrows(NexException.class,
                     () -> db.execute(anaVendas, "SELECT CURRENT_USER FROM NEX$DATABASE"));
-            assertTrue(derrubada.getMessage().contains("encerrada"));
+            assertTrue(derrubada.getMessage().contains("closed"));
             assertEquals(0, db.query(
                     "SELECT NEX$ATTACHMENT_ID FROM NEX$CONNECTIONS WHERE NEX$ATTACHMENT_ID = " + id).size());
             assertThrows(NexException.class, () -> db.execute("DROP CONNECTION " + id));
@@ -1444,14 +1444,14 @@ class DatabaseTest {
     void abrirNaoCriaArquivo() throws Exception {
         Path ausente = dir.resolve("ausente.db");
         NexException aberto = assertThrows(NexException.class, () -> Database.open(ausente, "dba", "dba"));
-        assertTrue(aberto.getMessage().contains("não existe"));
+        assertTrue(aberto.getMessage().contains("does not exist"));
         NexException anexo = assertThrows(NexException.class, () -> Database.attach(ausente));
-        assertTrue(anexo.getMessage().contains("não existe"));
+        assertTrue(anexo.getMessage().contains("does not exist"));
         assertFalse(Files.exists(ausente));
         Path vazio = dir.resolve("vazio.db");
         Files.write(vazio, new byte[0]);
         NexException vazioErro = assertThrows(NexException.class, () -> Database.open(vazio, "dba", "dba"));
-        assertTrue(vazioErro.getMessage().contains("vazio"));
+        assertTrue(vazioErro.getMessage().contains("empty"));
         assertEquals(0, Files.size(vazio));
     }
 
@@ -1678,7 +1678,7 @@ class DatabaseTest {
         Database.create(dir.resolve("outro.db"), DatabaseOptions.defaults());
         Files.copy(dir.resolve("outro.log"), log, StandardCopyOption.REPLACE_EXISTING);
         NexException alheio = assertThrows(NexException.class, () -> Database.open(arquivo, "dba", "dba"));
-        assertTrue(alheio.getMessage().contains("não pertence"));
+        assertTrue(alheio.getMessage().contains("does not belong"));
         NexException extensao = assertThrows(NexException.class, () -> Database.open(dir.resolve("loja.xdb"), "dba", "dba"));
         assertTrue(extensao.getMessage().contains(".db"));
     }
@@ -1708,7 +1708,7 @@ class DatabaseTest {
         Files.move(guardado, log);
         long bytes = Files.size(log);
         NexException perdido = assertThrows(NexException.class, () -> Database.open(arquivo, "dba", "dba"));
-        assertTrue(perdido.getMessage().contains("geração"));
+        assertTrue(perdido.getMessage().contains("generation"));
         assertEquals(bytes, Files.size(log));
         assertEquals(geracao, epochLog(log));
         Files.delete(log);
@@ -1770,7 +1770,7 @@ class DatabaseTest {
 
         NexException anterior = assertThrows(NexException.class,
                 () -> Database.applyLog(arquivo, destino.resolve("loja.log")));
-        assertTrue(anterior.getMessage().contains("anterior"));
+        assertTrue(anterior.getMessage().contains("previous"));
 
         try (Database db = Database.open(destino.resolve("loja.db"), "dba", "dba")) {
             assertEquals("antes", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
@@ -1785,7 +1785,7 @@ class DatabaseTest {
         Database.create(dir.resolve("outro.db"), DatabaseOptions.defaults());
         NexException alheio = assertThrows(NexException.class,
                 () -> Database.applyLog(destino.resolve("loja.db"), dir.resolve("outro.log")));
-        assertTrue(alheio.getMessage().contains("não pertence"));
+        assertTrue(alheio.getMessage().contains("does not belong"));
     }
 
     @Test

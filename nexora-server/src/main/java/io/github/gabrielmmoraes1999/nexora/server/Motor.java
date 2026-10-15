@@ -5,7 +5,7 @@ import io.github.gabrielmmoraes1999.nexora.NexException;
 import java.nio.file.Path;
 
 /**
- * Linha de comando do motor de rede.
+ * Command line for the network server.
  *
  * <pre>{@code
  * java -jar nexora-server-1.0.jar serve motor.json
@@ -34,14 +34,14 @@ public final class Motor {
             throw new NexException(uso());
         }
         if (args.length != 2 || args[1].isBlank()) {
-            throw new NexException("informe o arquivo json do motor\n\n" + uso());
+            throw new NexException("provide the server json file\n\n" + uso());
         }
         MotorConfig config = MotorConfig.read(Path.of(args[1]));
         MotorServer server = MotorServer.start(config);
         Runtime.getRuntime().addShutdownHook(new Thread(server::close, "nex-motor-shutdown"));
-        System.out.println("motor em " + config.host() + ":" + server.port());
+        System.out.println("server at " + config.host() + ":" + server.port());
         for (MotorConfig.DatabaseSpec spec : config.databases()) {
-            System.out.println("banco " + spec.name() + ": " + spec.path());
+            System.out.println("database " + spec.name() + ": " + spec.path());
         }
         try {
             server.await();
@@ -53,12 +53,12 @@ public final class Motor {
 
     static String uso() {
         return """
-                Uso:
-                  java -jar nexora-server-1.0.jar serve <motor.json>
+                Usage:
+                  java -jar nexora-server-1.0.jar serve <server.json>
 
-                Publica os bancos do json para jdbc:nexora://host:porta/nome.
+                Publishes the databases from the json to jdbc:nexora://host:port/name.
 
-                Exemplo:
+                Example:
                   java -jar nexora-server-1.0.jar serve motor.json
                 """;
     }

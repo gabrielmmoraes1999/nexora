@@ -3,8 +3,8 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.util.Locale;
 
 /**
- * Opções da criação do arquivo. A página fica fixa, como no Firebird:
- * 4096, 8192, 16384 ou 32768. O padrão é 8192.
+ * Options for creating the file. The page size is fixed, as in Firebird:
+ * 4096, 8192, 16384, or 32768. The default is 8192.
  */
 public record DatabaseOptions(
         int pageSize,
@@ -17,10 +17,10 @@ public record DatabaseOptions(
 
     public DatabaseOptions {
         pageSize = Format.checkPageSize(pageSize);
-        user = required(user, "usuário DBA", 63).toUpperCase(Locale.ROOT);
+        user = required(user, "DBA user", 63).toUpperCase(Locale.ROOT);
         password = secret(password);
-        name = required(name, "nome do banco", 63);
-        description = required(description, "descrição", 256);
+        name = required(name, "database name", 63);
+        description = required(description, "description", 256);
         charset = charset(charset);
     }
 
@@ -30,15 +30,15 @@ public record DatabaseOptions(
 
     private static String required(String value, String kind, int max) {
         if (value == null || value.isBlank()) {
-            throw new NexException(kind + " é obrigatório");
+            throw new NexException(kind + " is required");
         }
         String text = value.trim();
         if (text.length() > max) {
-            throw new NexException(kind + " excede " + max + " caracteres");
+            throw new NexException(kind + " exceeds " + max + " characters");
         }
         for (int i = 0; i < text.length(); i++) {
             if (text.charAt(i) < 32) {
-                throw new NexException(kind + " contém caractere inválido");
+                throw new NexException(kind + " contains an invalid character");
             }
         }
         return text;
@@ -46,26 +46,26 @@ public record DatabaseOptions(
 
     private static String secret(String value) {
         if (value == null || value.isEmpty()) {
-            throw new NexException("senha do DBA é obrigatória");
+            throw new NexException("DBA password is required");
         }
         if (value.length() > 72) {
-            throw new NexException("senha do DBA excede 72 caracteres");
+            throw new NexException("DBA password exceeds 72 characters");
         }
         for (int i = 0; i < value.length(); i++) {
             if (value.charAt(i) < 32) {
-                throw new NexException("senha do DBA contém caractere inválido");
+                throw new NexException("DBA password contains an invalid character");
             }
         }
         return value;
     }
 
     private static String charset(String value) {
-        String text = required(value, "conjunto de caracteres", 32).toUpperCase(Locale.ROOT);
+        String text = required(value, "character set", 32).toUpperCase(Locale.ROOT);
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
             boolean ok = (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
             if (!ok) {
-                throw new NexException("conjunto de caracteres inválido: " + text);
+                throw new NexException("invalid character set: " + text);
             }
         }
         return text;

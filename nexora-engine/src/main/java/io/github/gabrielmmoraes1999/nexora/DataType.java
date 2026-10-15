@@ -1,8 +1,8 @@
 package io.github.gabrielmmoraes1999.nexora;
 
 /**
- * Tipos de coluna persistidos no arquivo da tabela.
- * A ordem dos valores faz parte do formato. Tipos novos entram no final.
+ * Column types stored in the table file.
+ * Value order is part of the format. New types are appended at the end.
  */
 public enum DataType {
     INTEGER,

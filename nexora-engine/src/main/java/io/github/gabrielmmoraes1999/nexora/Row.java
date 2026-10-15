@@ -8,8 +8,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Uma linha materializada. O índice da coluna começa em zero.
- * Valores SQL NULL são devolvidos como {@code null}.
+ * A materialized row. The column index starts at zero.
+ * SQL NULL values are returned as {@code null}.
  */
 public final class Row {
 
@@ -22,11 +22,11 @@ public final class Row {
     }
 
     /**
-     * Remonta uma linha recebida pela rede. O tamanho das duas listas precisa coincidir.
+     * Rebuilds a row received over the network. The two lists must be the same size.
      */
     public static Row of(List<ColumnMeta> columns, Object[] values) {
         if (columns == null || values == null || columns.size() != values.length) {
-            throw new NexException("colunas e valores da linha diferem");
+            throw new NexException("row columns and values differ");
         }
         return new Row(List.copyOf(columns), values.clone());
     }
@@ -73,7 +73,7 @@ public final class Row {
             return null;
         }
         if (value instanceof byte[]) {
-            throw new NexException("coluna " + columnName(index) + " é BLOB; use getBytes");
+            throw new NexException("column " + columnName(index) + " is BLOB; use getBytes");
         }
         if (value instanceof BigDecimal decimal) {
             return decimal.toPlainString();
@@ -102,7 +102,7 @@ public final class Row {
             return null;
         }
         if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
-            throw new NexException("valor fora do intervalo de int na coluna " + name);
+            throw new NexException("value is outside the int range in column " + name);
         }
         return value.intValue();
     }
@@ -117,7 +117,7 @@ public final class Row {
             return null;
         }
         if (value < Short.MIN_VALUE || value > Short.MAX_VALUE) {
-            throw new NexException("valor fora do intervalo de SMALLINT na coluna " + columnName(index));
+            throw new NexException("value is outside the SMALLINT range in column " + columnName(index));
         }
         return value.shortValue();
     }
@@ -134,7 +134,7 @@ public final class Row {
         if (value instanceof Float || value instanceof Double) {
             float number = ((Number) value).floatValue();
             if (!Float.isFinite(number)) {
-                throw new NexException("FLOAT não aceita infinito nem NaN");
+                throw new NexException("FLOAT does not accept infinity or NaN");
             }
             return number;
         }
@@ -254,25 +254,25 @@ public final class Row {
 
     private int indexOf(String name) {
         if (name == null) {
-            throw new NexException("nome da coluna é obrigatório");
+            throw new NexException("column name is required");
         }
         for (int i = 0; i < columns.size(); i++) {
             if (columns.get(i).name().toLowerCase(Locale.ROOT).equals(name.toLowerCase(Locale.ROOT))) {
                 return i;
             }
         }
-        throw new NexException("coluna não encontrada: " + name);
+        throw new NexException("column not found: " + name);
     }
 
     private int check(int index) {
         if (index < 0 || index >= values.length) {
-            throw new NexException("índice de coluna fora do intervalo: " + index);
+            throw new NexException("column index is out of range: " + index);
         }
         return index;
     }
 
     private NexException mismatch(int index, String expected) {
-        return new NexException("coluna " + columnName(index) + " não é " + expected);
+        return new NexException("column " + columnName(index) + " is not " + expected);
     }
 
     @Override

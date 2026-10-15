@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * JSON suficiente para o registro: objeto, lista, texto, número, booleano e nulo.
+ * JSON sufficient for the registry: object, list, text, number, boolean, and null.
  */
 final class Json {
 
@@ -19,14 +19,14 @@ final class Json {
 
     static Object parse(String text) {
         if (text == null) {
-            throw new IllegalArgumentException("registro vazio");
+            throw new IllegalArgumentException("empty registry");
         }
         Json parser = new Json(text);
         parser.skip();
         Object value = parser.value();
         parser.skip();
         if (parser.index != text.length()) {
-            throw new IllegalArgumentException("registro inválido na posição " + (parser.index + 1));
+            throw new IllegalArgumentException("invalid registry at position " + (parser.index + 1));
         }
         return value;
     }
@@ -78,7 +78,7 @@ final class Json {
                 pad(out, indent);
                 out.append(']');
             }
-            default -> throw new IllegalArgumentException("valor não suportado no registro: " + value.getClass().getSimpleName());
+            default -> throw new IllegalArgumentException("unsupported registry value: " + value.getClass().getSimpleName());
         }
     }
 
@@ -111,7 +111,7 @@ final class Json {
     private Object value() {
         skip();
         if (index >= text.length()) {
-            throw error("valor esperado");
+            throw error("value expected");
         }
         char c = text.charAt(index);
         if (c == '{') {
@@ -132,7 +132,7 @@ final class Json {
         if (c == '-' || (c >= '0' && c <= '9')) {
             return number();
         }
-        throw error("valor inválido");
+        throw error("invalid value");
     }
 
     private Map<String, Object> object() {
@@ -187,7 +187,7 @@ final class Json {
             }
             if (c == '\\') {
                 if (index >= text.length()) {
-                    throw error("texto não terminado");
+                    throw error("unterminated text");
                 }
                 char escaped = text.charAt(index++);
                 switch (escaped) {
@@ -197,22 +197,22 @@ final class Json {
                     case 't' -> out.append('\t');
                     case 'u' -> {
                         if (index + 4 > text.length()) {
-                            throw error("escape unicode incompleto");
+                            throw error("incomplete unicode escape");
                         }
                         int code = Integer.parseInt(text.substring(index, index + 4), 16);
                         out.append((char) code);
                         index += 4;
                     }
-                    default -> throw error("escape inválido");
+                    default -> throw error("invalid escape");
                 }
                 continue;
             }
             if (c < 32) {
-                throw error("caractere de controle no texto");
+                throw error("control character in text");
             }
             out.append(c);
         }
-        throw error("texto não terminado");
+        throw error("unterminated text");
     }
 
     private Boolean bool() {
@@ -224,7 +224,7 @@ final class Json {
             index += 5;
             return Boolean.FALSE;
         }
-        throw error("booleano inválido");
+        throw error("invalid boolean");
     }
 
     private Object nil() {
@@ -232,7 +232,7 @@ final class Json {
             index += 4;
             return null;
         }
-        throw error("nulo inválido");
+        throw error("invalid null");
     }
 
     private Long number() {
@@ -241,7 +241,7 @@ final class Json {
             index++;
         }
         if (index >= text.length() || text.charAt(index) < '0' || text.charAt(index) > '9') {
-            throw error("número inválido");
+            throw error("invalid number");
         }
         while (index < text.length() && text.charAt(index) >= '0' && text.charAt(index) <= '9') {
             index++;
@@ -249,7 +249,7 @@ final class Json {
         try {
             return Long.parseLong(text.substring(start, index));
         } catch (NumberFormatException exception) {
-            throw error("número inválido");
+            throw error("invalid number");
         }
     }
 
@@ -265,12 +265,12 @@ final class Json {
 
     private void expect(char c) {
         if (!peek(c)) {
-            throw error("esperado '" + c + "'");
+            throw error("expected '" + c + "'");
         }
         index++;
     }
 
     private IllegalArgumentException error(String message) {
-        return new IllegalArgumentException(message + " (posição " + (index + 1) + ")");
+        return new IllegalArgumentException(message + " (position " + (index + 1) + ")");
     }
 }

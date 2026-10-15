@@ -4,8 +4,8 @@ import java.util.Iterator;
 import java.util.List;
 
 /**
- * Resultado do último comando de um script. Consultas trazem linhas;
- * os demais comandos trazem a quantidade de registros afetados.
+ * Result of the last statement in a script. Queries return rows;
+ * other statements return the number of affected records.
  */
 public final class SqlResult implements Iterable<Row> {
 
@@ -57,7 +57,7 @@ public final class SqlResult implements Iterable<Row> {
     @Override
     public String toString() {
         if (!query) {
-            return "afetadas=" + affectedRows;
+            return "affected=" + affectedRows;
         }
         StringBuilder builder = new StringBuilder();
         for (int i = 0; i < columns.size(); i++) {

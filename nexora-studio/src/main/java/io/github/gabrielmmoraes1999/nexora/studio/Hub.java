@@ -4,7 +4,7 @@ import java.awt.Component;
 import java.sql.Connection;
 
 /**
- * O que as abas pedem à janela: a conexão viva, o catálogo e outra aba.
+ * What the tabs ask of the window: the live connection, the catalog, and another tab.
  */
 interface Hub {
 

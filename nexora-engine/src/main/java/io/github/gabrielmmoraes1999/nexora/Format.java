@@ -20,23 +20,23 @@ final class Format {
     static final int VERSION_OFFSET = MAGIC.length;
     static final int PAGE_SIZE_OFFSET = 64;
     static final int CATALOG_SPAN_OFFSET = 68;
-    /** Identificador compartilhado pelo .db e pelo .log. Zero não é um banco novo. */
+    /** Identifier shared by the .db and the .log. Zero is not a new database. */
     static final int LOG_ID_OFFSET = 72;
-    /** Offset no log até onde as páginas do .db estão sincronizadas. */
+    /** Offset in the log up to which the .db pages are synchronized. */
     static final int CHECKPOINT_LSN_OFFSET = 80;
-    /** Reservado. O checkpoint deixa o histórico no log e este byte fica em 0. */
+    /** Reserved. The checkpoint leaves the history in the log and this byte stays 0. */
     static final int CHECKPOINT_STABLE_OFFSET = 88;
     static final byte CHECKPOINT_STABLE = 1;
-    /** Geração do log. Sobe no backup completo e quando o log vivo falta e outro é criado. */
+    /** Log generation. It increases on a full backup and when the live log is missing and a new one is created. */
     static final int LOG_EPOCH_OFFSET = 96;
-    /** Até onde um log externo já foi aplicado, no sistema de offsets desse log. */
+    /** How far an external log has already been applied, in that log's offset space. */
     static final int APPLIED_OFFSET = 104;
     static final int LOG_ID_AT = 16;
     static final int LOG_PAGE_AT = 24;
     static final int LOG_EPOCH_AT = 32;
     static final int RECORD_REDO = 1;
     static final int RECORD_CHECKPOINT = 2;
-    /** SQL confirmado: as transações que o aplicador executa de novo. */
+    /** Committed SQL: the transactions the applier runs again. */
     static final int RECORD_TRANSACTION = 3;
     static final int DEFAULT_PAGE_SIZE = 8192;
     static final int CATALOG_MAGIC = 0x43415441;
@@ -71,36 +71,36 @@ final class Format {
         if (pageSize == 4096 || pageSize == 8192 || pageSize == 16384 || pageSize == 32768) {
             return pageSize;
         }
-        throw new NexException("tamanho de página inválido: use 4096, 8192, 16384 ou 32768");
+        throw new NexException("invalid page size: use 4096, 8192, 16384, or 32768");
     }
 
     static long alignPage(long value, int pageSize) {
         long mask = pageSize - 1L;
         long aligned = (value + mask) & ~mask;
         if (value < 0 || aligned < value) {
-            throw new NexException("tamanho excede o limite do arquivo");
+            throw new NexException("size exceeds the file limit");
         }
         return aligned;
     }
 
     static long blobExtent(long payloadLength) {
         if (payloadLength < 0) {
-            throw new NexException("tamanho de BLOB inválido");
+            throw new NexException("invalid BLOB size");
         }
         long raw = BLOCK_HEADER + payloadLength;
         if (raw > Integer.MAX_VALUE) {
-            throw new NexException("BLOB excede o tamanho máximo suportado");
+            throw new NexException("BLOB exceeds the maximum supported size");
         }
         return align8(raw);
     }
 
     static long slotExtent(int payloadLength) {
         if (payloadLength < 0) {
-            throw new NexException("tamanho de registro inválido");
+            throw new NexException("invalid record size");
         }
         long raw = BLOCK_HEADER + payloadLength;
         if (raw > Integer.MAX_VALUE) {
-            throw new NexException("registro excede o tamanho máximo suportado");
+            throw new NexException("record exceeds the maximum supported size");
         }
         return align8(raw);
     }
@@ -124,7 +124,7 @@ final class Format {
             return;
         }
         if (offset < 0 || length < 0) {
-            throw new NexException("intervalo inválido ao limpar o arquivo");
+            throw new NexException("invalid range while clearing the file");
         }
         byte[] chunk = new byte[(int) Math.min(1024 * 1024L, length)];
         long at = offset;
@@ -144,12 +144,12 @@ final class Format {
             while (buffer.hasRemaining()) {
                 int written = channel.write(buffer, position);
                 if (written < 0) {
-                    throw new java.io.EOFException("não foi possível gravar o arquivo da tabela");
+                    throw new java.io.EOFException("could not write the table file");
                 }
                 position += written;
             }
         } catch (java.io.IOException exception) {
-            throw new NexException("falha ao gravar o arquivo da tabela: " + exception.getMessage(), exception);
+            throw new NexException("failed to write the table file: " + exception.getMessage(), exception);
         }
     }
 
@@ -161,14 +161,14 @@ final class Format {
             while (buffer.hasRemaining()) {
                 int read = channel.read(buffer, position);
                 if (read < 0) {
-                    throw new NexException("arquivo da tabela truncado ou corrompido");
+                    throw new NexException("table file is truncated or corrupt");
                 }
                 position += read;
             }
         } catch (NexException exception) {
             throw exception;
         } catch (java.io.IOException exception) {
-            throw new NexException("falha ao ler o arquivo da tabela: " + exception.getMessage(), exception);
+            throw new NexException("failed to read the table file: " + exception.getMessage(), exception);
         }
         return data;
     }

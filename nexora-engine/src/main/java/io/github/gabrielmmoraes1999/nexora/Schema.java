@@ -169,7 +169,7 @@ final class Schema {
     Column column(String columnName) {
         int index = indexOf(columnName);
         if (index < 0) {
-            throw new NexException("coluna não encontrada: " + columnName);
+            throw new NexException("column not found: " + columnName);
         }
         return columns.get(index);
     }
@@ -182,10 +182,10 @@ final class Schema {
 
     Schema withPrimaryKey(int[] key, String constraint, String index, boolean descending) {
         if (key.length == 0) {
-            throw new NexException("a chave primária precisa de ao menos uma coluna");
+            throw new NexException("primary key requires at least one column");
         }
         if (primaryKey.length > 0) {
-            throw new NexException("a tabela " + name + " já possui chave primária");
+            throw new NexException("table " + name + " already has a primary key");
         }
         List<Column> copy = new ArrayList<>(columns);
         for (int column : key) {
@@ -196,7 +196,7 @@ final class Schema {
 
     Schema add(Column column, boolean primary, boolean unique) {
         if (primary && primaryKey.length > 0) {
-            throw new NexException("a tabela " + name + " já possui chave primária");
+            throw new NexException("table " + name + " already has a primary key");
         }
         List<Column> copy = new ArrayList<>(columns);
         copy.add(column);
@@ -219,7 +219,7 @@ final class Schema {
 
     Schema namePrimary(String constraint, String index, boolean descending) {
         if (primaryKey.length == 0) {
-            throw new NexException("a tabela " + name + " não possui chave primária");
+            throw new NexException("table " + name + " does not have a primary key");
         }
         return copy(columns, primaryKey, uniques, indexes, constraint, index, descending, foreignKeys);
     }
@@ -247,7 +247,7 @@ final class Schema {
             copy.add(key);
         }
         if (!found) {
-            throw new NexException("chave única não encontrada: " + constraint);
+            throw new NexException("unique key not found: " + constraint);
         }
         return copy(columns, primaryKey, copy, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
@@ -262,7 +262,7 @@ final class Schema {
                 return candidate;
             }
         }
-        throw new NexException("não foi possível nomear a chave única");
+        throw new NexException("could not name the unique key");
     }
 
     boolean nameTaken(String candidate) {
@@ -296,7 +296,7 @@ final class Schema {
 
     Schema withoutPrimaryKey() {
         if (primaryKey.length == 0) {
-            throw new NexException("a tabela " + name + " não possui chave primária");
+            throw new NexException("table " + name + " does not have a primary key");
         }
         return copy(columns, new int[0], uniques, indexes, "", "", false, foreignKeys);
     }
@@ -312,7 +312,7 @@ final class Schema {
             keys.add(key);
         }
         if (found == null) {
-            throw new NexException("restrição não encontrada: " + constraint);
+            throw new NexException("constraint not found: " + constraint);
         }
         List<IndexDef> kept = new ArrayList<>();
         boolean removed = false;
@@ -324,7 +324,7 @@ final class Schema {
             kept.add(index);
         }
         if (!removed) {
-            throw new NexException("índice não encontrado: " + found.indexName);
+            throw new NexException("index not found: " + found.indexName);
         }
         return copy(columns, primaryKey, uniques, kept, primaryConstraint, primaryIndex, primaryDescending, keys);
     }
@@ -340,7 +340,7 @@ final class Schema {
             copy.add(index);
         }
         if (!found) {
-            throw new NexException("índice não encontrado: " + indexName);
+            throw new NexException("index not found: " + indexName);
         }
         return copy(columns, primaryKey, uniques, copy, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
@@ -463,14 +463,14 @@ final class Names {
 
     static void checkName(String name, String kind) {
         if (name == null || name.isBlank()) {
-            throw new NexException(kind + " é obrigatório");
+            throw new NexException(kind + " is required");
         }
         if (name.length() > Format.MAX_NAME) {
-            throw new NexException(kind + " excede " + Format.MAX_NAME + " caracteres");
+            throw new NexException(kind + " exceeds " + Format.MAX_NAME + " characters");
         }
     }
 
-    /** Nome gerado de UNIQUE: {@code UNQ1_tabela}. */
+    /** Generated UNIQUE name: {@code UNQ1_table}. */
     static boolean generatedUnique(String name) {
         if (name == null || name.isBlank()) {
             return false;

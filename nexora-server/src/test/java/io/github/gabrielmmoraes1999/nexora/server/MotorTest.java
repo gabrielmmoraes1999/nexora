@@ -22,7 +22,7 @@ class MotorTest {
         assertThrows(NexException.class, () -> Motor.execute(new String[]{"serve"}));
         Path missing = dir.resolve("ausente.json");
         NexException ausente = assertThrows(NexException.class, () -> Motor.execute(new String[]{"serve", missing.toString()}));
-        assertTrue(ausente.getMessage().contains("ler"));
+        assertTrue(ausente.getMessage().contains("read"));
 
         Path bad = dir.resolve("ruim.json");
         Files.writeString(bad, "{");
@@ -33,25 +33,25 @@ class MotorTest {
         Files.writeString(semPorta, """
                 {"databases":[{"name":"loja","path":"loja.db"}]}
                 """);
-        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(semPorta)).getMessage().contains("porta"));
+        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(semPorta)).getMessage().contains("port"));
 
         Path zero = dir.resolve("zero.json");
         Files.writeString(zero, """
                 {"port":0,"databases":[{"name":"loja","path":"loja.db"}]}
                 """);
-        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(zero)).getMessage().contains("porta"));
+        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(zero)).getMessage().contains("port"));
 
         Path repetido = dir.resolve("repetido.json");
         Files.writeString(repetido, """
                 {"port":1,"databases":[{"name":"Loja","path":"a.db"},{"name":"loja","path":"b.db"}]}
                 """);
-        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(repetido)).getMessage().contains("repetido"));
+        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(repetido)).getMessage().contains("duplicate"));
 
         Path estranho = dir.resolve("estranho.json");
         Files.writeString(estranho, """
                 {"port":1,"databases":[{"name":"loja","path":"a.db","extra":"x"}]}
                 """);
-        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(estranho)).getMessage().contains("desconhecida"));
+        assertTrue(assertThrows(NexException.class, () -> MotorConfig.read(estranho)).getMessage().contains("unknown"));
 
         Path relativo = dir.resolve("motor.json");
         Files.writeString(relativo, """

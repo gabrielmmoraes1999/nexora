@@ -46,7 +46,7 @@ final class Values {
     static int toInt(Object value) {
         long number = toLong(value, "INTEGER");
         if (number < Integer.MIN_VALUE || number > Integer.MAX_VALUE) {
-            throw new NexException("valor numérico não cabe em INTEGER: " + display(value));
+            throw new NexException("numeric value does not fit in INTEGER: " + display(value));
         }
         return (int) number;
     }
@@ -54,7 +54,7 @@ final class Values {
     static short toShort(Object value) {
         long number = toLong(value, "SMALLINT");
         if (number < Short.MIN_VALUE || number > Short.MAX_VALUE) {
-            throw new NexException("valor numérico não cabe em SMALLINT: " + display(value));
+            throw new NexException("numeric value does not fit in SMALLINT: " + display(value));
         }
         return (short) number;
     }
@@ -70,16 +70,16 @@ final class Values {
             try {
                 return decimal.longValueExact();
             } catch (ArithmeticException exception) {
-                throw new NexException("valor numérico não cabe em " + typeName + ": " + display(value));
+                throw new NexException("numeric value does not fit in " + typeName + ": " + display(value));
             }
         }
         if (value instanceof Double || value instanceof Float) {
             double number = ((Number) value).doubleValue();
             if (!Double.isFinite(number) || number != Math.rint(number)) {
-                throw new NexException("valor fracionário não pode ser " + typeName + ": " + display(value));
+                throw new NexException("fractional value cannot be " + typeName + ": " + display(value));
             }
             if (number > Long.MAX_VALUE || number < Long.MIN_VALUE) {
-                throw new NexException("valor numérico não cabe em " + typeName + ": " + display(value));
+                throw new NexException("numeric value does not fit in " + typeName + ": " + display(value));
             }
             return (long) number;
         }
@@ -87,10 +87,10 @@ final class Values {
             try {
                 return Long.parseLong(text.trim());
             } catch (NumberFormatException exception) {
-                throw new NexException("não é possível converter '" + display(value) + "' para " + typeName);
+                throw new NexException("cannot convert '" + display(value) + "' to " + typeName);
             }
         }
-        throw new NexException("não é possível converter " + display(value) + " para " + typeName);
+        throw new NexException("cannot convert " + display(value) + " to " + typeName);
     }
 
     static float toFloat(Object value) {
@@ -104,17 +104,17 @@ final class Values {
             try {
                 number = Double.parseDouble(text.trim());
             } catch (NumberFormatException exception) {
-                throw new NexException("não é possível converter '" + display(value) + "' para FLOAT");
+                throw new NexException("cannot convert '" + display(value) + "' to FLOAT");
             }
         } else {
-            throw new NexException("não é possível converter " + display(value) + " para FLOAT");
+            throw new NexException("cannot convert " + display(value) + " to FLOAT");
         }
         if (!Double.isFinite(number)) {
-            throw new NexException("FLOAT não aceita infinito nem NaN");
+            throw new NexException("FLOAT does not accept infinity or NaN");
         }
         float narrow = (float) number;
         if (!Float.isFinite(narrow)) {
-            throw new NexException("valor numérico não cabe em FLOAT: " + display(value));
+            throw new NexException("numeric value does not fit in FLOAT: " + display(value));
         }
         return narrow;
     }
@@ -130,10 +130,10 @@ final class Values {
             try {
                 return LocalTime.parse(text.trim());
             } catch (DateTimeParseException exception) {
-                throw new NexException("hora inválida: " + display(value) + " (use HH:mm[:ss[.SSS]])");
+                throw new NexException("invalid time: " + display(value) + " (use HH:mm[:ss[.SSS]])");
             }
         }
-        throw new NexException("não é possível converter " + display(value) + " para TIME");
+        throw new NexException("cannot convert " + display(value) + " to TIME");
     }
 
     static double toDouble(Object value) {
@@ -141,14 +141,14 @@ final class Values {
                 || value instanceof Integer || value instanceof Short || value instanceof Byte) {
             double number = ((Number) value).doubleValue();
             if (!Double.isFinite(number)) {
-                throw new NexException("DOUBLE não aceita infinito nem NaN");
+                throw new NexException("DOUBLE does not accept infinity or NaN");
             }
             return number;
         }
         if (value instanceof BigDecimal decimal) {
             double number = decimal.doubleValue();
             if (!Double.isFinite(number)) {
-                throw new NexException("valor não cabe em DOUBLE: " + display(value));
+                throw new NexException("value does not fit in DOUBLE: " + display(value));
             }
             return number;
         }
@@ -156,14 +156,14 @@ final class Values {
             try {
                 double number = Double.parseDouble(text.trim());
                 if (!Double.isFinite(number)) {
-                    throw new NexException("DOUBLE não aceita infinito nem NaN");
+                    throw new NexException("DOUBLE does not accept infinity or NaN");
                 }
                 return number;
             } catch (NumberFormatException exception) {
-                throw new NexException("não é possível converter '" + display(value) + "' para DOUBLE");
+                throw new NexException("cannot convert '" + display(value) + "' to DOUBLE");
             }
         }
-        throw new NexException("não é possível converter " + display(value) + " para DOUBLE");
+        throw new NexException("cannot convert " + display(value) + " to DOUBLE");
     }
 
     static boolean toBoolean(Object value) {
@@ -188,7 +188,7 @@ final class Values {
                 return false;
             }
         }
-        throw new NexException("não é possível converter " + display(value) + " para BOOLEAN");
+        throw new NexException("cannot convert " + display(value) + " to BOOLEAN");
     }
 
     static String toText(Object value, DataType type, int length) {
@@ -196,14 +196,14 @@ final class Values {
         if (value instanceof String raw) {
             text = raw;
         } else if (value instanceof byte[]) {
-            throw new NexException("use um texto, não um BLOB, na coluna " + type);
+            throw new NexException("use a string, not a BLOB, in column " + type);
         } else if (value instanceof BigDecimal decimal) {
             text = decimal.toPlainString();
         } else {
             text = String.valueOf(value);
         }
         if ((type == DataType.CHAR || type == DataType.VARCHAR) && text.length() > length) {
-            throw new NexException("texto excede " + length + " caracteres");
+            throw new NexException("text exceeds " + length + " characters");
         }
         return text;
     }
@@ -222,10 +222,10 @@ final class Values {
             try {
                 return LocalDate.parse(text.trim());
             } catch (DateTimeParseException exception) {
-                throw new NexException("data inválida: " + display(value) + " (use AAAA-MM-DD)");
+                throw new NexException("invalid date: " + display(value) + " (use YYYY-MM-DD)");
             }
         }
-        throw new NexException("não é possível converter " + display(value) + " para DATE");
+        throw new NexException("cannot convert " + display(value) + " to DATE");
     }
 
     static LocalDateTime toTimestamp(Object value) {
@@ -252,11 +252,11 @@ final class Values {
                 try {
                     return LocalDateTime.parse(raw, SQL_TIMESTAMP);
                 } catch (DateTimeParseException exception) {
-                    throw new NexException("timestamp inválido: " + display(value));
+                    throw new NexException("invalid timestamp: " + display(value));
                 }
             }
         }
-        throw new NexException("não é possível converter " + display(value) + " para TIMESTAMP");
+        throw new NexException("cannot convert " + display(value) + " to TIMESTAMP");
     }
 
     static BigDecimal toDecimal(Object value, int precision, int scale) {
@@ -268,25 +268,25 @@ final class Values {
         } else if (value instanceof Double || value instanceof Float) {
             double number = ((Number) value).doubleValue();
             if (!Double.isFinite(number)) {
-                throw new NexException("DECIMAL não aceita infinito nem NaN");
+                throw new NexException("DECIMAL does not accept infinity or NaN");
             }
             decimal = BigDecimal.valueOf(number);
         } else if (value instanceof String text) {
             try {
                 decimal = new BigDecimal(text.trim());
             } catch (NumberFormatException exception) {
-                throw new NexException("não é possível converter '" + display(value) + "' para DECIMAL");
+                throw new NexException("cannot convert '" + display(value) + "' to DECIMAL");
             }
         } else {
-            throw new NexException("não é possível converter " + display(value) + " para DECIMAL");
+            throw new NexException("cannot convert " + display(value) + " to DECIMAL");
         }
         try {
             decimal = decimal.setScale(scale, java.math.RoundingMode.HALF_UP);
         } catch (ArithmeticException exception) {
-            throw new NexException("não foi possível ajustar a escala de " + display(value));
+            throw new NexException("could not adjust the scale of " + display(value));
         }
         if (decimal.precision() > precision) {
-            throw new NexException("valor " + decimal.toPlainString() + " excede DECIMAL(" + precision + "," + scale + ")");
+            throw new NexException("value " + decimal.toPlainString() + " exceeds DECIMAL(" + precision + "," + scale + ")");
         }
         return decimal;
     }
@@ -301,7 +301,7 @@ final class Values {
             copy.get(bytes);
             return bytes;
         }
-        throw new NexException("BLOB recebe byte[] ou X'hex'; recebido " + display(value));
+        throw new NexException("BLOB accepts byte[] or X'hex'; received " + display(value));
     }
 
     static String display(Object value) {
@@ -343,7 +343,7 @@ final class Values {
             left = toTime(text);
         }
         if (left.getClass() != right.getClass() && !sameFamily(left, right)) {
-            throw new NexException("não é possível comparar " + typeName(left) + " com " + typeName(right));
+            throw new NexException("cannot compare " + typeName(left) + " with " + typeName(right));
         }
         if (left instanceof LocalDate date && right instanceof LocalDate other) {
             return date.compareTo(other);
@@ -365,7 +365,7 @@ final class Values {
             Comparable<Object> raw = (Comparable<Object>) comparable;
             return raw.compareTo(right);
         }
-        throw new NexException("não é possível comparar " + typeName(left) + " com " + typeName(right));
+        throw new NexException("cannot compare " + typeName(left) + " with " + typeName(right));
     }
 
     static boolean sameFamily(Object left, Object right) {
@@ -446,7 +446,7 @@ final class Values {
             char current = pattern.charAt(patternIndex);
             if (current == escape) {
                 if (patternIndex + 1 >= pattern.length()) {
-                    throw new NexException("ESCAPE incompleto no padrão LIKE");
+                    throw new NexException("incomplete ESCAPE in the LIKE pattern");
                 }
                 if (textIndex >= text.length() || text.charAt(textIndex) != pattern.charAt(patternIndex + 1)) {
                     return false;

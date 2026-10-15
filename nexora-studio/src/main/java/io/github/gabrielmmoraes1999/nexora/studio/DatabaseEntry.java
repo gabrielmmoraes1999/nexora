@@ -4,8 +4,8 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 /**
- * Banco registrado no studio. A senha fica na memória desta execução.
- * O arquivo {@code studio.json} só a recebe quando {@code rememberPassword} é verdadeiro.
+ * Database registered in the studio. The password stays in memory for this run.
+ * The file {@code studio.json} receives it only when {@code rememberPassword} is true.
  */
 public record DatabaseEntry(
         String id,
@@ -48,7 +48,7 @@ public record DatabaseEntry(
             } catch (RuntimeException ignored) {
                 return path;
             }
-            return path.isBlank() ? "banco" : path;
+            return path.isBlank() ? "database" : path;
         }
         return database.isBlank() ? host : database;
     }

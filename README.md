@@ -1,22 +1,22 @@
 # Nexora — JDBC
 
-Driver JDBC do Nexora. O banco é um par de arquivos: o `.db` guarda as tabelas, os `BLOB`, a configuração, os usuários e o registro de conexões; o `.log` ao lado guarda as transações. A aplicação fala com ele por `java.sql`, com `DriverManager`, pool ou DBeaver.
+Nexora JDBC driver. The database is a pair of files: the `.db` holds the tables, the `BLOB`s, the configuration, the users, and the connection registry; the `.log` beside it holds the transactions. The application talks to it through `java.sql`, with `DriverManager`, a connection pool, or DBeaver.
 
-Java 21. O driver declara JDBC 4.2 e não é um driver certificado (`jdbcCompliant()` devolve `false`).
+Java 21. The driver declares JDBC 4.2 and is not a certified driver (`jdbcCompliant()` returns `false`).
 
-São cinco projetos Maven. `nexora-engine` tem o arquivo `.db`, o log `.log`, o SQL e o protocolo. `nexora-jdbc` tem o driver, com conexão embutida e conexão ao motor. `nexora-server` publica os arquivos na rede. `nexora-cli` cria o banco e reúne as utilidades de linha de comando. `nexora-studio` é a interface administrativa. O driver, o motor, o CLI e o studio dependem do engine. O driver e o motor não dependem um do outro. O studio depende do driver.
+There are five Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-server` serves the files on the network. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. The driver, the server, the CLI, and the studio depend on the engine. The driver and the server do not depend on each other. The studio depends on the driver.
 
-## Instalação
+## Installation
 
-Na raiz, o Maven compila o engine e em seguida o driver, o motor e o CLI.
+From the root, Maven builds the engine and then the driver, the server, and the CLI.
 
 ```bash
 mvn package
 ```
 
-O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dentro. Ele sobe com `java -jar`, como em [Rede](#rede). O CLI é o JAR `nexora-cli/target/nexora-cli-1.0.jar`, também com o engine dentro. Ele cria o banco, como em [Criar o banco](#criar-o-banco). O studio é o JAR `nexora-studio/target/nexora-studio-1.0.jar`, com o driver e o engine dentro. Ele abre a interface, como em [Studio](#studio).
+The server is the JAR `nexora-server/target/nexora-server-1.0.jar`, with the engine inside. It starts with `java -jar`, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio).
 
-`mvn install` publica o driver no repositório local. Dependência da aplicação, só o driver:
+`mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
 ```xml
 <dependency>
@@ -26,124 +26,124 @@ O motor é o JAR `nexora-server/target/nexora-server-1.0.jar`, com o engine dent
 </dependency>
 ```
 
-O serviço `META-INF/services/java.sql.Driver` registra o driver. `DriverManager.getConnection` o encontra sem `Class.forName`.
+The `META-INF/services/java.sql.Driver` service registers the driver. `DriverManager.getConnection` finds it without `Class.forName`.
 
 
 |              |                                                      |
 | ------------ | ---------------------------------------------------- |
-| Classe       | `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver` |
-| URL embutida | `jdbc:nexora:embedded:<arquivo.db>`                  |
-| URL de rede  | `jdbc:nexora://<host>:<porta>/<nome>`                |
-| Usuário      | `dba`                                                |
-| Senha        | `dba`                                                |
-| Produto      | Nexora 1.0                                           |
+| Class        | `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver` |
+| Embedded URL | `jdbc:nexora:embedded:<file.db>`                     |
+| Network URL  | `jdbc:nexora://<host>:<port>/<name>`                 |
+| User         | `dba`                                                |
+| Password     | `dba`                                                |
+| Product      | Nexora 1.0                                           |
 
 
 ```java
-String url = "jdbc:nexora:embedded:C:/dados/loja.db";
+String url = "jdbc:nexora:embedded:C:/data/store.db";
 try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
     // ...
 }
 ```
 
-`jdbc:nexora:C:/dados/loja.db` continua válido. `jdbc:nexora://C:/dados/loja.db` também: a barra antes da letra de unidade é ignorada. A URL sem arquivo (`jdbc:nexora:`) falha. Para outro processo, use a URL de rede descrita em [Rede](#rede). Usuário ou senha em branco falha com SQLSTATE `28000`. Senha errada falha com a mensagem de usuário ou senha inválidos.
+`jdbc:nexora:C:/data/store.db` remains valid. `jdbc:nexora://C:/data/store.db` does too: the slash before the drive letter is ignored. A URL with no file (`jdbc:nexora:`) fails. For another process, use the network URL described in [Network](#network). A blank user or password fails with SQLSTATE `28000`. A wrong password fails with the invalid user or password message.
 
-O arquivo `.db` já existe. O JDBC e o motor não o criam. A página fica fixa, escolhida na criação pelo CLI.
+The `.db` file already exists. JDBC and the server do not create it. The page size stays fixed, chosen at creation by the CLI.
 
-A senha não fica em texto puro. Cada gravação usa bcrypt (`$2a$`, custo 10). `Connection.getMetaData().getUserName()` devolve o usuário autenticado, em maiúsculas.
+The password is not stored in plain text. Each write uses bcrypt (`$2a$`, cost 10). `Connection.getMetaData().getUserName()` returns the authenticated user, in uppercase.
 
-`getCatalog()` devolve `null`. `getSchema()` devolve o esquema da sessão, `public` ao conectar. `setSchema` troca esse esquema.
+`getCatalog()` returns `null`. `getSchema()` returns the session schema, `public` on connect. `setSchema` changes that schema.
 
-## Criar o banco
+## Create the database
 
-O comando `create` do CLI gera o `.db`, o `.log` ao lado e o usuário DBA. A página segue o Firebird: `4096`, `8192`, `16384` ou `32768`. O padrão é `8192`. Ela não muda depois da criação. A página 0 é o cabeçalho; o catálogo e as tabelas ocupam páginas inteiras. O commit grava o `.log` antes das páginas. O checkpoint sincroniza o `.db` e deixa o histórico no log. Se o processo cair antes disso, a abertura reaplica o que ficou depois do checkpoint. Cada abertura e cada fechamento gravam o checkpoint. Se o `.log` não estiver ao lado, ou estiver vazio, a abertura cria um log novo só com o cabeçalho, avança a geração e o banco segue com as páginas já gravadas. O log da geração anterior não abre o banco.
+The CLI `create` command generates the `.db`, the `.log` beside it, and the DBA user. The page size follows Firebird: `4096`, `8192`, `16384`, or `32768`. The default is `8192`. It does not change after creation. Page 0 is the header; the catalog and the tables occupy whole pages. Commit writes the `.log` before the pages. The checkpoint synchronizes the `.db` and leaves the history in the log. If the process crashes before that, opening reapplies what remained after the checkpoint. Every open and every close writes the checkpoint. If the `.log` is not beside the database, or is empty, opening creates a new log with only the header, advances the generation, and the database continues with the pages already written. A log from the previous generation does not open the database.
 
 ```bash
-java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/dados/loja.db --page-size 16384 --user DBA --password segredo --name LOJA --charset UTF8
+java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/data/store.db --page-size 16384 --user DBA --password secret --name STORE --charset UTF8
 ```
 
 
-| Opção           | Padrão                          |
-| --------------- | ------------------------------- |
-| `--page-size`   | `8192`                          |
-| `--user`        | `DBA`                           |
-| `--password`    | `dba`                           |
-| `--name`        | nome do arquivo, sem a extensão |
-| `--description` | `Nexora`                        |
-| `--charset`     | `UTF8`                          |
+| Option          | Default                          |
+| --------------- | -------------------------------- |
+| `--page-size`   | `8192`                           |
+| `--user`        | `DBA`                            |
+| `--password`    | `dba`                            |
+| `--name`        | file name, without the extension |
+| `--description` | `Nexora`                         |
+| `--charset`     | `UTF8`                           |
 
 
-Um arquivo que já tem conteúdo não é reescrito, nem o `.log` correspondente. Sem argumentos, ou com `--help`, o comando mostra o uso. Na API, o mesmo efeito é `Database.create(arquivo, options)`.
+A file that already has content is not rewritten, and neither is the corresponding `.log`. With no arguments, or with `--help`, the command shows the usage. In the API, the same effect is `Database.create(file, options)`.
 
-O log acumula as transações confirmadas desde a criação do banco ou o último backup completo. Cada commit grava o comando e os valores comprimidos, então o arquivo não mostra o SQL nem o conteúdo dos `INSERT`. `backup completo` copia o `.db` e o `.log` para outra pasta e, no banco vivo, o log passa a registrar só o que mudar depois dessa cópia. `backup modificacao` copia só o `.log` e o log vivo continua de onde está. `backup` sem o tipo faz o completo. `apply` descomprime essas transações e executa o SQL sobre um `.db`: a mesma geração continua do checkpoint, e a geração seguinte traz o que mudou depois do backup completo.
+The log accumulates the committed transactions since the database was created or the last full backup. Each commit writes the command and the values compressed, so the file shows neither the SQL nor the contents of the `INSERT`s. `backup full` copies the `.db` and the `.log` to another folder and, on the live database, the log then records only what changes after that copy. `backup incremental` copies only the `.log`, and the live log continues from where it is. `backup` with no kind performs a full backup. `apply` decompresses those transactions and runs the SQL against a `.db`: the same generation continues from the checkpoint, and the following generation brings what changed after the full backup.
 
 ```bash
-java -jar nexora-cli/target/nexora-cli-1.0.jar backup completo C:/dados/loja.db C:/dados/backup
-java -jar nexora-cli/target/nexora-cli-1.0.jar backup modificacao C:/dados/loja.db C:/dados/logs
-java -jar nexora-cli/target/nexora-cli-1.0.jar apply C:/dados/backup/loja.db C:/dados/logs/loja.log
-java -jar nexora-cli/target/nexora-cli-1.0.jar export C:/dados/loja.log C:/dados/loja.sql
+java -jar nexora-cli/target/nexora-cli-1.0.jar backup full C:/data/store.db C:/data/backup
+java -jar nexora-cli/target/nexora-cli-1.0.jar backup incremental C:/data/store.db C:/data/logs
+java -jar nexora-cli/target/nexora-cli-1.0.jar apply C:/data/backup/store.db C:/data/logs/store.log
+java -jar nexora-cli/target/nexora-cli-1.0.jar export C:/data/store.log C:/data/store.sql
 ```
 
-Na API, `Database.backup(arquivo, pasta)` faz o completo, `Database.backupLog(arquivo, pasta)` copia só o log, `Database.applyLog(arquivo, log)` aplica e `Database.exportSql(log, arquivo.sql)` exporta. `export` também aceita o `.db` e lê o `.log` ao lado, e o comando mostra o percentual enquanto lê o arquivo. O `apply` só aceita o log do mesmo banco, inclusive a cópia do backup: o identificador gravado no log tem de ser o daquele `.db`. A pasta do backup fica fora da pasta do banco.
+In the API, `Database.backup(file, folder)` performs the full backup, `Database.backupLog(file, folder)` copies only the log, `Database.applyLog(file, log)` applies it, and `Database.exportSql(log, file.sql)` exports. `export` also accepts the `.db` and reads the `.log` beside it, and the command shows the percentage while it reads the file. `apply` accepts only the log of the same database, including the backup copy: the identifier stored in the log must belong to that `.db`. The backup folder stays outside the database folder.
 
-`NEX$PAGE_SIZE` guarda o tamanho da página. `NEX$FORMAT` é `1`. `Default.CharacterSet` em `NEX$CONFIG` guarda o conjunto informado na criação.
+`NEX$PAGE_SIZE` stores the page size. `NEX$FORMAT` is `1`. `Default.CharacterSet` in `NEX$CONFIG` stores the character set supplied at creation.
 
-## Rede
+## Network
 
-O arquivo `.db` fica aberto num processo só, junto com o `.log`. O projeto `nexora-server` é esse processo: lê um json com o nome e o caminho de cada banco, escuta numa porta e atende o JDBC. O driver, no projeto `nexora-jdbc`, fala com ele por `jdbc:nexora://host:porta/nome` e também abre o arquivo direto com `jdbc:nexora:embedded:`. A senha vai em claro no TCP, pensada para a rede local.
+The `.db` file stays open in a single process, together with the `.log`. The `nexora-server` project is that process: it reads a JSON file with the name and path of each database, listens on a port, and serves JDBC. The driver, in the `nexora-jdbc` project, talks to it through `jdbc:nexora://host:port/name` and also opens the file directly with `jdbc:nexora:embedded:`. The password travels in the clear on TCP, intended for the local network.
 
 ```json
 {
   "host": "0.0.0.0",
   "port": 4580,
   "databases": [
-    { "name": "loja", "path": "C:/dados/loja.db" }
+    { "name": "store", "path": "C:/data/store.db" }
   ]
 }
 ```
 
-`host` omitido escuta em todas as interfaces. A porta e ao menos um banco são obrigatórios. Um caminho relativo resolve a partir da pasta do json. Cada arquivo do json já existe, criado pelo CLI.
+If `host` is omitted, the server listens on all interfaces. The port and at least one database are required. A relative path resolves from the JSON file's folder. Each file listed in the JSON already exists, created by the CLI.
 
 ```bash
-java -jar nexora-server/target/nexora-server-1.0.jar serve motor.json
+java -jar nexora-server/target/nexora-server-1.0.jar serve server.json
 ```
 
-No cliente:
+On the client:
 
 ```java
-String url = "jdbc:nexora://192.168.0.10:4580/loja";
+String url = "jdbc:nexora://192.168.0.10:4580/store";
 try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
     // ...
 }
 ```
 
-O nome depois da porta é o do json, sem distinguir maiúsculas. Várias conexões no motor seguem a regra de uma transação por arquivo. Enquanto o motor segura o `.db`, outro processo que tentar abrir o mesmo arquivo recebe banco já aberto. Ctrl+C solta os arquivos.
+The name after the port is the name in the JSON, with no case distinction. Several connections on the server follow the rule of one transaction per file. While the server holds the `.db`, another process that tries to open the same file receives database already open. Ctrl+C releases the files.
 
 ## Studio
 
-O studio é a tela administrativa, no espírito do IBExpert: explorador à esquerda, documentos no centro e a grade embaixo do SQL. Ele registra arquivo local e banco do motor, cria o `.db`, executa script, e abre tabela, view, procedure, trigger, gerador, papel, usuário, privilégio e conexão.
+The studio is the administrative screen, in the spirit of IBExpert: an explorer on the left, documents in the center, and the grid below the SQL. It registers a local file and a database on the server, creates the `.db`, runs a script, and opens a table, a view, a procedure, a trigger, a generator, a role, a user, a privilege, and a connection.
 
 ```bash
 java -jar nexora-studio/target/nexora-studio-1.0.jar
 ```
 
-F9 executa o script do editor. Ctrl+Enter faz o mesmo. Um `SELECT` precisa ser o último comando, como no JDBC. A grade grava nas tabelas que têm chave primária. Célula vazia vira `NULL`; em `CHAR` e `VARCHAR`, `''` grava texto vazio.
+F9 runs the script in the editor. Ctrl+Enter does the same. A `SELECT` has to be the last command, as in JDBC. The grid writes to tables that have a primary key. An empty cell becomes `NULL`; for `CHAR` and `VARCHAR`, `''` stores empty text.
 
-A conexão embutida abre o `.db` neste processo. Se o motor já segura o arquivo, ela falha: registre o banco pela rede, `host`, porta e nome do json. O registro fica em `~/.nexora/studio.json`. A senha só entra nesse arquivo se "lembrar senha" estiver marcado.
+The embedded connection opens the `.db` in this process. If the server already holds the file, it fails: register the database over the network, with the `host`, the port, and the name from the JSON file. The registration is stored in `~/.nexora/studio.json`. The password is written to that file only when "remember password" is checked.
 
 ## DBeaver
 
-1. Nova conexão, driver personalizado.
-2. Classe: `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver`.
-3. URL: `jdbc:nexora:C:/dados/loja.db`.
-4. Usuário `dba`, senha `dba`.
-5. Bibliotecas: o JAR do driver (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). O engine vai dentro desse JAR. No DBeaver, troque o JAR antigo por este. O JAR do motor não entra no DBeaver.
+1. New connection, custom driver.
+2. Class: `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver`.
+3. URL: `jdbc:nexora:C:/data/store.db`.
+4. User `dba`, password `dba`.
+5. Libraries: the driver JAR (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). The engine is inside that JAR. In DBeaver, replace the old JAR with this one. The server JAR is not added to DBeaver.
 
 
 
-## Exemplo
+## Example
 
-O arquivo `C:/dados/loja.db` já foi criado pelo CLI.
+The file `C:/data/store.db` has already been created by the CLI.
 
 ```java
 import java.nio.file.Files;
@@ -155,40 +155,40 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-Path arquivo = Path.of("C:/dados/loja.db");
+Path file = Path.of("C:/data/store.db");
 
-try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + arquivo.toAbsolutePath(), "dba", "dba")) {
+try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + file.toAbsolutePath(), "dba", "dba")) {
     try (Statement statement = connection.createStatement()) {
         statement.execute("""
-                CREATE TABLE cliente (
+                CREATE TABLE customer (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nome VARCHAR(120) NOT NULL,
+                    name VARCHAR(120) NOT NULL,
                     email VARCHAR(120) UNIQUE,
-                    nascimento DATE,
-                    foto BLOB
+                    birth_date DATE,
+                    photo BLOB
                 )
                 """);
-        statement.execute("CREATE INDEX idx_nome ON cliente (nome)");
+        statement.execute("CREATE INDEX idx_name ON customer (name)");
     }
 
-    byte[] foto = Files.readAllBytes(Path.of("ana.jpg"));
+    byte[] photo = Files.readAllBytes(Path.of("ana.jpg"));
     try (PreparedStatement insert = connection.prepareStatement(
-            "INSERT INTO cliente (nome, email, nascimento, foto) VALUES (?, ?, ?, ?)")) {
+            "INSERT INTO customer (name, email, birth_date, photo) VALUES (?, ?, ?, ?)")) {
         insert.setString(1, "Ana");
-        insert.setString(2, "ana@exemplo.com");
+        insert.setString(2, "ana@example.com");
         insert.setDate(3, Date.valueOf("1990-04-12"));
-        insert.setBytes(4, foto);
+        insert.setBytes(4, photo);
         insert.executeUpdate();
     }
 
     try (PreparedStatement query = connection.prepareStatement(
-            "SELECT id, nome, foto FROM cliente WHERE email = ?")) {
-        query.setString(1, "ana@exemplo.com");
+            "SELECT id, name, photo FROM customer WHERE email = ?")) {
+        query.setString(1, "ana@example.com");
         try (ResultSet rows = query.executeQuery()) {
             if (rows.next()) {
                 long id = rows.getLong("id");
-                String nome = rows.getString("nome");
-                byte[] bytes = rows.getBytes("foto");
+                String name = rows.getString("name");
+                byte[] bytes = rows.getBytes("photo");
             }
         }
     }
@@ -199,211 +199,211 @@ try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + arquiv
 
 ## SQL
 
-Vários comandos podem ir no mesmo `execute`, separados por `;`. Um `SELECT` precisa ser o último. Os `?` são posicionais e valem para o script inteiro. Comentários são `--` até o fim da linha e `/* ... */`.
+Several commands can go in the same `execute`, separated by `;`. A `SELECT` has to be the last one. The `?` placeholders are positional and apply to the whole script. Comments are `--` through the end of the line and `/* ... */`.
 
-Identificadores sem aspas não distinguem maiúsculas. Com aspas, as maiúsculas são preservadas e um `"` interno se escreve `""`. Nome de tabela, coluna e índice tem no máximo 128 caracteres. O `$` entra no nome, como em `NEX$USERS`.
+Unquoted identifiers are case-insensitive. Quoted identifiers preserve case, and an embedded `"` is written `""`. A table, column, or index name is at most 128 characters. `$` is allowed in a name, as in `NEX$USERS`.
 
-### Tipos
+### Types
 
 
 | SQL                                      | JDBC `Types` | Literal / `PreparedStatement`                                      |
 | ---------------------------------------- | ------------ | ------------------------------------------------------------------ |
-| `SMALLINT`                               | `SMALLINT`   | inteiro, `setShort`                                                |
-| `INTEGER` ou `INT`                       | `INTEGER`    | inteiro, `setInt`                                                  |
-| `BIGINT`                                 | `BIGINT`     | inteiro, `setLong`                                                 |
-| `FLOAT` ou `REAL`                        | `REAL`       | `setFloat`                                                         |
-| `DOUBLE` ou `DOUBLE PRECISION`           | `DOUBLE`     | `setDouble`                                                        |
-| `DECIMAL(p, s)` ou `NUMERIC(p, s)`       | `DECIMAL`    | `12.50`, `setBigDecimal`                                           |
-| `BOOLEAN` ou `BOOL`                      | `BOOLEAN`    | `TRUE`, `FALSE`, `setBoolean`                                      |
-| `CHAR(n)` ou `CHARACTER(n)`              | `CHAR`       | `'texto'`, `setString`                                             |
-| `VARCHAR(n)` ou `CHARACTER VARYING(n)`   | `VARCHAR`    | `'texto'`, `setString`                                             |
+| `SMALLINT`                               | `SMALLINT`   | integer, `setShort`                                                |
+| `INTEGER` or `INT`                       | `INTEGER`    | integer, `setInt`                                                  |
+| `BIGINT`                                 | `BIGINT`     | integer, `setLong`                                                 |
+| `FLOAT` or `REAL`                        | `REAL`       | `setFloat`                                                         |
+| `DOUBLE` or `DOUBLE PRECISION`           | `DOUBLE`     | `setDouble`                                                        |
+| `DECIMAL(p, s)` or `NUMERIC(p, s)`       | `DECIMAL`    | `12.50`, `setBigDecimal`                                           |
+| `BOOLEAN` or `BOOL`                      | `BOOLEAN`    | `TRUE`, `FALSE`, `setBoolean`                                      |
+| `CHAR(n)` or `CHARACTER(n)`              | `CHAR`       | `'text'`, `setString`                                              |
+| `VARCHAR(n)` or `CHARACTER VARYING(n)`   | `VARCHAR`    | `'text'`, `setString`                                              |
 | `DATE`                                   | `DATE`       | `'2026-10-07'`, `setDate`                                          |
-| `TIME`                                   | `TIME`       | `'13:45'` ou `'13:45:01'`, `setTime`                               |
-| `TIMESTAMP`                              | `TIMESTAMP`  | `'2026-10-07 13:45:01'` ou `'2026-10-07T13:45:01'`, `setTimestamp` |
-| `BLOB`, `BYTEA`, `BINARY` ou `VARBINARY` | `BLOB`       | `X'0102'`, `X''`, `setBytes`                                       |
+| `TIME`                                   | `TIME`       | `'13:45'` or `'13:45:01'`, `setTime`                               |
+| `TIMESTAMP`                              | `TIMESTAMP`  | `'2026-10-07 13:45:01'` or `'2026-10-07T13:45:01'`, `setTimestamp` |
+| `BLOB`, `BYTEA`, `BINARY`, or `VARBINARY` | `BLOB`       | `X'0102'`, `X''`, `setBytes`                                       |
 
 
-`CHAR` e `VARCHAR` pedem tamanho de 1 a 8192. `DECIMAL` pede precisão de 1 a 38, e a escala não passa da precisão. Uma tabela tem no máximo 1024 colunas.
+`CHAR` and `VARCHAR` require a length from 1 to 8192. `DECIMAL` requires a precision from 1 to 38, and the scale does not exceed the precision. A table has at most 1024 columns.
 
-`NULL` é nulo. Aspas simples dentro de texto dobram: `'d''agua'`. `X'0102'` é binário; o número de dígitos hexadecimais precisa ser par.
+`NULL` is null. Single quotes inside text are doubled: `'it''s'`. `X'0102'` is binary; the number of hexadecimal digits must be even.
 
 ```java
 prepared.setNull(4, Types.BLOB);
 prepared.setObject(1, "Ana");
 ```
 
-O índice do parâmetro começa em 1.
+The parameter index starts at 1.
 
-### Tabelas
+### Tables
 
 ```sql
-CREATE TABLE pedido (
+CREATE TABLE orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cliente_id INTEGER NOT NULL,
+    customer_id INTEGER NOT NULL,
     total DECIMAL(12, 2) DEFAULT 0,
-    aberto BOOLEAN DEFAULT TRUE,
-    criado TIMESTAMP
+    open BOOLEAN DEFAULT TRUE,
+    created TIMESTAMP
 );
 
 CREATE TABLE item (
-    pedido_id INTEGER NOT NULL,
-    numero INTEGER NOT NULL,
-    produto VARCHAR(80) NOT NULL,
-    quantidade INTEGER DEFAULT 1,
-    PRIMARY KEY (pedido_id, numero),
-    UNIQUE (pedido_id, produto)
+    order_id INTEGER NOT NULL,
+    number INTEGER NOT NULL,
+    product VARCHAR(80) NOT NULL,
+    quantity INTEGER DEFAULT 1,
+    PRIMARY KEY (order_id, number),
+    UNIQUE (order_id, product)
 );
 
-CREATE TABLE IF NOT EXISTS pedido (
+CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY
 );
 
-ALTER TABLE pedido ADD COLUMN obs VARCHAR(200) DEFAULT '';
-ALTER TABLE pedido DROP COLUMN obs;
+ALTER TABLE orders ADD COLUMN notes VARCHAR(200) DEFAULT '';
+ALTER TABLE orders DROP COLUMN notes;
 
-CREATE TABLE nota (
+CREATE TABLE note (
     id INTEGER NOT NULL,
-    texto VARCHAR(80)
+    text VARCHAR(80)
 );
 
-ALTER TABLE nota ADD PRIMARY KEY (id);
-ALTER TABLE nota DROP PRIMARY KEY;
-DROP TABLE IF EXISTS rascunho;
-DROP TABLE pedido;
+ALTER TABLE note ADD PRIMARY KEY (id);
+ALTER TABLE note DROP PRIMARY KEY;
+DROP TABLE IF EXISTS draft;
+DROP TABLE orders;
 ```
 
-Uma tabela tem uma chave primária. Ela pode ser uma coluna (`id INTEGER PRIMARY KEY`) ou composta (`PRIMARY KEY (a, b)`), na criação ou depois com `ALTER TABLE ... ADD PRIMARY KEY`. O índice nasce junto, com o nome da constraint e ordenação Ascending. Sem nome explícito, os dois se chamam `PK_` mais o nome da tabela. `ADD CONSTRAINT PK_pedido PRIMARY KEY (id)` guarda esse nome. Para outro nome ou ordem descendente:
+A table has one primary key. It can be a single column (`id INTEGER PRIMARY KEY`) or composite (`PRIMARY KEY (a, b)`), at creation or later with `ALTER TABLE ... ADD PRIMARY KEY`. The index is created with it, with the constraint name and Ascending order. Without an explicit name, both are called `PK_` plus the table name. `ADD CONSTRAINT PK_orders PRIMARY KEY (id)` stores that name. For another name or descending order:
 
 ```sql
-ALTER TABLE teste
-  ADD CONSTRAINT PK_teste PRIMARY KEY (id) USING DESCENDING INDEX ix_teste;
+ALTER TABLE test
+  ADD CONSTRAINT PK_test PRIMARY KEY (id) USING DESCENDING INDEX ix_test;
 ```
 
-`USING INDEX` sem `DESCENDING` continua Ascending. A ordem física do índice permanece crescente; `DESCENDING` fica registrado na constraint e aparece em `ASC_OR_DESC`. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `DROP PRIMARY KEY` e `DROP CONSTRAINT nome` removem a chave e o índice ligado a ela. As colunas continuam `NOT NULL`. Se uma chave estrangeira ainda aponta para essa primária, e não houver um `UNIQUE` nas mesmas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela e cria um índice com o mesmo nome da constraint. Sem nome, o primeiro é `UNQ1_` mais o nome da tabela, o seguinte `UNQ2_` mais o nome da tabela, e assim por diante. `CONSTRAINT UQ_email UNIQUE (email)` guarda esse nome no índice. `DROP CONSTRAINT nome` e `DROP UNIQUE nome` removem a constraint e o índice. Se uma chave estrangeira ainda aponta para essas colunas, e não houver outra chave cobrindo as mesmas, o comando falha e a tabela fica como estava. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
+`USING INDEX` without `DESCENDING` remains Ascending. The physical order of the index stays ascending; `DESCENDING` is recorded on the constraint and appears in `ASC_OR_DESC`. The table accepts only one key. The key columns become `NOT NULL`. If those columns already contain a null or a duplicate value, the command fails and the table stays as it was. `DROP PRIMARY KEY` and `DROP CONSTRAINT name` remove the key and the index tied to it. The columns remain `NOT NULL`. If a foreign key still points at that primary key, and there is no `UNIQUE` on the same columns, the command fails and the table stays as it was. `AUTOINCREMENT` and `IDENTITY` apply to `SMALLINT`, `INTEGER`, and `BIGINT`, and the first value is 1. `UNIQUE` can be on the column or on the table and creates an index with the same name as the constraint. Without a name, the first is `UNQ1_` plus the table name, the next is `UNQ2_` plus the table name, and so on. `CONSTRAINT UQ_email UNIQUE (email)` stores that name on the index. `DROP CONSTRAINT name` and `DROP UNIQUE name` remove the constraint and the index. If a foreign key still points at those columns, and there is no other key covering the same columns, the command fails and the table stays as it was. `DEFAULT` accepts a literal, `NULL`, `TRUE`, or `FALSE`. `NOT NULL` and `NULL` cannot be combined on the same column.
 
-Chave estrangeira também cria índice, com o prefixo `FK_`. O padrão é `FK_` mais o nome da tabela, Ascending, e o índice recebe o mesmo nome da constraint. A segunda chave da mesma tabela usa `FK_tabela_coluna`. Sem a lista de colunas referenciadas, vale a chave primária da outra tabela. A referência precisa ser a chave primária ou um `UNIQUE`, com o mesmo tipo. Nulo em qualquer coluna da chave não exige registro do outro lado. `ON DELETE` e `ON UPDATE` aceitam `NO ACTION`, `RESTRICT`, `CASCADE`, `SET NULL` e `SET DEFAULT`. Sem a cláusula, vale `NO ACTION`: apagar ou alterar a chave referenciada falha enquanto houver filho. `CASCADE` repete a exclusão ou a nova chave nos filhos. `SET NULL` grava nulo nas colunas da chave, que precisam aceitar nulo. `SET DEFAULT` grava o padrão de cada coluna, que precisa ter `DEFAULT`.
+A foreign key also creates an index, with the `FK_` prefix. The default is `FK_` plus the table name, Ascending, and the index receives the same name as the constraint. The second key on the same table uses `FK_table_column`. Without the referenced column list, the other table's primary key applies. The reference must be the primary key or a `UNIQUE`, with the same type. A null in any key column does not require a row on the other side. `ON DELETE` and `ON UPDATE` accept `NO ACTION`, `RESTRICT`, `CASCADE`, `SET NULL`, and `SET DEFAULT`. Without the clause, `NO ACTION` applies: deleting or changing the referenced key fails while a child row exists. `CASCADE` repeats the deletion or the new key on the child rows. `SET NULL` writes null into the key columns, which must accept null. `SET DEFAULT` writes each column's default, which must have a `DEFAULT`.
 
 ```sql
 CREATE TABLE item (
     id INTEGER PRIMARY KEY,
-    pedido_id INTEGER,
-    CONSTRAINT FK_item FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+    order_id INTEGER,
+    CONSTRAINT FK_item FOREIGN KEY (order_id) REFERENCES orders (id)
 );
 
 ALTER TABLE item
-  ADD CONSTRAINT FK_item_extra FOREIGN KEY (extra) REFERENCES pedido (id)
+  ADD CONSTRAINT FK_item_extra FOREIGN KEY (extra) REFERENCES orders (id)
   USING DESCENDING INDEX ix_extra;
 
 ALTER TABLE item DROP CONSTRAINT FK_item;
 ALTER TABLE item DROP FOREIGN KEY FK_item_extra;
 ```
 
-`DROP CONSTRAINT nome` e `DROP FOREIGN KEY nome` removem a chave estrangeira e o índice vinculado, mesmo quando o índice tem outro nome. `DROP INDEX` continua sem remover índice de `PRIMARY KEY`, `FOREIGN KEY` ou `UNIQUE`.
+`DROP CONSTRAINT name` and `DROP FOREIGN KEY name` remove the foreign key and the linked index, even when the index has another name. `DROP INDEX` still does not remove an index of a `PRIMARY KEY`, `FOREIGN KEY`, or `UNIQUE`.
 
 ```sql
-CREATE TABLE cliente (
+CREATE TABLE customer (
     id INTEGER PRIMARY KEY,
     email VARCHAR(120) UNIQUE,
-    documento VARCHAR(20),
-    CONSTRAINT UQ_documento UNIQUE (documento)
+    document VARCHAR(20),
+    CONSTRAINT UQ_document UNIQUE (document)
 );
 
-ALTER TABLE cliente DROP UNIQUE UNQ1_cliente;
-ALTER TABLE cliente DROP CONSTRAINT UQ_documento;
-ALTER TABLE cliente ADD CONSTRAINT UQ_email UNIQUE (email);
+ALTER TABLE customer DROP UNIQUE UNQ1_customer;
+ALTER TABLE customer DROP CONSTRAINT UQ_document;
+ALTER TABLE customer ADD CONSTRAINT UQ_email UNIQUE (email);
 ```
 
-`getGeneratedKeys()` devolve um resultado vazio. O valor gerado se lê com `SELECT`.
+`getGeneratedKeys()` returns an empty result. The generated value is read with `SELECT`.
 
-### Esquemas
+### Schemas
 
-O esquema padrão é `public`, como no PostgreSQL. Um nome sem esquema usa o esquema da sessão. `esquema.tabela` aponta para outro. O mesmo nome de tabela pode existir em esquemas diferentes. `public` nasce com o arquivo e não pode ser removido.
+The default schema is `public`, as in PostgreSQL. A name without a schema uses the session schema. `schema.table` points at another schema. The same table name can exist in different schemas. `public` is created with the file and cannot be removed.
 
 ```sql
-CREATE SCHEMA vendas;
-CREATE TABLE vendas.pedido (
+CREATE SCHEMA sales;
+CREATE TABLE sales.orders (
     id INTEGER PRIMARY KEY
 );
-INSERT INTO vendas.pedido (id) VALUES (1);
-SELECT id FROM vendas.pedido;
-SELECT vendas.pedido.id FROM vendas.pedido;
+INSERT INTO sales.orders (id) VALUES (1);
+SELECT id FROM sales.orders;
+SELECT sales.orders.id FROM sales.orders;
 
-SET SCHEMA vendas;
-SELECT id FROM pedido;
+SET SCHEMA sales;
+SELECT id FROM orders;
 SET SCHEMA public;
 
-DROP SCHEMA vendas RESTRICT;
-DROP SCHEMA IF EXISTS vendas CASCADE;
+DROP SCHEMA sales RESTRICT;
+DROP SCHEMA IF EXISTS sales CASCADE;
 ```
 
-`CREATE SCHEMA IF NOT EXISTS` não falha se o esquema já existe. `DROP SCHEMA` sem `CASCADE` exige o esquema vazio. `CASCADE` remove as tabelas, as views e as procedures desse esquema, e as views de fora que dependem delas. Não remove o esquema da sessão atual: faça `SET SCHEMA public` antes. `GRANT` e `REVOKE` aceitam `esquema.tabela`. Tabelas `NEX$` ficam em `public` e continuam visíveis sem qualificar, em qualquer esquema da sessão.
+`CREATE SCHEMA IF NOT EXISTS` does not fail if the schema already exists. `DROP SCHEMA` without `CASCADE` requires the schema to be empty. `CASCADE` removes the tables, the views, and the procedures of that schema, and views outside it that depend on them. It does not remove the current session's schema: run `SET SCHEMA public` first. `GRANT` and `REVOKE` accept `schema.table`. `NEX$` tables stay in `public` and remain visible without qualification, in any session schema.
 
-### Índices
+### Indexes
 
 ```sql
-CREATE INDEX idx_cliente ON pedido (cliente_id);
-CREATE UNIQUE INDEX idx_email ON cliente (email);
-CREATE INDEX IF NOT EXISTS idx_item ON item (pedido_id, numero);
-DROP INDEX idx_cliente ON pedido;
-DROP INDEX IF EXISTS idx_cliente ON pedido;
+CREATE INDEX idx_customer ON orders (customer_id);
+CREATE UNIQUE INDEX idx_email ON customer (email);
+CREATE INDEX IF NOT EXISTS idx_item ON item (order_id, number);
+DROP INDEX idx_customer ON orders;
+DROP INDEX IF EXISTS idx_customer ON orders;
 ```
 
-`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNQ1_tabela`, `UNQ2_tabela`, … estão reservados para o índice do `UNIQUE` declarado na tabela. O índice da chave primária, o de cada chave estrangeira e o de cada `UNIQUE` não saem com `DROP INDEX`. Remover uma coluna remove os índices que a usam.
+`CREATE UNIQUE INDEX` rejects a duplicate, including in rows that already exist. A `BLOB` cannot be part of an index or a key. The names `PRIMARY` and `UNQ1_table`, `UNQ2_table`, … are reserved for the index of the `UNIQUE` declared on the table. The primary key index, each foreign key index, and each `UNIQUE` index are not removed by `DROP INDEX`. Dropping a column removes the indexes that use it.
 
-As entradas ficam em páginas de 4096 bytes na região da tabela. O arquivo cresce com as chaves. A igualdade lê só as páginas do caminho, da raiz até a folha, e a lista inteira de chaves não permanece na memória. Os registros da tabela continuam sendo carregados ao abrir.
+The entries live in 4096-byte pages in the table region. The file grows with the keys. An equality lookup reads only the pages on the path, from the root to the leaf, and the full key list does not stay in memory. The table rows are still loaded on open.
 
-O plano usa o índice quando o `WHERE` traz igualdades ligadas por `AND` que cobrem todas as colunas do índice, com literal ou `?`:
+The plan uses the index when the `WHERE` has equalities joined by `AND` that cover every column of the index, with a literal or `?`:
 
 ```sql
-SELECT id FROM cliente WHERE email = ?;
-SELECT * FROM item WHERE pedido_id = 10 AND numero = 2;
+SELECT id FROM customer WHERE email = ?;
+SELECT * FROM item WHERE order_id = 10 AND number = 2;
 ```
 
-`LIKE`, `OR`, intervalo e expressão ficam de fora dessa busca e a tabela é percorrida.
+`LIKE`, `OR`, a range, and an expression stay out of that lookup, and the table is scanned.
 
-`CREATE`, `DROP` e `ALTER` não rodam com uma transação aberta.
+`CREATE`, `DROP`, and `ALTER` do not run while a transaction is open.
 
-### Linhas
+### Rows
 
 ```sql
-INSERT INTO cliente (nome, email) VALUES ('Ana', 'ana@exemplo.com');
-INSERT INTO item (pedido_id, numero, produto, quantidade)
-VALUES (1, 1, 'Caderno', 2), (1, 2, 'Lápis', 10);
+INSERT INTO customer (name, email) VALUES ('Ana', 'ana@example.com');
+INSERT INTO item (order_id, number, product, quantity)
+VALUES (1, 1, 'Notebook', 2), (1, 2, 'Pencil', 10);
 
-UPDATE cliente SET nome = ? WHERE id = ?;
-DELETE FROM item WHERE pedido_id = 1 AND numero = 2;
+UPDATE customer SET name = ? WHERE id = ?;
+DELETE FROM item WHERE order_id = 1 AND number = 2;
 ```
 
-`INSERT ... SELECT` não existe. A lista de colunas pode ser omitida quando os valores seguem a ordem da tabela.
+`INSERT ... SELECT` does not exist. The column list can be omitted when the values follow the table order.
 
-### Consultas
+### Queries
 
-Uma consulta lê uma tabela, com alias, `DISTINCT`, `WHERE`, `ORDER BY`, `LIMIT` e `OFFSET`. O `FROM` pode ficar de fora quando a lista não usa coluna: o resultado tem uma linha, e `WHERE` falso devolve nenhuma. `SELECT *` continua pedindo tabela.
+A query reads one table, with an alias, `DISTINCT`, `WHERE`, `ORDER BY`, `LIMIT`, and `OFFSET`. `FROM` can be left out when the list uses no column: the result has one row, and a false `WHERE` returns none. `SELECT *` still requires a table.
 
 ```sql
-SELECT id, nome AS cliente
-FROM cliente c
-WHERE c.nome LIKE 'A%' AND nascimento >= '1990-01-01'
-ORDER BY nome ASC, id DESC
+SELECT id, name AS customer
+FROM customer c
+WHERE c.name LIKE 'A%' AND birth_date >= '1990-01-01'
+ORDER BY name ASC, id DESC
 LIMIT 20 OFFSET 40;
 
-SELECT DISTINCT aberto FROM pedido;
-SELECT COUNT(*) FROM cliente;
-SELECT COALESCE(email, nome) FROM cliente WHERE id = 1;
-SELECT UPPER(nome), LENGTH(foto) FROM cliente WHERE foto IS NOT NULL;
+SELECT DISTINCT open FROM orders;
+SELECT COUNT(*) FROM customer;
+SELECT COALESCE(email, name) FROM customer WHERE id = 1;
+SELECT UPPER(name), LENGTH(photo) FROM customer WHERE photo IS NOT NULL;
 ```
 
-Predicados: `=`, `<>`, `!=`, `<`, `>`, `<=`, `>=`, `AND`, `OR`, `NOT`, `IS NULL`, `IS NOT NULL`, `IN (...)`, `BETWEEN ... AND ...`, `LIKE`, `NOT LIKE`, `NOT IN`, `NOT BETWEEN`.
+Predicates: `=`, `<>`, `!=`, `<`, `>`, `<=`, `>=`, `AND`, `OR`, `NOT`, `IS NULL`, `IS NOT NULL`, `IN (...)`, `BETWEEN ... AND ...`, `LIKE`, `NOT LIKE`, `NOT IN`, `NOT BETWEEN`.
 
-`LIKE` usa `%` e `_`. A barra invertida é o escape. Outro caractere se declara com `ESCAPE`:
+`LIKE` uses `%` and `_`. The backslash is the escape. Another character is declared with `ESCAPE`:
 
 ```sql
-SELECT nome FROM cliente WHERE nome LIKE '%\_%' ESCAPE '\';
+SELECT name FROM customer WHERE name LIKE '%\_%' ESCAPE '\';
 ```
 
-Operadores: `||` concatena texto; `+`, `-`, `*`, `/` e `%` calculam. Funções: `LOWER`, `UPPER`, `LENGTH`, `CHAR_LENGTH`, `COALESCE`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`. `COUNT` aceita `*` e `DISTINCT`.
+Operators: `||` concatenates text; `+`, `-`, `*`, `/`, and `%` calculate. Functions: `LOWER`, `UPPER`, `LENGTH`, `CHAR_LENGTH`, `COALESCE`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`. `COUNT` accepts `*` and `DISTINCT`.
 
-Contexto, no papel do Firebird: `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `CURRENT_USER`, `USER`, `CURRENT_ROLE`, `CURRENT_CONNECTION` e `CURRENT_TRANSACTION`. Não há fuso, então `CURRENT_TIME` e `LOCALTIME` são o mesmo `TIME`, e `CURRENT_TIMESTAMP` e `LOCALTIMESTAMP` são o mesmo `TIMESTAMP`. A precisão vai de 0 a 3; o padrão é 0 na hora e 3 no carimbo. O valor fica estável durante o comando e, dentro de procedure ou trigger, durante a rotina mais externa. `CURRENT_USER` e `USER` são o usuário da conexão. `CURRENT_ROLE` é o papel escolhido no login, ou `NONE`. `CURRENT_TRANSACTION` permanece enquanto a transação explícita estiver aberta; sem `BEGIN`, cada comando ganha um número novo. Esse número recomeça quando o arquivo é aberto de novo. Um nome entre aspas, como `"USER"`, continua sendo coluna.
+Context values, following Firebird: `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `CURRENT_USER`, `USER`, `CURRENT_ROLE`, `CURRENT_CONNECTION`, and `CURRENT_TRANSACTION`. There is no time zone, so `CURRENT_TIME` and `LOCALTIME` are the same `TIME`, and `CURRENT_TIMESTAMP` and `LOCALTIMESTAMP` are the same `TIMESTAMP`. Precision runs from 0 to 3; the default is 0 for the time and 3 for the timestamp. The value stays stable during the command and, inside a procedure or trigger, during the outermost routine. `CURRENT_USER` and `USER` are the connection user. `CURRENT_ROLE` is the role chosen at login, or `NONE`. `CURRENT_TRANSACTION` stays the same while the explicit transaction is open; without `BEGIN`, each command gets a new number. That number starts over when the file is opened again. A quoted name, such as `"USER"`, is still a column.
 
 ```sql
 SELECT CURRENT_DATE;
@@ -411,43 +411,43 @@ SELECT CURRENT_DATE;
 SELECT CURRENT_DATE, CURRENT_TIMESTAMP, CURRENT_USER, CURRENT_ROLE
 FROM NEX$DATABASE;
 
-INSERT INTO log (quando) VALUES (CURRENT_TIMESTAMP);
+INSERT INTO log (occurred_at) VALUES (CURRENT_TIMESTAMP);
 SELECT LOCALTIME(3), CURRENT_TRANSACTION FROM NEX$DATABASE;
 ```
 
-`COUNT`, `SUM`, `AVG`, `MIN` e `MAX` ocupam a lista inteira do `SELECT`. Misturar agregação com coluna solta falha, porque não há `GROUP BY`.
+`COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` occupy the entire `SELECT` list. Mixing an aggregate with a bare column fails, because there is no `GROUP BY`.
 
-Fora do dialeto: `JOIN`, subconsulta, `UNION`, `GROUP BY`, `HAVING`, `INSERT ... SELECT`, procedimento e `SAVEPOINT`.
+Outside the dialect: `JOIN`, subquery, `UNION`, `GROUP BY`, `HAVING`, `INSERT ... SELECT`, procedure, and `SAVEPOINT`.
 
 ## ResultSet
 
-O resultado é só leitura e cabe na memória. Dá para andar com `next`, `previous`, `first`, `last`, `absolute` e `relative`. `CONCUR_UPDATABLE` e `TYPE_SCROLL_SENSITIVE` são recusados.
+The result is read-only and fits in memory. You can move with `next`, `previous`, `first`, `last`, `absolute`, and `relative`. `CONCUR_UPDATABLE` and `TYPE_SCROLL_SENSITIVE` are rejected.
 
-Coluna por nome ou por índice, começando em 1. `wasNull()` vale depois de uma leitura nula. `Statement.setMaxRows` limita quantas linhas entram no resultado.
+A column is read by name or by index, starting at 1. `wasNull()` applies after a null read. `Statement.setMaxRows` limits how many rows go into the result.
 
 ```java
 try (ResultSet rows = statement.executeQuery(
-        "SELECT id, nome FROM cliente ORDER BY id")) {
+        "SELECT id, name FROM customer ORDER BY id")) {
     rows.last();
     int total = rows.getRow();
     rows.beforeFirst();
     while (rows.next()) {
         long id = rows.getLong(1);
-        String nome = rows.getString("nome");
+        String name = rows.getString("name");
     }
 }
 ```
 
-`ResultSetMetaData` expõe nome, tipo SQL, `Types`, tamanho, escala, anulável e autoincremento.
+`ResultSetMetaData` exposes the name, the SQL type, `Types`, the size, the scale, nullability, and autoincrement.
 
-## Transação
+## Transaction
 
-Com auto-commit ligado, cada comando é confirmado sozinho. Desligar o auto-commit abre uma transação no primeiro `INSERT`, `UPDATE`, `DELETE` ou `SELECT` seguinte. `commit()` e `rollback()` a encerram. Voltar o auto-commit para `true` confirma a transação desta conexão. Fechar a conexão com transação aberta desfaz.
+With auto-commit on, each command is committed on its own. Turning auto-commit off opens a transaction on the next `INSERT`, `UPDATE`, `DELETE`, or `SELECT`. `commit()` and `rollback()` end it. Turning auto-commit back to `true` commits this connection's transaction. Closing the connection with an open transaction rolls it back.
 
 ```java
 connection.setAutoCommit(false);
 try (PreparedStatement update = connection.prepareStatement(
-        "UPDATE cliente SET nome = ? WHERE id = ?")) {
+        "UPDATE customer SET name = ? WHERE id = ?")) {
     update.setString(1, "Ana Silva");
     update.setLong(2, 1);
     update.executeUpdate();
@@ -460,48 +460,48 @@ try (PreparedStatement update = connection.prepareStatement(
 }
 ```
 
-O mesmo efeito pelo SQL, ainda com auto-commit ligado:
+The same effect through SQL, still with auto-commit on:
 
 ```sql
 BEGIN;
-UPDATE cliente SET nome = 'Ana Silva' WHERE id = 1;
+UPDATE customer SET name = 'Ana Silva' WHERE id = 1;
 COMMIT;
 ```
 
-`ROLLBACK` no lugar de `COMMIT` descarta. `START TRANSACTION` também abre. `BEGIN` e `COMMIT` aceitam `WORK` ou `TRANSACTION` depois.
+`ROLLBACK` in place of `COMMIT` discards the work. `START TRANSACTION` also opens a transaction. `BEGIN` and `COMMIT` accept `WORK` or `TRANSACTION` after them.
 
-`setReadOnly(true)` deixa passar `SELECT` e os comandos de transação. O resto falha com SQLSTATE `25006`.
+`setReadOnly(true)` allows `SELECT` and the transaction commands. Everything else fails with SQLSTATE `25006`.
 
-## Várias conexões
+## Multiple connections
 
-No mesmo processo, várias conexões `jdbc:nexora:` do mesmo arquivo compartilham o banco. Cada conexão informa usuário e senha. A propriedade `roleName` (ou `role`) escolhe o papel; vazio ou `NONE` entra sem papel. Outro processo recebe erro de banco já aberto.
+In the same process, several `jdbc:nexora:` connections to the same file share the database. Each connection supplies a user and a password. The `roleName` property (or `role`) chooses the role; empty or `NONE` signs in with no role. Another process receives a database-already-open error.
 
-`DROP CONNECTION n` derruba a conexão ativa de número `n`, o mesmo de `CURRENT_CONNECTION`. O DBA derruba qualquer uma. Outro usuário só derruba a própria. A conexão derrubada sai de `NEX$CONNECTIONS` e o próximo comando nela falha. Se ela era a dona da transação aberta, o banco desfaz essa transação.
+`DROP CONNECTION n` drops the active connection numbered `n`, the same number as `CURRENT_CONNECTION`. The DBA drops any of them. Another user drops only their own. The dropped connection leaves `NEX$CONNECTIONS`, and the next command on it fails. If it owned the open transaction, the database rolls that transaction back.
 
-Só uma transação fica aberta. Enquanto ela existe, as outras conexões leem, inclusive o que ainda não foi confirmado, e não gravam. A tentativa de gravar falha com a mensagem de transação aberta.
+Only one transaction stays open. While it exists, the other connections can read, including what has not been committed yet, and they do not write. A write attempt fails with the open-transaction message.
 
-`setTransactionIsolation` aceita `READ_UNCOMMITTED`, `READ_COMMITTED`, `REPEATABLE_READ` e `SERIALIZABLE`. O valor fica registrado na conexão. A visibilidade entre conexões do mesmo processo continua a descrita acima. `TRANSACTION_NONE` é recusado.
+`setTransactionIsolation` accepts `READ_UNCOMMITTED`, `READ_COMMITTED`, `REPEATABLE_READ`, and `SERIALIZABLE`. The value is recorded on the connection. Visibility among connections in the same process remains as described above. `TRANSACTION_NONE` is rejected.
 
-## Lote
+## Batch
 
 ```java
 try (PreparedStatement insert = connection.prepareStatement(
-        "INSERT INTO cliente (nome, email) VALUES (?, ?)")) {
+        "INSERT INTO customer (name, email) VALUES (?, ?)")) {
     insert.setString(1, "Bia");
-    insert.setString(2, "bia@exemplo.com");
+    insert.setString(2, "bia@example.com");
     insert.addBatch();
     insert.setString(1, "Caio");
-    insert.setString(2, "caio@exemplo.com");
+    insert.setString(2, "caio@example.com");
     insert.addBatch();
     int[] counts = insert.executeBatch();
 }
 ```
 
-No `Statement`, `addBatch` recebe o SQL e `executeBatch` executa cada um. `SELECT` no lote falha. Se um comando do meio falha, a exceção é `BatchUpdateException` e o vetor traz as contagens já obtidas.
+On a `Statement`, `addBatch` receives the SQL and `executeBatch` runs each command. A `SELECT` in the batch fails. If a command in the middle fails, the exception is `BatchUpdateException` and the array carries the counts already obtained.
 
-## Metadados
+## Metadata
 
-Catálogo é `null`. O esquema padrão é `public`. Padrão de nome usa `%` e `_`, sem distinguir maiúsculas: `"PUBLIC"` casa com `public`. Tabelas `NEX$` aparecem como `SYSTEM TABLE`. `TABLE` devolve só as tabelas criadas pela aplicação.
+The catalog is `null`. The default schema is `public`. A name pattern uses `%` and `_`, with no case distinction: `"PUBLIC"` matches `public`. `NEX$` tables appear as `SYSTEM TABLE`. `TABLE` returns only the tables created by the application.
 
 ```java
 DatabaseMetaData meta = connection.getMetaData();
@@ -514,7 +514,7 @@ try (ResultSet tables = meta.getTables(null, null, "%", new String[]{"TABLE"})) 
     }
 }
 
-try (ResultSet columns = meta.getColumns(null, null, "cliente", "%")) {
+try (ResultSet columns = meta.getColumns(null, null, "customer", "%")) {
     while (columns.next()) {
         String name = columns.getString("COLUMN_NAME");
         String type = columns.getString("TYPE_NAME");
@@ -524,15 +524,15 @@ try (ResultSet columns = meta.getColumns(null, null, "cliente", "%")) {
     }
 }
 
-try (ResultSet keys = meta.getPrimaryKeys(null, null, "cliente")) {
+try (ResultSet keys = meta.getPrimaryKeys(null, null, "customer")) {
     while (keys.next()) {
         String column = keys.getString("COLUMN_NAME");
         short position = keys.getShort("KEY_SEQ");
-        String name = keys.getString("PK_NAME"); // PK_cliente
+        String name = keys.getString("PK_NAME"); // PK_customer
     }
 }
 
-try (ResultSet indexes = meta.getIndexInfo(null, null, "cliente", false, false)) {
+try (ResultSet indexes = meta.getIndexInfo(null, null, "customer", false, false)) {
     while (indexes.next()) {
         String name = indexes.getString("INDEX_NAME");
         boolean nonUnique = indexes.getBoolean("NON_UNIQUE");
@@ -542,83 +542,83 @@ try (ResultSet indexes = meta.getIndexInfo(null, null, "cliente", false, false))
 }
 ```
 
-`getIndexInfo(..., true, ...)` devolve só índices únicos, entre eles `PRIMARY` e cada `UNIQUE`. `getTypeInfo()` lista os tipos da tabela acima. `TABLE_SCHEM` traz o esquema de cada tabela. `PROCEDURE_SCHEM` traz o esquema de cada procedure. `getSchemas()` lista os esquemas, começando por `public`. Um esquema que não existe, como `"outro"`, deixa o resultado vazio.
+`getIndexInfo(..., true, ...)` returns only unique indexes, among them `PRIMARY` and each `UNIQUE`. `getTypeInfo()` lists the types from the table above. `TABLE_SCHEM` carries each table's schema. `PROCEDURE_SCHEM` carries each procedure's schema. `getSchemas()` lists the schemas, starting with `public`. A schema that does not exist, such as `"other"`, leaves the result empty.
 
-## Erros
+## Errors
 
-Falha de SQL vira `SQLException`. Mensagem de sintaxe ou de regra do banco usa SQLSTATE `42000`. Conexão fechada usa `08003`. `commit` ou `rollback` com auto-commit ligado usa `25000`. URL sem arquivo usa `08001`. Usuário ou senha em branco usa `28000`. Recurso fora do driver, como `CallableStatement`, `CLOB`, `ARRAY` ou savepoint, lança `SQLFeatureNotSupportedException`. Procedure roda por SQL, com `EXECUTE PROCEDURE`.
+An SQL failure becomes an `SQLException`. A syntax message or a database-rule message uses SQLSTATE `42000`. A closed connection uses `08003`. `commit` or `rollback` with auto-commit on uses `25000`. A URL with no file uses `08001`. A blank user or password uses `28000`. A feature outside the driver, such as `CallableStatement`, `CLOB`, `ARRAY`, or a savepoint, throws `SQLFeatureNotSupportedException`. A procedure runs through SQL, with `EXECUTE PROCEDURE`.
 
-## Arquivo e tabelas internas
+## File and internal tables
 
-O banco é o arquivo `.db`: a página 0 é o cabeçalho, o catálogo vem em seguida e cada tabela ocupa páginas inteiras, com o `BLOB` na própria tabela. Ao lado fica o `.log`, com o mesmo nome e a extensão trocada (`loja.db` e `loja.log`). Cada transação confirmada fica nesse log, comprimida, e o commit grava o log antes das páginas. O checkpoint sincroniza o `.db` e conserva esse histórico, desde a criação ou o último backup completo. O backup de modificação só copia o `.log`. Se o processo cair no meio, a próxima abertura reaplica o que ficou depois do checkpoint. `apply` descomprime as transações e executa o SQL de novo sobre um `.db`. Não há pasta de tabelas. O tamanho da página é o escolhido em `create`. `NEX$FORMAT` continua `1`.
+The database is the `.db` file: page 0 is the header, the catalog comes next, and each table occupies whole pages, with the `BLOB` stored in the table itself. Beside it is the `.log`, with the same name and a different extension (`store.db` and `store.log`). Each committed transaction is stored in that log, compressed, and commit writes the log before the pages. The checkpoint synchronizes the `.db` and keeps that history, from creation or the last full backup. The incremental backup copies only the `.log`. If the process crashes in the middle, the next open reapplies what remained after the checkpoint. `apply` decompresses the transactions and runs the SQL again against a `.db`. There is no folder of tables. The page size is the one chosen in `create`. `NEX$FORMAT` remains `1`.
 
-Treze tabelas nascem com o arquivo, entre elas `NEX$SCHEMAS` com a linha `public`. `CREATE TABLE` acrescenta o dono em `NEX$PRIVILEGES`. O prefixo `NEX$` é reservado. `DROP`, `ALTER` e `CREATE INDEX` nelas falham. Identificadores podem usar `$`.
+Thirteen tables are created with the file, among them `NEX$SCHEMAS` with the `public` row. `CREATE TABLE` adds the owner in `NEX$PRIVILEGES`. The `NEX$` prefix is reserved. `DROP`, `ALTER`, and `CREATE INDEX` on them fail. Identifiers may use `$`.
 
 
-| Tabela                     | Papel                                                               | Gravação                        |
+| Table                      | Purpose                                                             | Writes                          |
 | -------------------------- | ------------------------------------------------------------------- | ------------------------------- |
-| `NEX$DATABASE`             | nome, descrição, dono, data, versão do arquivo e `NEX$PAGE_SIZE`    | somente leitura                 |
-| `NEX$CONFIG`               | chave e valor (`Auth.Hash`, `Default.CharacterSet`)                 | DBA                             |
-| `NEX$USERS`                | usuários, senha com sal, ativo e administrador                      | DBA                             |
-| `NEX$PRIVILEGES`           | o que cada usuário pode fazer em cada tabela                        | `GRANT` e `REVOKE`              |
-| `NEX$CONNECTIONS`          | conexões ativas: usuário, entrada, estado e origem remota           | o próprio banco                 |
-| `NEX$GENERATORS`           | esquema, nome, valor atual, início, passo e dono do gerador         | `CREATE` / `SET GENERATOR`      |
-| `NEX$PROCEDURES`           | esquema, nome, código e dono da procedure                           | `CREATE PROCEDURE`              |
-| `NEX$PROCEDURE_PARAMETERS` | esquema, argumentos e retornos (`NEX$PARAMETER_TYPE` 0 ou 1)       | `CREATE PROCEDURE`              |
-| `NEX$TRIGGERS`             | nome, tabela, posição, fase, código, inativo e dono                 | `CREATE TRIGGER`                |
-| `NEX$VIEWS`                | nome, `SELECT`, relação de base, colunas e dono                     | `CREATE VIEW`                   |
-| `NEX$ROLES`                | nome e dono do papel                                                | `CREATE ROLE`                   |
-| `NEX$ROLE_MEMBERS`         | quem recebeu o papel e se pode repassar                             | `GRANT papel TO usuário`        |
-| `NEX$SCHEMAS`              | nome e dono de cada esquema; `public` é o padrão                    | `CREATE SCHEMA` / `DROP SCHEMA` |
+| `NEX$DATABASE`             | name, description, owner, date, file version, and `NEX$PAGE_SIZE`  | read-only                       |
+| `NEX$CONFIG`               | key and value (`Auth.Hash`, `Default.CharacterSet`)                 | DBA                             |
+| `NEX$USERS`                | users, salted password, active, and administrator                   | DBA                             |
+| `NEX$PRIVILEGES`           | what each user can do on each table                                 | `GRANT` and `REVOKE`            |
+| `NEX$CONNECTIONS`          | active connections: user, login, state, and remote origin           | the database itself             |
+| `NEX$GENERATORS`           | schema, name, current value, start, step, and generator owner       | `CREATE` / `SET GENERATOR`      |
+| `NEX$PROCEDURES`           | schema, name, code, and procedure owner                             | `CREATE PROCEDURE`              |
+| `NEX$PROCEDURE_PARAMETERS` | schema, arguments, and return values (`NEX$PARAMETER_TYPE` 0 or 1) | `CREATE PROCEDURE`              |
+| `NEX$TRIGGERS`             | name, table, position, phase, code, inactive, and owner             | `CREATE TRIGGER`                |
+| `NEX$VIEWS`                | name, `SELECT`, base relation, columns, and owner                   | `CREATE VIEW`                   |
+| `NEX$ROLES`                | role name and owner                                                 | `CREATE ROLE`                   |
+| `NEX$ROLE_MEMBERS`         | who was granted the role and whether they can grant it further      | `GRANT role TO user`            |
+| `NEX$SCHEMAS`              | name and owner of each schema; `public` is the default              | `CREATE SCHEMA` / `DROP SCHEMA` |
 
 
-O DBA inicial é `DBA`, senha `dba`, administrador e ativo. Outro usuário entra com `INSERT` em `NEX$USERS`; a coluna `NEX$PASSWORD` recebe a senha em texto e o banco grava bcrypt. `SELECT` devolve o hash, não a senha. Não dá para apagar ou desativar o último DBA.
+The initial DBA is `DBA`, password `dba`, administrator and active. Another user is added with `INSERT` into `NEX$USERS`; the `NEX$PASSWORD` column receives the password as text and the database stores bcrypt. `SELECT` returns the hash, not the password. The last DBA cannot be deleted or deactivated.
 
 ```sql
 INSERT INTO NEX$USERS (NEX$USER_NAME, NEX$PASSWORD) VALUES ('ana', 'ana');
-UPDATE NEX$USERS SET NEX$PASSWORD = 'nova' WHERE NEX$USER_NAME = 'DBA';
+UPDATE NEX$USERS SET NEX$PASSWORD = 'new' WHERE NEX$USER_NAME = 'DBA';
 SELECT NEX$USER_NAME, NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$CONNECTED_AT FROM NEX$CONNECTIONS;
 ```
 
-A linha só existe enquanto a conexão está aberta: `NEX$STATE` fica `ACTIVE`. Ao fechar, a linha é apagada. Se o processo cair, a próxima abertura apaga as que ficaram. `NEX$REMOTE_PROTOCOL` é `local` na conexão embutida e `TCPv4` ou `TCPv6` no motor. `NEX$REMOTE_ADDRESS` é o endereço do cliente. `NEX$REMOTE_HOST`, `NEX$REMOTE_OS_USER` e `NEX$REMOTE_PROCESS` vêm do processo cliente.
+The row exists only while the connection is open: `NEX$STATE` is `ACTIVE`. On close, the row is deleted. If the process crashes, the next open deletes the rows that remained. `NEX$REMOTE_PROTOCOL` is `local` on the embedded connection and `TCPv4` or `TCPv6` on the server. `NEX$REMOTE_ADDRESS` is the client address. `NEX$REMOTE_HOST`, `NEX$REMOTE_OS_USER`, and `NEX$REMOTE_PROCESS` come from the client process.
 
-## Autorização
+## Authorization
 
-O DBA passa em qualquer tabela. Quem cria uma tabela vira dono e pode ler, gravar, alterar a estrutura e conceder acesso. Os outros usuários só entram com `GRANT`.
+The DBA is allowed on every table. The user who creates a table becomes its owner and can read, write, alter the structure, and grant access. Other users get in only through `GRANT`.
 
-`NEX$PRIVILEGES` guarda usuário, tabela, privilégio (`OWNER`, `SELECT`, `INSERT`, `UPDATE` ou `DELETE`), se pode repassar (`NEX$GRANT_OPTION`) e quem concedeu (`NEX$GRANTOR`). `INSERT` direto nessa tabela falha. `PUBLIC` vale para todo mundo.
+`NEX$PRIVILEGES` stores the user, the table, the privilege (`OWNER`, `SELECT`, `INSERT`, `UPDATE`, or `DELETE`), whether it can be granted further (`NEX$GRANT_OPTION`), and who granted it (`NEX$GRANTOR`). A direct `INSERT` into that table fails. `PUBLIC` applies to everyone.
 
 ```sql
-GRANT SELECT ON cliente TO ana;
-GRANT SELECT, INSERT ON cliente TO ana WITH GRANT OPTION;
-GRANT ALL ON cliente TO PUBLIC;
-REVOKE INSERT ON cliente FROM ana;
-REVOKE ALL ON cliente FROM PUBLIC;
+GRANT SELECT ON customer TO ana;
+GRANT SELECT, INSERT ON customer TO ana WITH GRANT OPTION;
+GRANT ALL ON customer TO PUBLIC;
+REVOKE INSERT ON customer FROM ana;
+REVOKE ALL ON customer FROM PUBLIC;
 ```
 
-`ALL` cobre `SELECT`, `INSERT`, `UPDATE` e `DELETE`. Não tira a posse. `GRANT` e `REVOKE` não rodam no meio de uma transação.
+`ALL` covers `SELECT`, `INSERT`, `UPDATE`, and `DELETE`. It does not take away ownership. `GRANT` and `REVOKE` do not run in the middle of a transaction.
 
-Um papel recebe privilégio de tabela e é concedido a um usuário. No login, só vale o papel informado; sem papel, `CURRENT_ROLE` fica `NONE` e o privilégio do papel não entra. O DBA usa qualquer papel existente. Quem cria o papel é o dono e pode concedê-lo. `WITH ADMIN OPTION` deixa o usuário repassar o papel. `PUBLIC` também pode receber o papel. O nome do papel não pode coincidir com um usuário, nem ser `NONE` ou `PUBLIC`.
+A role receives a table privilege and is granted to a user. At login, only the supplied role applies; with no role, `CURRENT_ROLE` is `NONE` and the role privilege does not apply. The DBA can use any existing role. The user who creates the role is its owner and can grant it. `WITH ADMIN OPTION` lets that user grant the role further. `PUBLIC` can receive the role as well. The role name cannot match a user, and it cannot be `NONE` or `PUBLIC`.
 
 ```sql
-CREATE ROLE vendas;
-GRANT SELECT ON cliente TO vendas;
-GRANT vendas TO ana WITH ADMIN OPTION;
-REVOKE vendas FROM ana;
-DROP ROLE vendas;
+CREATE ROLE sales;
+GRANT SELECT ON customer TO sales;
+GRANT sales TO ana WITH ADMIN OPTION;
+REVOKE sales FROM ana;
+DROP ROLE sales;
 ```
 
 ```java
-Session ana = db.login("ana", "ana", "vendas");
+Session ana = db.login("ana", "ana", "sales");
 ```
 
 
 
-## Geradores, procedures e triggers
+## Generators, procedures, and triggers
 
-O valor segue o Firebird e é confirmado na hora: `ROLLBACK` desfaz a linha, mas não o `GEN_ID`. `CREATE GENERATOR` começa em 0, então o primeiro `GEN_ID(nome, 1)` devolve 1. `SET GENERATOR nome TO 100` grava 100; o próximo passo 1 devolve 101. `CREATE SEQUENCE nome START WITH 10 INCREMENT BY 2` faz o primeiro `NEXT VALUE FOR nome` devolver 10. `ALTER SEQUENCE nome RESTART WITH 20` faz o próximo valor ser 20. `GEN_ID(nome, 0)` só lê o valor atual. Quem cria o gerador é o dono; o DBA também pode apagar.
+The value follows Firebird and is committed immediately: `ROLLBACK` undoes the row, but not the `GEN_ID`. `CREATE GENERATOR` starts at 0, so the first `GEN_ID(name, 1)` returns 1. `SET GENERATOR name TO 100` stores 100; the next step of 1 returns 101. `CREATE SEQUENCE name START WITH 10 INCREMENT BY 2` makes the first `NEXT VALUE FOR name` return 10. `ALTER SEQUENCE name RESTART WITH 20` makes the next value 20. `GEN_ID(name, 0)` only reads the current value. The user who creates the generator is its owner; the DBA can drop it as well.
 
-Gerador e sequence ficam no esquema, como tabela e procedure. Sem prefixo, o nome usa o esquema da sessão. `CREATE SEQUENCE vendas.seq_item` grava em `vendas`, e o mesmo nome pode existir em outro esquema. `GEN_ID` e `NEXT VALUE FOR` sem esquema usam a sessão; dentro de procedure ou trigger, usam o esquema da rotina ou da tabela. `DROP SCHEMA ... CASCADE` apaga os sequenciais desse esquema. `NEX$SCHEMA_NAME` guarda o esquema, inclusive `public`.
+A generator and a sequence live in the schema, like a table and a procedure. Without a prefix, the name uses the session schema. `CREATE SEQUENCE sales.seq_item` stores it in `sales`, and the same name can exist in another schema. `GEN_ID` and `NEXT VALUE FOR` without a schema use the session; inside a procedure or trigger, they use the routine's schema or the table's schema. `DROP SCHEMA ... CASCADE` drops the sequences of that schema. `NEX$SCHEMA_NAME` stores the schema, including `public`.
 
 ```sql
 CREATE GENERATOR gen_item;
@@ -630,24 +630,24 @@ ALTER SEQUENCE seq_item RESTART WITH 20;
 DROP GENERATOR gen_item;
 ```
 
-Procedure guarda o código e os parâmetros, no esquema da sessão ou no esquema escrito no nome. `CREATE PROCEDURE vendas.serie` fica em `vendas`; sem o prefixo, fica no esquema atual. O mesmo nome pode existir em esquemas diferentes. `EXECUTE PROCEDURE serie` e `SELECT ... FROM serie(...)` usam o esquema da sessão quando o nome não traz esquema. No corpo, um nome sem esquema usa o esquema da procedure. `DROP SCHEMA ... CASCADE` apaga as procedures daquele esquema. `NEX$SCHEMA_NAME` guarda o esquema, inclusive `public`.
+A procedure stores the code and the parameters, in the session schema or in the schema written in the name. `CREATE PROCEDURE sales.series` lives in `sales`; without the prefix, it lives in the current schema. The same name can exist in different schemas. `EXECUTE PROCEDURE series` and `SELECT ... FROM series(...)` use the session schema when the name carries no schema. In the body, a name without a schema uses the procedure's schema. `DROP SCHEMA ... CASCADE` drops the procedures of that schema. `NEX$SCHEMA_NAME` stores the schema, including `public`.
 
-No corpo, o ponto e vírgula faz parte da rotina: não é preciso `SET TERM`. `EXECUTE PROCEDURE` devolve uma linha com os retornos, parando no primeiro `SUSPEND`. `SELECT` em `nome(argumentos)` devolve uma linha por `SUSPEND`. Sem `SUSPEND`, o `SELECT` vem vazio e o `EXECUTE PROCEDURE` ainda devolve os valores finais. Dentro do SQL da rotina, variável usa `:nome`. Em `IF`, `WHILE` e atribuição, o nome sozinho já é a variável. `NEW` e `OLD` existem no trigger. `OLD` só é lido. Atribuição em `BEFORE INSERT` ou `BEFORE UPDATE` entra na linha; em `AFTER`, não muda o que já foi gravado. `DELETE` só tem `OLD`.
+In the body, the semicolon is part of the routine: `SET TERM` is not required. `EXECUTE PROCEDURE` returns one row with the return values, stopping at the first `SUSPEND`. `SELECT` from `name(arguments)` returns one row per `SUSPEND`. Without `SUSPEND`, the `SELECT` comes back empty and `EXECUTE PROCEDURE` still returns the final values. Inside the routine SQL, a variable uses `:name`. In `IF`, `WHILE`, and assignment, the bare name is already the variable. `NEW` and `OLD` exist in a trigger. `OLD` is only read. An assignment in `BEFORE INSERT` or `BEFORE UPDATE` goes into the row; in `AFTER`, it does not change what was already written. `DELETE` has only `OLD`.
 
 ```sql
-CREATE PROCEDURE serie (ate INTEGER)
+CREATE PROCEDURE series (up_to INTEGER)
 RETURNS (n INTEGER)
 AS
 BEGIN
   n = 1;
-  WHILE (n <= ate) DO
+  WHILE (n <= up_to) DO
   BEGIN
     SUSPEND;
     n = n + 1;
   END
 END
 
-SELECT n FROM serie(3);
+SELECT n FROM series(3);
 
 CREATE TRIGGER item_bi FOR item
 ACTIVE BEFORE INSERT POSITION 0
@@ -661,40 +661,39 @@ ALTER TRIGGER item_bi INACTIVE;
 DROP TRIGGER item_bi;
 ```
 
-O corpo aceita `DECLARE VARIABLE`, `DECLARE cursor CURSOR FOR (SELECT ...)`, `OPEN`, `FETCH ... INTO`, `CLOSE`, `FOR SELECT ... INTO ... DO`, `BEGIN/END`, atribuição, `IF/THEN/ELSE`, `WHILE/DO`, `EXIT`, `SUSPEND`, `EXCEPTION 'texto'`, `INSERT`, `UPDATE`, `DELETE`, `EXECUTE PROCEDURE`, `SELECT ... INTO` e `RETURNING_VALUES`. `ROW_COUNT` vale 1 depois de um `FETCH` com linha e 0 quando o cursor acaba; também recebe a quantidade de linhas do último `INSERT`, `UPDATE`, `DELETE` ou `SELECT INTO` da rotina. O `SELECT` do cursor enxerga `:variavel` e `NEW`/`OLD` na hora do `OPEN`. `FETCH` sem linha não muda as variáveis. Abrir um cursor aberto, ou ler e fechar um cursor fechado, falha. Posição menor roda primeiro. Trigger inativo não roda. `DROP TABLE` apaga os triggers da tabela. Procedure e trigger encadeados param em 32 chamadas. O dono ou o DBA altera o objeto; trigger na tabela também exige ser dono dela ou DBA. `INSERT` direto nessas tabelas de catálogo falha.
+The body accepts `DECLARE VARIABLE`, `DECLARE cursor CURSOR FOR (SELECT ...)`, `OPEN`, `FETCH ... INTO`, `CLOSE`, `FOR SELECT ... INTO ... DO`, `BEGIN/END`, assignment, `IF/THEN/ELSE`, `WHILE/DO`, `EXIT`, `SUSPEND`, `EXCEPTION 'text'`, `INSERT`, `UPDATE`, `DELETE`, `EXECUTE PROCEDURE`, `SELECT ... INTO`, and `RETURNING_VALUES`. `ROW_COUNT` is 1 after a `FETCH` that got a row and 0 when the cursor is exhausted; it also receives the row count of the last `INSERT`, `UPDATE`, `DELETE`, or `SELECT INTO` in the routine. The cursor `SELECT` sees `:variable` and `NEW`/`OLD` at `OPEN` time. A `FETCH` with no row does not change the variables. Opening an open cursor, or reading or closing a closed cursor, fails. A lower position runs first. An inactive trigger does not run. `DROP TABLE` drops the triggers of the table. Chained procedures and triggers stop at 32 calls. The owner or the DBA alters the object; a trigger on a table also requires being that table's owner or the DBA. A direct `INSERT` into these catalog tables fails.
 
 ```sql
-CREATE PROCEDURE a_partir (minimo INTEGER)
-RETURNS (id INTEGER, nome VARCHAR(20))
+CREATE PROCEDURE starting_from (minimum INTEGER)
+RETURNS (id INTEGER, name VARCHAR(20))
 AS
-DECLARE c CURSOR FOR (SELECT id, nome FROM item WHERE id >= :minimo ORDER BY id);
+DECLARE c CURSOR FOR (SELECT id, name FROM item WHERE id >= :minimum ORDER BY id);
 BEGIN
   OPEN c;
-  FETCH c INTO id, nome;
+  FETCH c INTO id, name;
   WHILE (ROW_COUNT > 0) DO
   BEGIN
     SUSPEND;
-    FETCH c INTO id, nome;
+    FETCH c INTO id, name;
   END
   CLOSE c;
 END
 
-FOR SELECT nome FROM item ORDER BY id
-INTO nome
+FOR SELECT name FROM item ORDER BY id
+INTO name
 DO SUSPEND;
 ```
 
-View é um `SELECT` guardado, de uma tabela ou de outra view. `SELECT` nela aplica `WHERE`, lista de colunas, `DISTINCT`, `ORDER BY` e `LIMIT` por cima do resultado. `INSERT`, `UPDATE` e `DELETE` falham: a view é somente leitura. O nome não pode coincidir com uma tabela. `DROP TABLE` ou `DROP VIEW` falha enquanto outra view depender do objeto. O dono ou o DBA remove a view. `GRANT` e `REVOKE` usam o nome dela, com `ON` ou `ON VIEW`. `SELECT *` usa as colunas gravadas na criação. JDBC lista o tipo `VIEW`.
+A view is a stored `SELECT`, from one table or from another view. `SELECT` on it applies `WHERE`, a column list, `DISTINCT`, `ORDER BY`, and `LIMIT` on top of the result. `INSERT`, `UPDATE`, and `DELETE` fail: the view is read-only. The name cannot match a table. `DROP TABLE` or `DROP VIEW` fails while another view depends on the object. The owner or the DBA removes the view. `GRANT` and `REVOKE` use its name, with `ON` or `ON VIEW`. `SELECT *` uses the columns stored at creation. JDBC lists the type `VIEW`.
 
 ```sql
-CREATE VIEW ativo (pessoa) AS
-SELECT nome FROM item WHERE ativo = TRUE;
+CREATE VIEW active (person) AS
+SELECT name FROM item WHERE active = TRUE;
 
-SELECT pessoa FROM ativo WHERE pessoa <> 'Caio' ORDER BY pessoa;
-SELECT COUNT(*) FROM ativo;
+SELECT person FROM active WHERE person <> 'Caio' ORDER BY person;
+SELECT COUNT(*) FROM active;
 
-CREATE VIEW nomes AS SELECT pessoa FROM ativo;
-DROP VIEW nomes;
-DROP VIEW ativo;
+CREATE VIEW names AS SELECT person FROM active;
+DROP VIEW names;
+DROP VIEW active;
 ```
-

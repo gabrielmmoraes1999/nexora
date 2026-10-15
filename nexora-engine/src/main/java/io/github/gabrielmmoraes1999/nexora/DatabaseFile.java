@@ -18,13 +18,13 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Arquivo {@code .db}. A página 0 é o cabeçalho. O catálogo e cada tabela
- * ocupam páginas inteiras. O {@code .log} ao lado guarda cada commit desde
- * a criação ou o último backup completo. O checkpoint sincroniza as páginas e
- * marca até onde elas acompanham esse log. Sem o arquivo, a abertura grava
- * um log novo, só com o cabeçalho, avança a geração e segue a partir das
- * páginas já gravadas. O log da geração anterior deixa de abrir o banco.
- * A abertura e o fechamento gravam o checkpoint.
+ * The {@code .db} file. Page 0 is the header. The catalog and each table
+ * occupy whole pages. The {@code .log} beside it stores each commit since
+ * creation or the last full backup. The checkpoint syncs the pages and
+ * marks how far they follow that log. Without the file, opening writes
+ * a new log, with only the header, advances the generation, and continues from the
+ * pages already stored. The log from the previous generation can no longer open the database.
+ * Opening and closing write the checkpoint.
  */
 final class DatabaseFile implements AutoCloseable {
 
@@ -75,26 +75,26 @@ final class DatabaseFile implements AutoCloseable {
 
     private static DatabaseFile open(Path file, int pageSize, boolean existing) {
         if (file == null) {
-            throw new NexException("o arquivo do banco é obrigatório");
+            throw new NexException("database file is required");
         }
         Path path = file.toAbsolutePath().normalize();
         if (Files.isDirectory(path)) {
-            throw new NexException("o banco é um arquivo .db, não um diretório");
+            throw new NexException("the database is a .db file, not a directory");
         }
         requireDatabase(path);
         Path logPath = TransactionLog.beside(path);
         try {
             if (existing) {
                 if (!Files.isRegularFile(path)) {
-                    throw new NexException("o arquivo do banco não existe");
+                    throw new NexException("database file does not exist");
                 }
                 if (Files.size(path) == 0) {
-                    throw new NexException("o arquivo do banco está vazio");
+                    throw new NexException("database file is empty");
                 }
             } else if (Files.exists(path) && Files.size(path) > 0) {
-                throw new NexException("o arquivo do banco já existe");
+                throw new NexException("database file already exists");
             } else if (Files.exists(logPath) && Files.size(logPath) > 0) {
-                throw new NexException("o log de transação já existe");
+                throw new NexException("transaction log already exists");
             }
             Path parent = path.getParent();
             if (!existing && parent != null) {
@@ -121,7 +121,7 @@ final class DatabaseFile implements AutoCloseable {
                         Files.deleteIfExists(path);
                         Files.deleteIfExists(logPath);
                     } catch (IOException ignored) {
-                        // o arquivo vazio fica para a próxima tentativa
+                        // the empty file is left for the next attempt
                     }
                 }
                 throw exception;
@@ -129,7 +129,7 @@ final class DatabaseFile implements AutoCloseable {
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("não foi possível abrir o banco: " + exception.getMessage(), exception);
+            throw new NexException("could not open the database: " + exception.getMessage(), exception);
         }
     }
 
@@ -170,15 +170,15 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     /**
-     * Copia uma região para um buraco anterior, sem sobrepor a origem.
-     * O catálogo passa a apontar para o destino antes de o espaço antigo ser limpo.
+     * Copies a region into an earlier gap, without overlapping the source.
+     * The catalog points at the destination before the old space is cleared.
      */
     void relocate(long from, long to, long length, List<StoredTable> nextTables) {
         if (length <= 0 || to < pageSize || from < pageSize || to >= from || to + length > from) {
-            throw new NexException("falha interna ao compactar o banco");
+            throw new NexException("internal failure while compacting the database");
         }
         if (overlaps(to, length, catalogOffset, catalogSpan) || overlaps(from, length, catalogOffset, catalogSpan)) {
-            throw new NexException("falha interna ao compactar o banco");
+            throw new NexException("internal failure while compacting the database");
         }
         beginCommit();
         try {
@@ -199,13 +199,13 @@ final class DatabaseFile implements AutoCloseable {
 
     void copy(long from, long to, long length) {
         if (length < 0 || from < 0 || to < 0) {
-            throw new NexException("cópia inválida no arquivo do banco");
+            throw new NexException("invalid copy in the database file");
         }
         if (length == 0) {
             return;
         }
         if (from < to + length && to < from + length) {
-            throw new NexException("cópia sobreposta no arquivo do banco");
+            throw new NexException("overlapping copy in the database file");
         }
         long remaining = length;
         long readAt = from;
@@ -304,7 +304,7 @@ final class DatabaseFile implements AutoCloseable {
         long publishedSize = allocator.fileSize();
         byte[] catalog = CatalogCodec.encode(publishedSize, nextTables, allocator.free());
         if (pagedLength(catalog.length) > span) {
-            throw new NexException("falha interna ao gravar o catálogo");
+            throw new NexException("internal failure while writing the catalog");
         }
         byte[] stored = new byte[(int) span];
         System.arraycopy(catalog, 0, stored, 0, catalog.length);
@@ -368,7 +368,7 @@ final class DatabaseFile implements AutoCloseable {
         try {
             saveCheckpoint();
         } catch (RuntimeException ignored) {
-            // a próxima abertura recupera pelo log
+            // the next open recovers from the log
         }
         if (log != null) {
             log.close();
@@ -379,12 +379,12 @@ final class DatabaseFile implements AutoCloseable {
                 lock.release();
             }
         } catch (IOException ignored) {
-            // o canal será fechado em seguida
+            // the channel is closed next
         }
         try {
             channel.close();
         } catch (IOException ignored) {
-            // o bloqueio deixa de valer quando o processo solta o arquivo
+            // the lock ends when the process releases the file
         }
         lock = null;
     }
@@ -395,7 +395,7 @@ final class DatabaseFile implements AutoCloseable {
         long size = pageSize + span;
         byte[] catalog = CatalogCodec.encode(size, List.of(), List.of());
         if (catalog.length != draft.length) {
-            throw new NexException("falha interna ao criar o banco");
+            throw new NexException("internal failure while creating the database");
         }
         byte[] header = new byte[pageSize];
         System.arraycopy(Format.DB_MAGIC, 0, header, 0, Format.DB_MAGIC.length);
@@ -436,7 +436,7 @@ final class DatabaseFile implements AutoCloseable {
     private long pagedLength(int length) {
         long span = Format.alignPage(length, pageSize);
         if (span > Integer.MAX_VALUE) {
-            throw new NexException("catálogo excede o tamanho máximo suportado");
+            throw new NexException("catalog exceeds the maximum supported size");
         }
         return span;
     }
@@ -444,17 +444,17 @@ final class DatabaseFile implements AutoCloseable {
     private void recover() {
         byte[] header = readBytes(0, Format.DB_HEADER_SIZE);
         if (!Arrays.equals(header, 0, Format.DB_MAGIC.length, Format.DB_MAGIC, 0, Format.DB_MAGIC.length)) {
-            throw new NexException("arquivo não é um banco do Nexora");
+            throw new NexException("file is not a Nexora database");
         }
         ByteBuffer buffer = ByteBuffer.wrap(header).order(Format.ORDER);
         int version = buffer.getShort(Format.VERSION_OFFSET) & 0xFFFF;
         if (version != Format.DB_VERSION) {
-            throw new NexException("versão de banco não suportada: " + version);
+            throw new NexException("unsupported database version: " + version);
         }
         pageSize = Format.checkPageSize(buffer.getInt(Format.PAGE_SIZE_OFFSET));
         logId = buffer.getLong(Format.LOG_ID_OFFSET);
         if (logId == 0L) {
-            throw new NexException("banco sem log de transação");
+            throw new NexException("database has no transaction log");
         }
         checkpointLsn = buffer.getLong(Format.CHECKPOINT_LSN_OFFSET);
         epoch = buffer.getLong(Format.LOG_EPOCH_OFFSET);
@@ -474,16 +474,16 @@ final class DatabaseFile implements AutoCloseable {
             checkpointLsn = Format.LOG_HEADER_SIZE;
         } else if (logEpoch != epoch) {
             throw new NexException(logEpoch < epoch
-                    ? "log anterior à geração atual do banco"
-                    : "falta um log entre o banco e este arquivo");
+                    ? "log is from a previous generation of the database"
+                    : "a log is missing between the database and this file");
         }
         if (checkpointLsn < Format.LOG_HEADER_SIZE || checkpointLsn > log.size()) {
-            throw new NexException("log de transação não cobre o checkpoint");
+            throw new NexException("transaction log does not cover the checkpoint");
         }
         boolean applied = log.replay(checkpointLsn, this::applyRedo);
         log.truncate(log.consistentEnd());
         if (checkpointLsn > log.size()) {
-            throw new NexException("log de transação não cobre o checkpoint");
+            throw new NexException("transaction log does not cover the checkpoint");
         }
         if (logEpoch != epoch) {
             writeEpoch(logEpoch);
@@ -497,12 +497,12 @@ final class DatabaseFile implements AutoCloseable {
         FileHeader slots = FileHeader.parseSlots(header);
         FileHeader.Slot active = slots.active();
         if (reserved <= 0 || reserved % pageSize != 0 || reserved < active.metaLength()) {
-            throw new NexException("catálogo do banco está corrompido");
+            throw new NexException("database catalog is corrupt");
         }
         byte[] encoded = readBytes(active.metaOffset(), active.metaLength());
         CatalogImage image = CatalogCodec.decode(encoded, pageSize);
         if (active.metaOffset() + reserved > image.fileSize) {
-            throw new NexException("catálogo do banco está corrompido");
+            throw new NexException("database catalog is corrupt");
         }
         install(image.fileSize, image.free, image.tables, active.metaOffset(), active.metaLength(),
                 reserved, active.generation(), slots.activeIndex());
@@ -586,14 +586,14 @@ final class DatabaseFile implements AutoCloseable {
         List<Extent> victims = Extent.intersect(ranges, freeExtents);
         for (Extent extent : victims) {
             if (extent.offset < pageSize || extent.offset + extent.length > fileSize) {
-                throw new NexException("espaço livre fora do arquivo");
+                throw new NexException("free space is outside the file");
             }
             if (overlaps(extent.offset, extent.length, catalogOffset, catalogSpan)) {
-                throw new NexException("espaço livre invade o catálogo");
+                throw new NexException("free space overlaps the catalog");
             }
             for (StoredTable table : tables) {
                 if (overlaps(extent.offset, extent.length, table.base, table.capacity)) {
-                    throw new NexException("espaço livre invade a tabela " + table.name);
+                    throw new NexException("free space overlaps table " + table.name);
                 }
             }
         }
@@ -626,22 +626,22 @@ final class DatabaseFile implements AutoCloseable {
             } else if (current < size) {
                 ByteBuffer zero = ByteBuffer.allocate(1);
                 if (channel.write(zero, size - 1) != 1) {
-                    throw new NexException("falha ao ajustar o arquivo do banco");
+                    throw new NexException("failed to resize the database file");
                 }
             }
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("falha ao ajustar o arquivo do banco: " + exception.getMessage(), exception);
+            throw new NexException("failed to resize the database file: " + exception.getMessage(), exception);
         }
     }
 
     void beginCommit() {
         if (leaveForRecovery()) {
-            throw new NexException("o banco precisa ser reaberto para concluir a recuperação");
+            throw new NexException("the database must be reopened to finish recovery");
         }
         if (commit != null) {
-            throw new NexException("falha interna: commit já iniciado");
+            throw new NexException("internal failure: commit already started");
         }
         commit = new CommitBuffer(fileSize);
     }
@@ -667,7 +667,7 @@ final class DatabaseFile implements AutoCloseable {
         log.force();
         if (TransactionLog.crashAfterRedo) {
             crashed = true;
-            throw new NexException("queda simulada antes do checkpoint");
+            throw new NexException("simulated crash before the checkpoint");
         }
         buffer.apply(channel);
         truncatePhysical(buffer.fileSize());
@@ -691,7 +691,7 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     /**
-     * Grava o checkpoint quando a abertura já concluiu. Um log recusado não é alterado.
+     * Writes the checkpoint once opening has finished. A rejected log is left unchanged.
      */
     void saveCheckpoint() {
         if (!ready || log == null || crashed || (recoveryPending && !appliedToDisk)) {
@@ -714,8 +714,8 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     /**
-     * Backup completo: copia o par já sincronizado e faz o log vivo passar
-     * a registrar só o que mudar depois.
+     * Full backup: copies the pair already synced and makes the live log
+     * record only what changes afterward.
      */
     void backupTo(Path directory) {
         Path dir = backupFolder(directory);
@@ -723,13 +723,13 @@ final class DatabaseFile implements AutoCloseable {
         Path dbCopy = dir.resolve(path.getFileName());
         Path logCopy = dir.resolve(log.path.getFileName());
         if (dbCopy.equals(path) || logCopy.equals(log.path)) {
-            throw new NexException("o backup não pode ficar na pasta do banco");
+            throw new NexException("the backup cannot be placed in the database directory");
         }
         long bytes;
         try {
             bytes = channel.size();
         } catch (IOException exception) {
-            throw new NexException("falha ao ler o arquivo do banco: " + exception.getMessage(), exception);
+            throw new NexException("failed to read the database file: " + exception.getMessage(), exception);
         }
         try {
             copyRange(channel, bytes, dbCopy);
@@ -748,14 +748,14 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     /**
-     * Backup de modificação: copia o {@code .log} e deixa o log vivo no lugar.
+     * Modification backup: copies the {@code .log} and leaves the live log in place.
      */
     void backupLogTo(Path directory) {
         Path dir = backupFolder(directory);
         checkpoint();
         Path logCopy = dir.resolve(log.path.getFileName());
         if (logCopy.equals(log.path)) {
-            throw new NexException("o backup não pode ficar na pasta do banco");
+            throw new NexException("the backup cannot be placed in the database directory");
         }
         try {
             log.transferTo(logCopy);
@@ -767,31 +767,31 @@ final class DatabaseFile implements AutoCloseable {
 
     private Path backupFolder(Path directory) {
         if (directory == null) {
-            throw new NexException("a pasta do backup é obrigatória");
+            throw new NexException("backup directory is required");
         }
         Path dir = directory.toAbsolutePath().normalize();
         Path parent = path.getParent();
         if (parent != null && dir.equals(parent)) {
-            throw new NexException("o backup não pode ficar na pasta do banco");
+            throw new NexException("the backup cannot be placed in the database directory");
         }
         if (Files.exists(dir) && !Files.isDirectory(dir)) {
-            throw new NexException("o destino do backup é uma pasta");
+            throw new NexException("the backup destination is a directory");
         }
         try {
             Files.createDirectories(dir);
         } catch (IOException exception) {
-            throw new NexException("não foi possível criar a pasta do backup: " + exception.getMessage(), exception);
+            throw new NexException("could not create the backup directory: " + exception.getMessage(), exception);
         }
         return dir;
     }
 
     /**
-     * Lê as transações de {@code logFile} que ainda faltam neste banco.
-     * A mesma geração continua do checkpoint. A geração seguinte traz o que mudou depois do backup.
+     * Reads the transactions from {@code logFile} that this database does not have yet.
+     * The same generation continues from the checkpoint. The next generation brings what changed after the backup.
      */
     ApplyPlan planApply(Path logFile) {
         if (logFile == null) {
-            throw new NexException("o log de transação é obrigatório");
+            throw new NexException("transaction log is required");
         }
         Path externalPath = logFile.toAbsolutePath().normalize();
         if (externalPath.equals(log.path.toAbsolutePath().normalize())) {
@@ -804,7 +804,7 @@ final class DatabaseFile implements AutoCloseable {
             if (incoming == epoch) {
                 long from = appliedOffset > 0 ? appliedOffset : checkpointLsn;
                 if (external.size() < from) {
-                    throw new NexException("log de transação não cobre o checkpoint");
+                    throw new NexException("transaction log does not cover the checkpoint");
                 }
                 if (external.size() <= from) {
                     return ApplyPlan.none();
@@ -813,27 +813,27 @@ final class DatabaseFile implements AutoCloseable {
             }
             if (incoming == epoch + 1) {
                 if (log.size() != checkpointLsn) {
-                    throw new NexException("o banco ainda tem alterações sem checkpoint");
+                    throw new NexException("the database still has changes without a checkpoint");
                 }
                 long from = appliedOffset > Format.LOG_HEADER_SIZE ? appliedOffset : Format.LOG_HEADER_SIZE;
                 return new ApplyPlan(incoming, true, external.readTransactions(from), external.size());
             }
             if (incoming < epoch) {
-                throw new NexException("log anterior à geração atual do banco");
+                throw new NexException("log is from a previous generation of the database");
             }
-            throw new NexException("falta um log entre o banco e este arquivo");
+            throw new NexException("a log is missing between the database and this file");
         } finally {
             external.close();
         }
     }
 
-    /** Marca o ponto do log externo já executado, para um novo apply continuar dali. */
+    /** Records how far the external log has been applied, so a new apply continues from there. */
     void noteApplied(long end) {
         writeAppliedOffset(end);
         checkpoint();
     }
 
-    /** A geração seguinte passa a ser a geração deste banco. */
+    /** The next generation becomes this database's generation. */
     void completeApply(ApplyPlan plan) {
         if (plan.advanceEpoch) {
             log.adoptEpoch(plan.incomingEpoch);
@@ -882,7 +882,7 @@ final class DatabaseFile implements AutoCloseable {
             }
             out.force(true);
         } catch (IOException exception) {
-            throw new NexException("falha ao copiar o banco: " + exception.getMessage(), exception);
+            throw new NexException("failed to copy the database: " + exception.getMessage(), exception);
         }
     }
 
@@ -890,7 +890,7 @@ final class DatabaseFile implements AutoCloseable {
         try {
             Files.deleteIfExists(file);
         } catch (IOException ignored) {
-            // a cópia incompleta fica para a próxima tentativa
+            // the incomplete copy is left for the next attempt
         }
     }
 
@@ -932,14 +932,14 @@ final class DatabaseFile implements AutoCloseable {
         try {
             channel.force(true);
         } catch (IOException exception) {
-            throw new NexException("falha ao sincronizar o arquivo do banco: " + exception.getMessage(), exception);
+            throw new NexException("failed to sync the database file: " + exception.getMessage(), exception);
         }
     }
 
     private static void requireDatabase(Path file) {
         Path name = file.getFileName();
         if (name == null || !name.toString().toLowerCase(Locale.ROOT).endsWith(".db")) {
-            throw new NexException("o banco é um arquivo .db");
+            throw new NexException("the database is a .db file");
         }
     }
 
@@ -951,12 +951,12 @@ final class DatabaseFile implements AutoCloseable {
                 lock = null;
             }
             if (lock == null) {
-                throw new NexException("o banco já está aberto");
+                throw new NexException("database is already open");
             }
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
-            throw new NexException("não foi possível bloquear o banco: " + exception.getMessage(), exception);
+            throw new NexException("could not lock the database: " + exception.getMessage(), exception);
         }
     }
 
@@ -973,7 +973,7 @@ final class DatabaseFile implements AutoCloseable {
             long bytes = Format.alignPage(size, pageSize);
             long offset = space.allocate(bytes);
             if (offset < pageSize || offset % pageSize != 0) {
-                throw new NexException("falha interna ao reservar espaço no banco");
+                throw new NexException("internal failure while reserving space in the database");
             }
             return offset;
         }
@@ -1053,24 +1053,24 @@ final class DatabaseFile implements AutoCloseable {
 
         static CatalogImage decode(byte[] data, int pageSize) {
             if (data.length < 16 || (data.length % 8) != 0) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
             int stored = ByteBuffer.wrap(data, data.length - 4, 4).order(Format.ORDER).getInt();
             if (stored != Format.crc(data, 0, data.length - 4)) {
-                throw new NexException("catálogo do banco falhou na verificação");
+                throw new NexException("database catalog failed verification");
             }
             ByteReader reader = new ByteReader(data, data.length - 4);
             if (reader.u32() != Format.CATALOG_MAGIC) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
             int version = reader.u32();
             if (version != Format.DB_VERSION) {
-                throw new NexException("versão de catálogo não suportada: " + version);
+                throw new NexException("unsupported catalog version: " + version);
             }
             long size = reader.u64();
             int count = reader.u32();
             if (count < 0) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
             List<StoredTable> tables = new ArrayList<>(count);
             for (int i = 0; i < count; i++) {
@@ -1082,30 +1082,30 @@ final class DatabaseFile implements AutoCloseable {
                     pending = new PendingFlip(reader.u64(), reader.u64(), reader.u32(), reader.u8());
                 }
                 if (base < pageSize || base % pageSize != 0 || capacity <= 0 || capacity % pageSize != 0 || base + capacity < base) {
-                    throw new NexException("catálogo do banco está corrompido");
+                    throw new NexException("database catalog is corrupt");
                 }
                 tables.add(new StoredTable(name, base, capacity, pending));
             }
             int freeCount = reader.u32();
             if (freeCount < 0) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
             List<Extent> free = new ArrayList<>(freeCount);
             for (int i = 0; i < freeCount; i++) {
                 long offset = reader.u64();
                 long length = reader.u64();
                 if (offset < pageSize || offset % pageSize != 0 || length <= 0 || length % pageSize != 0) {
-                    throw new NexException("catálogo do banco está corrompido");
+                    throw new NexException("database catalog is corrupt");
                 }
                 free.add(new Extent(offset, length));
             }
             int pad = reader.u16();
             reader.skip(pad);
             if (reader.remaining() != 0) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
             if (size < pageSize || size % pageSize != 0) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
             return new CatalogImage(size, tables, Extent.coalesce(free));
         }
@@ -1153,7 +1153,7 @@ final class DatabaseFile implements AutoCloseable {
         void utf(String text) {
             byte[] raw = text.getBytes(StandardCharsets.UTF_8);
             if (raw.length > 65535) {
-                throw new NexException("nome longo demais no catálogo");
+                throw new NexException("name is too long in the catalog");
             }
             u16(raw.length);
             raw(raw);
@@ -1224,7 +1224,7 @@ final class DatabaseFile implements AutoCloseable {
 
         private void need(int count) {
             if (count < 0 || position + count > end) {
-                throw new NexException("catálogo do banco está corrompido");
+                throw new NexException("database catalog is corrupt");
             }
         }
     }
@@ -1265,7 +1265,7 @@ final class DatabaseFile implements AutoCloseable {
 
         void setFileSize(long size) {
             if (size < 0) {
-                throw new NexException("falha ao ajustar o arquivo do banco");
+                throw new NexException("failed to resize the database file");
             }
             List<Long> remove = new ArrayList<>();
             List<TransactionLog.Span> keep = new ArrayList<>();
@@ -1301,7 +1301,7 @@ final class DatabaseFile implements AutoCloseable {
                 return new byte[0];
             }
             if (length < 0 || offset < 0) {
-                throw new NexException("leitura inválida no arquivo do banco");
+                throw new NexException("invalid read in the database file");
             }
             byte[] out = new byte[length];
             int filled = 0;
@@ -1316,7 +1316,7 @@ final class DatabaseFile implements AutoCloseable {
                     }
                     int count = (int) (next - at);
                     if (count <= 0) {
-                        throw new NexException("leitura inválida no arquivo do banco");
+                        throw new NexException("invalid read in the database file");
                     }
                     System.arraycopy(readDisk(channel, at, count), 0, out, filled, count);
                     filled += count;
@@ -1391,7 +1391,7 @@ final class DatabaseFile implements AutoCloseable {
                 System.arraycopy(Format.readFully(channel, offset, available), 0, out, 0, available);
                 return out;
             } catch (IOException exception) {
-                throw new NexException("falha ao ler o arquivo do banco: " + exception.getMessage(), exception);
+                throw new NexException("failed to read the database file: " + exception.getMessage(), exception);
             }
         }
     }

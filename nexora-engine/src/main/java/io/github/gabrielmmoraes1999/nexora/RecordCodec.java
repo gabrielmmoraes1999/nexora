@@ -92,7 +92,7 @@ final class RecordCodec {
             writeField(buffer, column, cell);
         }
         if (buffer.position() != buffer.capacity()) {
-            throw new NexException("falha interna ao gravar o registro de " + schema.name);
+            throw new NexException("failed internally to write the record of " + schema.name);
         }
         return buffer.array();
     }
@@ -101,7 +101,7 @@ final class RecordCodec {
         ByteBuffer buffer = ByteBuffer.wrap(payload).order(Format.ORDER);
         int nullBytes = nullBytes(schema);
         if (payload.length < nullBytes) {
-            throw new NexException("registro incompatível com o esquema da tabela " + schema.name);
+            throw new NexException("record is incompatible with the schema of table " + schema.name);
         }
         byte[] bitmap = new byte[nullBytes];
         buffer.get(bitmap);
@@ -116,7 +116,7 @@ final class RecordCodec {
             cells[i] = readField(buffer, column);
         }
         if (buffer.hasRemaining()) {
-            throw new NexException("registro incompatível com o esquema da tabela " + schema.name);
+            throw new NexException("record is incompatible with the schema of table " + schema.name);
         }
         return cells;
     }
@@ -196,7 +196,7 @@ final class RecordCodec {
             case BOOLEAN -> {
                 int raw = buffer.get() & 0xFF;
                 if (raw != 0 && raw != 1) {
-                    throw new NexException("booleano corrompido na tabela");
+                    throw new NexException("corrupt boolean in the table");
                 }
                 yield new Cell(raw == 1, -1, 0);
             }
@@ -227,7 +227,7 @@ final class RecordCodec {
             return new Cell("", 0, 0);
         }
         if (offset <= 0 || length < 0) {
-            throw new NexException("referência de BLOB corrompida na coluna " + column.name);
+            throw new NexException("corrupt BLOB reference in column " + column.name);
         }
         return new Cell(Cell.ON_DISK, offset, length);
     }
@@ -242,7 +242,7 @@ final class RecordCodec {
         byte[] raw = text.getBytes(StandardCharsets.UTF_8);
         int maxBytes = column.length * 4;
         if (raw.length > maxBytes) {
-            throw new NexException("texto excede o espaço da coluna " + column.name);
+            throw new NexException("text exceeds the space of column " + column.name);
         }
         return raw;
     }
@@ -251,7 +251,7 @@ final class RecordCodec {
         int length = buffer.getShort() & 0xFFFF;
         int maxBytes = column.length * 4;
         if (length > maxBytes || buffer.remaining() < length) {
-            throw new NexException("texto corrompido no registro");
+            throw new NexException("corrupt text in the record");
         }
         byte[] raw = new byte[length];
         buffer.get(raw);
@@ -266,7 +266,7 @@ final class RecordCodec {
             return;
         }
         if (raw.length > width) {
-            throw new NexException("DECIMAL não cabe no campo: " + value.toPlainString());
+            throw new NexException("DECIMAL does not fit in the field: " + value.toPlainString());
         }
         int pad = width - raw.length;
         byte fill = value.signum() < 0 ? (byte) 0xFF : 0;
@@ -279,7 +279,7 @@ final class RecordCodec {
     private static BigDecimal readDecimal(ByteBuffer buffer, int precision, int scale) {
         int width = decimalWidth(precision);
         if (buffer.remaining() < width) {
-            throw new NexException("DECIMAL corrompido no registro");
+            throw new NexException("corrupt DECIMAL in the record");
         }
         byte[] raw = new byte[width];
         buffer.get(raw);
@@ -289,7 +289,7 @@ final class RecordCodec {
     private static int epochDay(LocalDate date) {
         long day = date.toEpochDay();
         if (day < Integer.MIN_VALUE || day > Integer.MAX_VALUE) {
-            throw new NexException("data fora do intervalo que cabe em 4 bytes");
+            throw new NexException("date is outside the range that fits in 4 bytes");
         }
         return (int) day;
     }
@@ -297,7 +297,7 @@ final class RecordCodec {
     private static int timeMillis(LocalTime time) {
         long millis = time.toNanoOfDay() / 1_000_000L;
         if (millis < 0 || millis > 86_399_999L) {
-            throw new NexException("hora fora do intervalo");
+            throw new NexException("time is outside the range");
         }
         return (int) millis;
     }

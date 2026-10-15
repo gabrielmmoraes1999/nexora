@@ -12,7 +12,7 @@
 
     <artifactId>nexora-server</artifactId>
     <name>Nexora Motor</name>
-    <description>Motor de rede do Nexora. O JAR leva o engine dentro.</description>
+    <description>Nexora network server. The JAR bundles the engine.</description>
 
     <dependencies>
         <dependency>

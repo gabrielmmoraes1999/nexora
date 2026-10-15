@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Lê só o objeto, a lista, o texto e o número inteiro que o motor precisa.
+ * Reads only the object, the list, the text, and the integer the server needs.
  */
 final class Json {
 
@@ -26,12 +26,12 @@ final class Json {
         Json json = new Json(text);
         json.skip();
         if (json.index >= json.text.length()) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         Object value = json.value();
         json.skip();
         if (json.index < json.text.length()) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         return value;
     }
@@ -39,7 +39,7 @@ final class Json {
     private Object value() {
         skip();
         if (index >= text.length()) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         char current = text.charAt(index);
         return switch (current) {
@@ -64,11 +64,11 @@ final class Json {
         while (index < text.length()) {
             skip();
             if (text.charAt(index) != '"') {
-                throw new NexException("json inválido");
+                throw new NexException("invalid json");
             }
             String key = string();
             if (map.containsKey(key)) {
-                throw new NexException("json inválido");
+                throw new NexException("invalid json");
             }
             skip();
             expect(':');
@@ -80,7 +80,7 @@ final class Json {
             }
             expect(',');
         }
-        throw new NexException("json inválido");
+        throw new NexException("invalid json");
     }
 
     private List<Object> array() {
@@ -100,7 +100,7 @@ final class Json {
             }
             expect(',');
         }
-        throw new NexException("json inválido");
+        throw new NexException("invalid json");
     }
 
     private String string() {
@@ -113,7 +113,7 @@ final class Json {
             }
             if (current == '\\') {
                 if (index >= text.length()) {
-                    throw new NexException("json inválido");
+                    throw new NexException("invalid json");
                 }
                 char escaped = text.charAt(index++);
                 switch (escaped) {
@@ -124,28 +124,28 @@ final class Json {
                     case 'r' -> builder.append('\r');
                     case 't' -> builder.append('\t');
                     case 'u' -> builder.append(unicode());
-                    default -> throw new NexException("json inválido");
+                    default -> throw new NexException("invalid json");
                 }
                 continue;
             }
             if (current < 0x20) {
-                throw new NexException("json inválido");
+                throw new NexException("invalid json");
             }
             builder.append(current);
         }
-        throw new NexException("json inválido");
+        throw new NexException("invalid json");
     }
 
     private char unicode() {
         if (index + 4 > text.length()) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         int code = 0;
         for (int i = 0; i < 4; i++) {
             char digit = text.charAt(index++);
             int value = Character.digit(digit, 16);
             if (value < 0) {
-                throw new NexException("json inválido");
+                throw new NexException("invalid json");
             }
             code = (code << 4) + value;
         }
@@ -154,7 +154,7 @@ final class Json {
 
     private Object literal(String expected, Object value) {
         if (!text.startsWith(expected, index)) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         index += expected.length();
         return value;
@@ -166,7 +166,7 @@ final class Json {
             index++;
         }
         if (index >= text.length() || !digit(text.charAt(index))) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         if (text.charAt(index) == '0') {
             index++;
@@ -178,13 +178,13 @@ final class Json {
         if (index < text.length()) {
             char next = text.charAt(index);
             if (next == '.' || next == 'e' || next == 'E') {
-                throw new NexException("json inválido");
+                throw new NexException("invalid json");
             }
         }
         try {
             return Long.parseLong(text.substring(start, index));
         } catch (NumberFormatException exception) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
     }
 
@@ -197,7 +197,7 @@ final class Json {
     private void expect(char expected) {
         skip();
         if (index >= text.length() || text.charAt(index) != expected) {
-            throw new NexException("json inválido");
+            throw new NexException("invalid json");
         }
         index++;
     }

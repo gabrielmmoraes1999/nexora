@@ -76,7 +76,7 @@ final class Evaluator {
         if (value instanceof Boolean bool) {
             return bool;
         }
-        throw new NexException("condição precisa ser lógica");
+        throw new NexException("condition must be logical");
     }
 
     Object eval(Expr expr) {
@@ -86,14 +86,14 @@ final class Evaluator {
             case ColumnRef column -> column(column);
             case VarRef variable -> {
                 if (scope == null) {
-                    throw new NexException("variável " + variable.name() + " não pode ser usada neste comando");
+                    throw new NexException("variable " + variable.name() + " cannot be used in this statement");
                 }
                 yield scope.variable(variable.name());
             }
             case NextValue next -> nextValue(next);
             case ContextRef context -> {
                 if (contexts == null) {
-                    throw new NexException("contexto " + context.name() + " não pode ser usado neste comando");
+                    throw new NexException("context " + context.name() + " cannot be used in this statement");
                 }
                 yield contexts.read(context.name(), context.precision());
             }
@@ -114,7 +114,7 @@ final class Evaluator {
         Expr folded = foldAggregates(expr, rows);
         current = null;
         if (containsColumn(folded)) {
-            throw new NexException("não é possível misturar agregação e colunas sem GROUP BY");
+            throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         return eval(folded);
     }
@@ -123,7 +123,7 @@ final class Evaluator {
         Expr folded = foldAggregatesValues(expr, rows);
         viewRow = null;
         if (containsColumn(folded)) {
-            throw new NexException("não é possível misturar agregação e colunas sem GROUP BY");
+            throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         return eval(folded);
     }
@@ -224,12 +224,12 @@ final class Evaluator {
         String name = call.name().toUpperCase(Locale.ROOT);
         if (call.star()) {
             if (!name.equals("COUNT")) {
-                throw new NexException(name + " não aceita *");
+                throw new NexException(name + " does not accept *");
             }
             return (long) size;
         }
         if (call.args().size() != 1) {
-            throw new NexException(name + " espera um argumento");
+            throw new NexException(name + " expects one argument");
         }
         List<Object> values = new ArrayList<>();
         Set<IndexKey> seen = new HashSet<>();
@@ -251,7 +251,7 @@ final class Evaluator {
             case "AVG" -> average(values);
             case "MIN" -> extreme(values, true);
             case "MAX" -> extreme(values, false);
-            default -> throw new NexException("função desconhecida: " + call.name());
+            default -> throw new NexException("unknown function: " + call.name());
         };
     }
 
@@ -267,7 +267,7 @@ final class Evaluator {
             } else if (value instanceof BigDecimal) {
                 decimal = true;
             } else if (!(value instanceof Long || value instanceof Integer || value instanceof Short || value instanceof Byte)) {
-                throw new NexException("SUM espera valores numéricos");
+                throw new NexException("SUM expects numeric values");
             }
         }
         if (floating) {
@@ -314,7 +314,7 @@ final class Evaluator {
 
     private Object param(Param param) {
         if (param.index() < 0 || param.index() >= params.length) {
-            throw new NexException("parâmetro ?" + (param.index() + 1) + " não foi informado");
+            throw new NexException("parameter ?" + (param.index() + 1) + " was not supplied");
         }
         return params[param.index()];
     }
@@ -322,7 +322,7 @@ final class Evaluator {
     private Object column(ColumnRef column) {
         if (column.qualifier() != null && (Names.same(column.qualifier(), "NEW") || Names.same(column.qualifier(), "OLD"))) {
             if (scope == null) {
-                throw new NexException(column.qualifier() + " não existe neste contexto");
+                throw new NexException(column.qualifier() + " does not exist in this context");
             }
             return scope.field(column.qualifier(), column.name());
         }
@@ -343,14 +343,14 @@ final class Evaluator {
                     || Names.same(qualifier, viewQualifier)
                     || (alias != null && Names.same(qualifier, alias));
             if (!named) {
-                throw new NexException("qualificador desconhecido: " + column.qualifier());
+                throw new NexException("unknown qualifier: " + column.qualifier());
             }
             if (viewRow == null) {
-                throw new NexException("coluna " + column.name() + " não pode ser usada neste comando");
+                throw new NexException("column " + column.name() + " cannot be used in this statement");
             }
             int index = viewSchema.indexOf(column.name());
             if (index < 0) {
-                throw new NexException("coluna não encontrada: " + column.name());
+                throw new NexException("column not found: " + column.name());
             }
             Object value = viewRow[index];
             return value == Values.MISSING ? null : value;
@@ -359,34 +359,34 @@ final class Evaluator {
             if (scope != null && qualifier == null && scope.hasVariable(column.name())) {
                 return scope.variable(column.name());
             }
-            throw new NexException("coluna " + column.name() + " não pode ser usada neste comando");
+            throw new NexException("column " + column.name() + " cannot be used in this statement");
         }
         if (qualifier != null
                 && !Names.same(qualifier, table.schema().name)
                 && !Names.same(qualifier, table.namespace() + "." + table.schema().name)
                 && !Names.same(qualifier, alias)) {
-            throw new NexException("qualificador desconhecido: " + column.qualifier());
+            throw new NexException("unknown qualifier: " + column.qualifier());
         }
         int index = table.schema().indexOf(column.name());
         if (index < 0) {
-            throw new NexException("coluna não encontrada: " + column.name());
+            throw new NexException("column not found: " + column.name());
         }
         return table.value(current, index);
     }
 
     private long nextValue(NextValue next) {
         if (sequences == null) {
-            throw new NexException("gerador não pode ser usado neste comando");
+            throw new NexException("generator cannot be used in this statement");
         }
         return sequences.next(next.name(), null);
     }
 
     private long genId(Call call) {
         if (call.args().size() != 2) {
-            throw new NexException("GEN_ID precisa do nome do gerador e do passo");
+            throw new NexException("GEN_ID requires the generator name and the step");
         }
         if (sequences == null) {
-            throw new NexException("gerador não pode ser usado neste comando");
+            throw new NexException("generator cannot be used in this statement");
         }
         Expr name = call.args().get(0);
         String generator;
@@ -395,11 +395,11 @@ final class Evaluator {
         } else if (name instanceof Literal literal && literal.value() instanceof String text) {
             generator = text;
         } else {
-            throw new NexException("GEN_ID precisa do nome do gerador");
+            throw new NexException("GEN_ID requires the generator name");
         }
         Object step = eval(call.args().get(1));
         if (step == null) {
-            throw new NexException("passo do GEN_ID não pode ser nulo");
+            throw new NexException("GEN_ID step cannot be null");
         }
         return sequences.next(generator, Values.toLong(step));
     }
@@ -412,11 +412,11 @@ final class Evaluator {
         return switch (unary.op()) {
             case NOT -> {
                 if (!(value instanceof Boolean bool)) {
-                    throw new NexException("NOT exige uma expressão lógica");
+                    throw new NexException("NOT requires a logical expression");
                 }
                 yield !bool;
             }
-            case PLUS -> number(value, "unário +");
+            case PLUS -> number(value, "unary +");
             case NEGATE -> negate(value);
         };
     }
@@ -434,7 +434,7 @@ final class Evaluator {
         if (value instanceof Integer || value instanceof Short || value instanceof Byte) {
             return Math.negateExact(((Number) value).intValue());
         }
-        throw new NexException("não é possível negar " + Values.display(value));
+        throw new NexException("cannot negate " + Values.display(value));
     }
 
     private Object binary(Binary binary) {
@@ -478,7 +478,7 @@ final class Evaluator {
         }
         Object second = eval(right);
         if (!(first == null || first instanceof Boolean) || !(second == null || second instanceof Boolean)) {
-            throw new NexException("AND exige expressões lógicas");
+            throw new NexException("AND requires logical expressions");
         }
         if (second instanceof Boolean bool && !bool) {
             return false;
@@ -496,7 +496,7 @@ final class Evaluator {
         }
         Object second = eval(right);
         if (!(first == null || first instanceof Boolean) || !(second == null || second instanceof Boolean)) {
-            throw new NexException("OR exige expressões lógicas");
+            throw new NexException("OR requires logical expressions");
         }
         if (second instanceof Boolean bool && bool) {
             return true;
@@ -514,13 +514,13 @@ final class Evaluator {
             return null;
         }
         if (!(value instanceof String text) || !(pattern instanceof String sample)) {
-            throw new NexException("LIKE exige textos");
+            throw new NexException("LIKE requires strings");
         }
         char escape = '\\';
         if (like.escape() != null) {
             Object raw = eval(like.escape());
             if (!(raw instanceof String escapeText) || escapeText.length() != 1) {
-                throw new NexException("ESCAPE precisa ser um texto de um caractere");
+                throw new NexException("ESCAPE must be a one-character string");
             }
             escape = escapeText.charAt(0);
         }
@@ -584,7 +584,7 @@ final class Evaluator {
 
     private Object call(Call call) {
         if (aggregate(call.name())) {
-            throw new NexException(call.name() + " só pode ser usado na lista do SELECT");
+            throw new NexException(call.name() + " can only be used in the SELECT list");
         }
         String name = call.name().toUpperCase(Locale.ROOT);
         if (name.equals("GEN_ID")) {
@@ -594,7 +594,7 @@ final class Evaluator {
             case "LOWER", "UPPER" -> changeCase(call, name.equals("UPPER"));
             case "LENGTH", "CHAR_LENGTH" -> length(call);
             case "COALESCE" -> coalesce(call);
-            default -> throw new NexException("função desconhecida: " + call.name());
+            default -> throw new NexException("unknown function: " + call.name());
         };
     }
 
@@ -604,7 +604,7 @@ final class Evaluator {
             return null;
         }
         if (!(value instanceof String text)) {
-            throw new NexException(call.name() + " espera texto");
+            throw new NexException(call.name() + " expects a string");
         }
         return upper ? text.toUpperCase(Locale.ROOT) : text.toLowerCase(Locale.ROOT);
     }
@@ -620,12 +620,12 @@ final class Evaluator {
         if (value instanceof byte[] bytes) {
             return (long) bytes.length;
         }
-        throw new NexException("LENGTH espera texto ou BLOB");
+        throw new NexException("LENGTH expects a string or BLOB");
     }
 
     private Object coalesce(Call call) {
         if (call.args().isEmpty()) {
-            throw new NexException("COALESCE precisa de ao menos um argumento");
+            throw new NexException("COALESCE requires at least one argument");
         }
         for (Expr arg : call.args()) {
             Object value = eval(arg);
@@ -638,7 +638,7 @@ final class Evaluator {
 
     private Object oneArg(Call call) {
         if (call.args().size() != 1 || call.star()) {
-            throw new NexException(call.name() + " espera um argumento");
+            throw new NexException(call.name() + " expects one argument");
         }
         return eval(call.args().get(0));
     }
@@ -678,7 +678,7 @@ final class Evaluator {
                 && !(left instanceof Float) && !(right instanceof Float)) {
             BigDecimal divisor = Values.asDecimal(right);
             if (divisor.signum() == 0) {
-                throw new NexException("divisão por zero");
+                throw new NexException("division by zero");
             }
             return Values.asDecimal(left).divide(divisor, 8, RoundingMode.HALF_UP).stripTrailingZeros();
         }
@@ -686,37 +686,37 @@ final class Evaluator {
             if (wideInteger(left, right)) {
                 long divisor = Values.toLong(right);
                 if (divisor == 0) {
-                    throw new NexException("divisão por zero");
+                    throw new NexException("division by zero");
                 }
                 return Values.toLong(left) / divisor;
             }
             int divisor = Values.toInt(right);
             if (divisor == 0) {
-                throw new NexException("divisão por zero");
+                throw new NexException("division by zero");
             }
             return Values.toInt(left) / divisor;
         }
         double divisor = Values.toDouble(right);
         if (divisor == 0) {
-            throw new NexException("divisão por zero");
+            throw new NexException("division by zero");
         }
         return Values.toDouble(left) / divisor;
     }
 
     private Object modulo(Object left, Object right) {
         if (!integral(left) || !integral(right)) {
-            throw new NexException("módulo exige inteiros");
+            throw new NexException("modulo requires integers");
         }
         if (wideInteger(left, right)) {
             long divisor = Values.toLong(right);
             if (divisor == 0) {
-                throw new NexException("divisão por zero");
+                throw new NexException("division by zero");
             }
             return Values.toLong(left) % divisor;
         }
         int divisor = Values.toInt(right);
         if (divisor == 0) {
-            throw new NexException("divisão por zero");
+            throw new NexException("division by zero");
         }
         return Values.toInt(left) % divisor;
     }
@@ -750,7 +750,7 @@ final class Evaluator {
         if (integral(value) || value instanceof Double || value instanceof Float || value instanceof BigDecimal) {
             return value;
         }
-        throw new NexException(operator + " exige um número");
+        throw new NexException(operator + " requires a number");
     }
 
     private static boolean floating(Object left, Object right) {
@@ -767,7 +767,7 @@ final class Evaluator {
 
     private static String text(Object value) {
         if (value instanceof byte[]) {
-            throw new NexException("não é possível concatenar BLOB; converta antes");
+            throw new NexException("cannot concatenate BLOB; convert it first");
         }
         if (value instanceof BigDecimal decimal) {
             return decimal.toPlainString();

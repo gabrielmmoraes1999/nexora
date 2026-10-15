@@ -19,9 +19,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Índice em páginas de {@link Format#INDEX_PAGE} bytes dentro da região da tabela.
- * A busca desce da raiz até a folha e lê só essas páginas. O que ainda não foi
- * gravado fica na memória; o commit escreve páginas novas e só então publica a raiz.
+ * Index in {@link Format#INDEX_PAGE}-byte pages inside the table region.
+ * The search walks from the root to the leaf and reads only those pages. What has not
+ * been written yet stays in memory; commit writes new pages and only then publishes the root.
  */
 final class IndexTree {
 
@@ -57,7 +57,7 @@ final class IndexTree {
     static List<DiskIndex> attach(Schema schema, long[] roots) {
         List<Spec> defined = specs(schema);
         if (roots.length != defined.size()) {
-            throw new NexException("índice corrompido na tabela " + schema.name);
+            throw new NexException("corrupt index in table " + schema.name);
         }
         List<DiskIndex> indexes = new ArrayList<>();
         for (int i = 0; i < defined.size(); i++) {
@@ -234,7 +234,7 @@ final class IndexTree {
                     if (child == null) {
                         long offset = node.childOffsets[i];
                         if (offset <= 0) {
-                            throw new NexException("índice corrompido");
+                            throw new NexException("corrupt index");
                         }
                         placed[i] = pack ? place(Pages.read(pages, offset), space, writes, pages, true) : offset;
                     } else {
@@ -393,7 +393,7 @@ final class IndexTree {
             }
             long offset = parent.childOffsets[index];
             if (offset <= 0) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             return Pages.read(pages, offset);
         }
@@ -435,10 +435,10 @@ final class IndexTree {
         }
 
         private NexException duplicate(Schema schema, Object[] values) {
-            String kind = primary ? "chave primária"
-                    : declaredUnique(schema) ? "chave única"
-                    : "índice " + name;
-            return new NexException("valor duplicado para " + kind + " em " + schema.name + ": " + Arrays.toString(values));
+            String kind = primary ? "primary key"
+                    : declaredUnique(schema) ? "unique key"
+                    : "index " + name;
+            return new NexException("duplicate value for " + kind + " in " + schema.name + ": " + Arrays.toString(values));
         }
 
         private boolean declaredUnique(Schema schema) {
@@ -451,7 +451,7 @@ final class IndexTree {
         }
 
         private NexException corrupted(Schema schema) {
-            return new NexException("índice corrompido na tabela " + schema.name);
+            return new NexException("corrupt index in table " + schema.name);
         }
     }
 
@@ -620,7 +620,7 @@ final class IndexTree {
         Split splitLeaf() {
             int mid = Math.max(1, keys.length / 2);
             if (mid >= keys.length) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             Node right = new Node();
             right.leaf = true;
@@ -693,16 +693,16 @@ final class IndexTree {
         static Node read(PageSource source, long offset) {
             byte[] page = source.read(offset, Format.INDEX_PAGE);
             if (page.length != Format.INDEX_PAGE) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             int stored = ByteBuffer.wrap(page, Format.INDEX_PAGE - 4, 4).order(Format.ORDER).getInt();
             int actual = Format.crc(page, 0, Format.INDEX_PAGE - 4);
             if (stored != actual) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             ByteBuffer buffer = ByteBuffer.wrap(page).order(Format.ORDER);
             if (buffer.getInt() != Format.INDEX_MAGIC) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             int flags = buffer.getShort() & 0xFFFF;
             int count = buffer.getShort() & 0xFFFF;
@@ -751,17 +751,17 @@ final class IndexTree {
                     writeKey(buffer, key, space, writes);
                 }
                 if (children == null || children.length != node.keys.length + 1) {
-                    throw new NexException("índice corrompido");
+                    throw new NexException("corrupt index");
                 }
                 for (long child : children) {
                     if (child <= 0) {
-                        throw new NexException("índice corrompido");
+                        throw new NexException("corrupt index");
                     }
                     buffer.putLong(child);
                 }
             }
             if (buffer.position() > Format.INDEX_PAGE - 4) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             int crc = Format.crc(page, 0, Format.INDEX_PAGE - 4);
             ByteBuffer.wrap(page).order(Format.ORDER).putInt(Format.INDEX_PAGE - 4, crc);
@@ -861,7 +861,7 @@ final class IndexTree {
             byte[] block = source.read(offset, size);
             ByteBuffer buffer = ByteBuffer.wrap(block).order(Format.ORDER);
             if (buffer.getInt() != Format.INDEX_OVERFLOW_MAGIC || buffer.getInt() != length) {
-                throw new NexException("índice corrompido");
+                throw new NexException("corrupt index");
             }
             byte[] payload = new byte[length];
             buffer.get(payload);
@@ -883,7 +883,7 @@ final class IndexTree {
                 out.flush();
                 return raw.toByteArray();
             } catch (IOException exception) {
-                throw new NexException("índice corrompido na tabela " + schema.name);
+                throw new NexException("corrupt index in table " + schema.name);
             }
         }
 
@@ -974,7 +974,7 @@ final class IndexTree {
                 values[i] = read(buffer, schema.columns.get(columns[i]));
             }
             if (buffer.hasRemaining()) {
-                throw new NexException("índice corrompido na tabela " + schema.name);
+                throw new NexException("corrupt index in table " + schema.name);
             }
             return values;
         }
@@ -1006,7 +1006,7 @@ final class IndexTree {
                     out.writeShort(unscaled.length);
                     out.write(unscaled);
                 }
-                case BLOB -> throw new NexException("BLOB não pode ser chave");
+                case BLOB -> throw new NexException("BLOB cannot be a key");
             }
         }
 
@@ -1038,7 +1038,7 @@ final class IndexTree {
                     buffer.get(unscaled);
                     yield new BigDecimal(new BigInteger(unscaled), scale);
                 }
-                case BLOB -> throw new NexException("BLOB não pode ser chave");
+                case BLOB -> throw new NexException("BLOB cannot be a key");
             };
         }
     }

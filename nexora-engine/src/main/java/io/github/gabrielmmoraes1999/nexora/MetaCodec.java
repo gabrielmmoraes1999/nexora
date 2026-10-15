@@ -98,27 +98,27 @@ final class MetaCodec {
 
     static MetaImage decode(byte[] data) {
         if (data.length < 8 || (data.length % 8) != 0) {
-            throw new NexException("metadados da tabela estão corrompidos");
+            throw new NexException("table metadata is corrupt");
         }
         int stored = ByteBuffer.wrap(data, data.length - 4, 4).order(Format.ORDER).getInt();
         int actual = Format.crc(data, 0, data.length - 4);
         if (stored != actual) {
-            throw new NexException("metadados da tabela falharam na verificação");
+            throw new NexException("table metadata failed verification");
         }
         ByteReader reader = new ByteReader(data, data.length - 4);
         if (reader.u32() != Format.META_MAGIC) {
-            throw new NexException("metadados da tabela estão corrompidos");
+            throw new NexException("table metadata is corrupt");
         }
         int version = reader.u32();
         if (version != Format.VERSION) {
-            throw new NexException("versão de metadados não suportada: " + version);
+            throw new NexException("unsupported metadata version: " + version);
         }
         long nextRowId = reader.u64();
         long fileSize = reader.u64();
         Schema schema = readSchema(reader);
         int rootCount = reader.u16();
         if (rootCount < 0 || rootCount > Format.MAX_COLUMNS) {
-            throw new NexException("metadados da tabela estão corrompidos");
+            throw new NexException("table metadata is corrupt");
         }
         long[] indexRoots = new long[rootCount];
         for (int i = 0; i < rootCount; i++) {
@@ -126,7 +126,7 @@ final class MetaCodec {
         }
         int liveCount = reader.u32();
         if (liveCount < 0) {
-            throw new NexException("metadados da tabela estão corrompidos");
+            throw new NexException("table metadata is corrupt");
         }
         List<LiveSlot> rows = new ArrayList<>(liveCount);
         for (int i = 0; i < liveCount; i++) {
@@ -134,7 +134,7 @@ final class MetaCodec {
         }
         int freeCount = reader.u32();
         if (freeCount < 0) {
-            throw new NexException("metadados da tabela estão corrompidos");
+            throw new NexException("table metadata is corrupt");
         }
         List<Extent> free = new ArrayList<>(freeCount);
         for (int i = 0; i < freeCount; i++) {
@@ -143,7 +143,7 @@ final class MetaCodec {
         int pad = reader.u16();
         reader.skip(pad);
         if (reader.remaining() != 0) {
-            throw new NexException("metadados da tabela estão corrompidos");
+            throw new NexException("table metadata is corrupt");
         }
         return new MetaImage(schema, nextRowId, fileSize, rows, free, indexRoots);
     }
@@ -214,14 +214,14 @@ final class MetaCodec {
         String name = reader.utf();
         int count = reader.u16();
         if (count <= 0 || count > Format.MAX_COLUMNS) {
-            throw new NexException("esquema da tabela está corrompido");
+            throw new NexException("table schema is corrupt");
         }
         List<Column> columns = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             String columnName = reader.utf();
             int ordinal = reader.u8();
             if (ordinal < 0 || ordinal >= DataType.values().length) {
-                throw new NexException("tipo de coluna desconhecido em " + columnName);
+                throw new NexException("unknown column type in " + columnName);
             }
             DataType type = DataType.values()[ordinal];
             int length = reader.u32();
@@ -254,7 +254,7 @@ final class MetaCodec {
         }
         int indexCount = reader.u16();
         if (indexCount < 0 || indexCount > Format.MAX_COLUMNS) {
-            throw new NexException("esquema da tabela está corrompido");
+            throw new NexException("table schema is corrupt");
         }
         List<IndexDef> indexes = new ArrayList<>();
         for (int i = 0; i < indexCount; i++) {
@@ -262,13 +262,13 @@ final class MetaCodec {
             boolean unique = reader.u8() != 0;
             int size = reader.u16();
             if (size <= 0 || size > columns.size()) {
-                throw new NexException("esquema da tabela está corrompido");
+                throw new NexException("table schema is corrupt");
             }
             int[] group = new int[size];
             for (int j = 0; j < size; j++) {
                 int column = reader.u16();
                 if (column < 0 || column >= columns.size()) {
-                    throw new NexException("esquema da tabela está corrompido");
+                    throw new NexException("table schema is corrupt");
                 }
                 group[j] = column;
             }
@@ -280,20 +280,20 @@ final class MetaCodec {
         boolean primaryDescending = reader.u8() != 0;
         int foreignCount = reader.u16();
         if (foreignCount < 0 || foreignCount > Format.MAX_COLUMNS) {
-            throw new NexException("esquema da tabela está corrompido");
+            throw new NexException("table schema is corrupt");
         }
         List<ForeignKey> foreignKeys = new ArrayList<>();
         for (int i = 0; i < foreignCount; i++) {
             String foreignName = reader.utf();
             int size = reader.u16();
             if (size <= 0 || size > columns.size()) {
-                throw new NexException("esquema da tabela está corrompido");
+                throw new NexException("table schema is corrupt");
             }
             int[] local = new int[size];
             for (int j = 0; j < size; j++) {
                 int column = reader.u16();
                 if (column < 0 || column >= columns.size()) {
-                    throw new NexException("esquema da tabela está corrompido");
+                    throw new NexException("table schema is corrupt");
                 }
                 local[j] = column;
             }
@@ -301,7 +301,7 @@ final class MetaCodec {
             String referencedTable = reader.utf();
             int referencedCount = reader.u16();
             if (referencedCount <= 0 || referencedCount > Format.MAX_COLUMNS) {
-                throw new NexException("esquema da tabela está corrompido");
+                throw new NexException("table schema is corrupt");
             }
             String[] referenced = new String[referencedCount];
             for (int j = 0; j < referencedCount; j++) {
@@ -415,7 +415,7 @@ final class MetaCodec {
         void utf(String text) {
             byte[] raw = text.getBytes(StandardCharsets.UTF_8);
             if (raw.length > 65535) {
-                throw new NexException("texto longo demais para o esquema");
+                throw new NexException("text is too long for the schema");
             }
             u16(raw.length);
             raw(raw);
@@ -491,7 +491,7 @@ final class MetaCodec {
 
         byte[] bytes(int length) {
             if (length < 0) {
-                throw new NexException("metadados da tabela estão corrompidos");
+                throw new NexException("table metadata is corrupt");
             }
             need(length);
             byte[] copy = new byte[length];
@@ -507,7 +507,7 @@ final class MetaCodec {
 
         private void need(int length) {
             if (length < 0 || position + length > end) {
-                throw new NexException("metadados da tabela estão corrompidos");
+                throw new NexException("table metadata is corrupt");
             }
         }
     }

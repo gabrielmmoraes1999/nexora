@@ -86,23 +86,23 @@ final class Icons {
 
     static Icon action(String label) {
         return switch (label == null ? "" : label) {
-            case "Registrar", "Registrar banco" -> database(true);
-            case "Criar banco", "Nova tabela", "Novo esquema", "Novo papel", "Novo", "Nova coluna", "Coluna", "Inserir" ->
+            case "Register", "Register database" -> database(true);
+            case "Create database", "New table", "New schema", "New role", "New", "New column", "Column", "Insert" ->
                     plus(INK);
-            case "Conectar", "Usar nesta conexão" -> link(false);
-            case "Desconectar" -> link(true);
-            case "Atualizar" -> refresh();
-            case "Nova consulta", "DDL" -> SQL;
-            case "Executar" -> play(GREEN);
+            case "Connect", "Use on this connection" -> link(false);
+            case "Disconnect" -> link(true);
+            case "Refresh" -> refresh();
+            case "New query", "DDL" -> SQL;
+            case "Execute" -> play(GREEN);
             case "Commit" -> check(GREEN);
             case "Rollback" -> undo();
-            case "Sair", "Encerrar" -> exit();
-            case "Abrir", "Abrir no editor" -> open();
-            case "Dados" -> table(ACCENT);
-            case "Excluir", "Remover", "Remover do registro", "Revogar" -> trash();
-            case "Copiar", "Copiar grade" -> copy();
-            case "Propriedades do registro", "Sobre" -> info();
-            case "Usuários" -> person();
+            case "Exit", "End" -> exit();
+            case "Open", "Open in editor" -> open();
+            case "Data" -> table(ACCENT);
+            case "Delete", "Remove", "Remove from registry", "Revoke" -> trash();
+            case "Copy", "Copy grid" -> copy();
+            case "Registry properties", "About" -> info();
+            case "Users" -> person();
             default -> null;
         };
     }

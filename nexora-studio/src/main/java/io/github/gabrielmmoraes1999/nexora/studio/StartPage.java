@@ -34,21 +34,21 @@ final class StartPage extends JPanel {
 
         JLabel text = new JLabel("""
                 <html><body style='width:460px'>
-                Interface administrativa do arquivo <b>.db</b>, no espírito do IBExpert.
-                O explorador fica à esquerda. O SQL e os objetos abrem no centro.
-                A grade grava nas tabelas que têm chave primária.
+                Administrative interface for the <b>.db</b> file, in the spirit of IBExpert.
+                The explorer sits on the left. SQL and objects open in the center.
+                The grid writes to tables that have a primary key.
                 <br><br>
-                F9 executa o script. A conexão embutida abre o arquivo neste processo.
-                Se o motor já segura o arquivo, registre o banco pela rede.
+                F9 runs the script. The embedded connection opens the file in this process.
+                If the server already holds the file, register the database over the network.
                 </body></html>
                 """);
         text.setFont(Look.UI);
         text.setForeground(Look.INK);
         text.setAlignmentX(LEFT_ALIGNMENT);
 
-        JButton createButton = Look.primary("Criar banco", Icons.plus(Color.WHITE));
-        JButton registerButton = Look.button("Registrar banco");
-        JButton sqlButton = Look.button("Nova consulta");
+        JButton createButton = Look.primary("Create database", Icons.plus(Color.WHITE));
+        JButton registerButton = Look.button("Register database");
+        JButton sqlButton = Look.button("New query");
         createButton.addActionListener(event -> create.run());
         registerButton.addActionListener(event -> register.run());
         sqlButton.addActionListener(event -> sql.run());
