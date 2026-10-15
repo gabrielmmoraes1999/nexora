@@ -11,9 +11,7 @@ final class Format {
     static final byte[] MAGIC = "NEXORANEX".getBytes(StandardCharsets.US_ASCII);
     static final byte[] DB_MAGIC = "NEXORADBF".getBytes(StandardCharsets.US_ASCII);
     static final byte[] LOG_MAGIC = "NEXORALOG".getBytes(StandardCharsets.US_ASCII);
-    static final int VERSION = 7;
-    /** A partir desta versão o registro traz o tamanho declarado no bloco. */
-    static final int VARIABLE_RECORDS = 3;
+    static final int VERSION = 1;
     static final int DB_VERSION = 1;
     static final int LOG_VERSION = 1;
     static final int HEADER_SIZE = 64;
@@ -67,11 +65,6 @@ final class Format {
 
     static long align8(long value) {
         return (value + 7L) & ~7L;
-    }
-
-    /** Geração 0 no arquivo antigo deste formato equivale à primeira geração. */
-    static long normalizeEpoch(long stored) {
-        return stored == 0L ? 1L : stored;
     }
 
     static int checkPageSize(int pageSize) {

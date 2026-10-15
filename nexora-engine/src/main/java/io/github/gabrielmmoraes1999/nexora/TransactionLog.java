@@ -83,7 +83,7 @@ final class TransactionLog implements AutoCloseable {
                 log.lock();
                 log.logId = logId;
                 log.pageSize = pageSize;
-                log.epoch = Format.normalizeEpoch(epoch);
+                log.epoch = epoch;
                 log.writeHeader();
                 log.force();
                 log.consistentEnd = Format.LOG_HEADER_SIZE;
@@ -173,14 +173,14 @@ final class TransactionLog implements AutoCloseable {
      * O backup já copiou o par. O log vivo passa a guardar só o que vier depois.
      */
     void restart(long newEpoch) {
-        epoch = Format.normalizeEpoch(newEpoch);
+        epoch = newEpoch;
         writeHeader();
         force();
     }
 
     /** Atualiza a geração no cabeçalho e preserva os registros já gravados. */
     void adoptEpoch(long newEpoch) {
-        epoch = Format.normalizeEpoch(newEpoch);
+        epoch = newEpoch;
         byte[] header = Format.readFully(channel, 0, Format.LOG_HEADER_SIZE);
         ByteBuffer.wrap(header).order(Format.ORDER).putLong(Format.LOG_EPOCH_AT, epoch);
         Format.writeFully(channel, 0, header);
@@ -564,7 +564,7 @@ final class TransactionLog implements AutoCloseable {
         }
         logId = buffer.getLong(Format.LOG_ID_AT);
         pageSize = buffer.getInt(Format.LOG_PAGE_AT);
-        epoch = Format.normalizeEpoch(buffer.getLong(Format.LOG_EPOCH_AT));
+        epoch = buffer.getLong(Format.LOG_EPOCH_AT);
         if (matchIdentity && (logId != expectedId || pageSize != expectedPage)) {
             throw new NexException("log não pertence a este banco");
         }
@@ -575,7 +575,7 @@ final class TransactionLog implements AutoCloseable {
         ByteBuffer buffer = ByteBuffer.wrap(header).order(Format.ORDER);
         logId = buffer.getLong(Format.LOG_ID_AT);
         pageSize = buffer.getInt(Format.LOG_PAGE_AT);
-        epoch = Format.normalizeEpoch(buffer.getLong(Format.LOG_EPOCH_AT));
+        epoch = buffer.getLong(Format.LOG_EPOCH_AT);
     }
 
     private void installPending(Path pending) throws IOException {

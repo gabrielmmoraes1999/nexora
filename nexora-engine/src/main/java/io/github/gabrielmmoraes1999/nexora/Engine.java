@@ -86,9 +86,7 @@ final class Engine implements AutoCloseable {
         try {
             engine.loadTables();
             engine.ensureSystem(DatabaseOptions.defaults());
-            engine.alignConnections();
             engine.closeStaleConnections();
-            engine.upgradeStorage();
             engine.storage.saveCheckpoint();
             return engine;
         } catch (RuntimeException exception) {
@@ -2366,15 +2364,6 @@ final class Engine implements AutoCloseable {
         return wanted < table.capacity() && wanted * 2 < table.capacity();
     }
 
-    private void upgradeStorage() {
-        for (TableStore table : tables.values()) {
-            if (table.isDirty()) {
-                flush();
-                return;
-            }
-        }
-    }
-
     private void compactFile() {
         int guard = tables.size() * tables.size() + 1;
         while (guard-- > 0) {
@@ -2653,29 +2642,20 @@ final class Engine implements AutoCloseable {
     }
 
     private void ensureSystem(DatabaseOptions options) {
-        boolean database = systemTable(SystemTables.DATABASE) != null;
-        boolean config = systemTable(SystemTables.CONFIG) != null;
-        boolean users = systemTable(SystemTables.USERS) != null;
-        boolean connections = systemTable(SystemTables.CONNECTIONS) != null;
-        boolean privileges = systemTable(SystemTables.PRIVILEGES) != null;
-        boolean extras = systemTable(SystemTables.GENERATORS) != null
-                || systemTable(SystemTables.PROCEDURES) != null
-                || systemTable(SystemTables.PROCEDURE_PARAMETERS) != null
-                || systemTable(SystemTables.TRIGGERS) != null;
-        if (database && config && users && connections) {
-            for (Schema schema : SystemTables.schemas()) {
-                if (systemTable(schema.name) == null) {
-                    createStored(schema);
-                }
+        boolean any = false;
+        boolean missing = false;
+        for (Schema schema : SystemTables.schemas()) {
+            if (systemTable(schema.name) != null) {
+                any = true;
+            } else {
+                missing = true;
             }
-            seedSchemas();
-            if (systemExecute("SELECT NEX$USER_NAME FROM NEX$USERS").size() == 0) {
-                seedUsers(options);
-            }
-            return;
         }
-        if (database || config || users || connections || privileges || extras) {
+        if (any && missing) {
             throw new NexException("tabelas de sistema incompletas");
+        }
+        if (any) {
+            return;
         }
         storage.ensureScrubbed();
         storage.beginCommit();
@@ -2733,27 +2713,6 @@ final class Engine implements AutoCloseable {
                 inTransaction = false;
             }
             throw exception;
-        }
-    }
-
-    private void alignConnections() {
-        TableStore table = systemTable(SystemTables.CONNECTIONS);
-        if (table == null) {
-            return;
-        }
-        boolean changed = false;
-        if (table.schema().indexOf("NEX$DISCONNECTED_AT") >= 0) {
-            table.dropColumn("NEX$DISCONNECTED_AT");
-            changed = true;
-        }
-        for (Column column : SystemTables.connectionsSchema().columns) {
-            if (table.schema().indexOf(column.name) < 0) {
-                table.addColumn(column, false, false);
-                changed = true;
-            }
-        }
-        if (changed) {
-            flushMatching(candidate -> Names.same(candidate.schema().name, SystemTables.CONNECTIONS));
         }
     }
 
@@ -2836,10 +2795,6 @@ final class Engine implements AutoCloseable {
             suppressCapture = previousSuppress;
             this.params = previousParams;
         }
-    }
-
-    private void createStored(Schema schema) {
-        createStored(schema, Relation.PUBLIC);
     }
 
     private void createStored(Schema schema, String namespace) {

@@ -33,8 +33,8 @@ final class Relation {
     }
 
     /**
-     * Nome gravado no catálogo. Em {@code public} fica só o objeto, para o arquivo
-     * antigo continuar válido. Nos outros esquemas, {@code esquema.objeto}.
+     * Nome gravado no catálogo. Em {@code public} fica só o objeto.
+     * Nos outros esquemas, {@code esquema.objeto}.
      */
     static String catalogName(String schema, String name) {
         if (schema == null || Names.same(schema, PUBLIC)) {

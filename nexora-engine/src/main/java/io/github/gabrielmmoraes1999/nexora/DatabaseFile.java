@@ -457,7 +457,7 @@ final class DatabaseFile implements AutoCloseable {
             throw new NexException("banco sem log de transação");
         }
         checkpointLsn = buffer.getLong(Format.CHECKPOINT_LSN_OFFSET);
-        epoch = Format.normalizeEpoch(buffer.getLong(Format.LOG_EPOCH_OFFSET));
+        epoch = buffer.getLong(Format.LOG_EPOCH_OFFSET);
         appliedOffset = buffer.getLong(Format.APPLIED_OFFSET);
         if (TransactionLog.missing(path)) {
             long next = epoch + 1;

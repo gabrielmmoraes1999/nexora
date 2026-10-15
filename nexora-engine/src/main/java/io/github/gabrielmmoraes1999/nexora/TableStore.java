@@ -36,7 +36,6 @@ final class TableStore implements AutoCloseable {
     private int metaLength;
     private long generation;
     private int activeSlot;
-    private int formatVersion = Format.VERSION;
     private boolean dirty;
     /**
      * O mapa vivo é o que um savepoint confirmado ainda enxerga.
@@ -851,7 +850,6 @@ final class TableStore implements AutoCloseable {
         header[Format.SCRUB_OFFSET] = Format.SCRUB_DIRTY;
         ByteBuffer.wrap(header).order(Format.ORDER).putShort(Format.VERSION_OFFSET, (short) Format.VERSION);
         FileHeader.writeSlot(header, plan.targetSlot, plan.generation, plan.metaOffset, plan.metaLength);
-        formatVersion = Format.VERSION;
         writeAt(0, header);
         force();
     }
@@ -881,7 +879,6 @@ final class TableStore implements AutoCloseable {
         blobCache.clear();
         byte[] headerBytes = readAt(0, Format.HEADER_SIZE);
         boolean scrub = headerBytes[Format.SCRUB_OFFSET] != Format.SCRUB_CLEAN;
-        formatVersion = FileHeader.version(headerBytes);
         FileHeader header = FileHeader.parse(headerBytes);
         FileHeader.Slot active = header.active();
         byte[] encoded = readAt(active.metaOffset(), active.metaLength());
@@ -911,20 +908,7 @@ final class TableStore implements AutoCloseable {
             rows.put(row.id, row);
         }
         dirty = false;
-        if (formatVersion < Format.VARIABLE_RECORDS) {
-            TreeMap<Long, StoredRow> upgraded = new TreeMap<>();
-            for (StoredRow row : rows.values()) {
-                upgraded.put(row.id, new StoredRow(row.id, row.cells, row.slotOffset, row.slotSize, true));
-            }
-            rows = upgraded;
-            dirty = true;
-        }
-        if (image.indexRoots == null) {
-            indexes = rebuild(schema, rows);
-            dirty = true;
-        } else {
-            indexes = IndexTree.attach(schema, image.indexRoots);
-        }
+        indexes = IndexTree.attach(schema, image.indexRoots);
         if (scrub) {
             scrubExtents(freeExtents, metaOffset, metaLength, rows.values(), schema.name);
             if (fileSize < capacity) {
@@ -954,7 +938,6 @@ final class TableStore implements AutoCloseable {
         writeAt(Format.HEADER_SIZE, meta);
         force();
         fileSize = size;
-        formatVersion = Format.VERSION;
         metaOffset = Format.HEADER_SIZE;
         metaLength = meta.length;
         generation = 1;
@@ -976,14 +959,12 @@ final class TableStore implements AutoCloseable {
         if (magic != Format.SLOT_MAGIC || blockSize != slot.size || rowId != slot.rowId) {
             throw new NexException("registro corrompido na tabela " + schema.name);
         }
-        boolean legacy = formatVersion < Format.VARIABLE_RECORDS;
-        int payloadSize = legacy ? RecordCodec.fixedPayloadSize(schema) : declared;
-        if (payloadSize <= 0 || Format.slotExtent(payloadSize) != slot.size || buffer.remaining() < payloadSize) {
+        if (declared <= 0 || Format.slotExtent(declared) != slot.size || buffer.remaining() < declared) {
             throw new NexException("registro corrompido na tabela " + schema.name);
         }
-        byte[] payload = new byte[payloadSize];
+        byte[] payload = new byte[declared];
         buffer.get(payload);
-        Cell[] cells = legacy ? RecordCodec.decodeFixed(schema, payload) : RecordCodec.decode(schema, payload);
+        Cell[] cells = RecordCodec.decode(schema, payload);
         for (int i = 0; i < cells.length; i++) {
             Column column = schema.columns.get(i);
             Cell cell = cells[i];
@@ -1158,15 +1139,6 @@ final class TableStore implements AutoCloseable {
 
     private static boolean generatedName(String name) {
         return Names.generatedUnique(name);
-    }
-
-    private List<IndexTree.DiskIndex> rebuild(Schema target, Map<Long, StoredRow> source) {
-        List<IndexTree.DiskIndex> built = new ArrayList<>();
-        List<Extent> ignored = new ArrayList<>();
-        for (IndexTree.DiskIndex index : IndexTree.empty(target)) {
-            built.add(index.fill(target, source.values(), this::keyParts, ignored, pages()));
-        }
-        return built;
     }
 
     private Object[] keyParts(Schema target, IndexTree.DiskIndex index, StoredRow row) {

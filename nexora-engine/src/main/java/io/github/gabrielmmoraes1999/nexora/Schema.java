@@ -470,15 +470,12 @@ final class Names {
         }
     }
 
-    /** Nome gerado de UNIQUE: {@code UNQ1_tabela} ou o formato antigo {@code UNIQUE_1}. */
+    /** Nome gerado de UNIQUE: {@code UNQ1_tabela}. */
     static boolean generatedUnique(String name) {
         if (name == null || name.isBlank()) {
             return false;
         }
         String folded = fold(name);
-        if (folded.startsWith("unique_")) {
-            return digits(folded.substring("unique_".length()));
-        }
         if (!folded.startsWith("unq")) {
             return false;
         }

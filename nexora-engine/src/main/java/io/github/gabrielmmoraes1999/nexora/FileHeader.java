@@ -25,7 +25,7 @@ final class FileHeader {
             throw new NexException("arquivo não é uma tabela do Nexora");
         }
         int version = version(header);
-        if (version < 2 || version > Format.VERSION) {
+        if (version != Format.VERSION) {
             throw new NexException("versão de arquivo não suportada: " + version);
         }
         return parseSlots(header);

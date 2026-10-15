@@ -110,22 +110,19 @@ final class MetaCodec {
             throw new NexException("metadados da tabela estão corrompidos");
         }
         int version = reader.u32();
-        if (version < 1 || version > Format.VERSION) {
+        if (version != Format.VERSION) {
             throw new NexException("versão de metadados não suportada: " + version);
         }
         long nextRowId = reader.u64();
         long fileSize = reader.u64();
-        Schema schema = readSchema(reader, version);
-        long[] indexRoots = null;
-        if (version >= 4) {
-            int rootCount = reader.u16();
-            if (rootCount < 0 || rootCount > Format.MAX_COLUMNS) {
-                throw new NexException("metadados da tabela estão corrompidos");
-            }
-            indexRoots = new long[rootCount];
-            for (int i = 0; i < rootCount; i++) {
-                indexRoots[i] = reader.u64();
-            }
+        Schema schema = readSchema(reader);
+        int rootCount = reader.u16();
+        if (rootCount < 0 || rootCount > Format.MAX_COLUMNS) {
+            throw new NexException("metadados da tabela estão corrompidos");
+        }
+        long[] indexRoots = new long[rootCount];
+        for (int i = 0; i < rootCount; i++) {
+            indexRoots[i] = reader.u64();
         }
         int liveCount = reader.u32();
         if (liveCount < 0) {
@@ -213,7 +210,7 @@ final class MetaCodec {
         }
     }
 
-    private static Schema readSchema(ByteReader reader, int version) {
+    private static Schema readSchema(ByteReader reader) {
         String name = reader.utf();
         int count = reader.u16();
         if (count <= 0 || count > Format.MAX_COLUMNS) {
@@ -247,7 +244,7 @@ final class MetaCodec {
         int uniqueCount = reader.u16();
         List<UniqueKey> uniques = new ArrayList<>();
         for (int i = 0; i < uniqueCount; i++) {
-            String uniqueName = version >= 7 ? reader.utf() : "UNIQUE_" + (i + 1);
+            String uniqueName = reader.utf();
             int size = reader.u16();
             int[] group = new int[size];
             for (int j = 0; j < size; j++) {
@@ -255,81 +252,67 @@ final class MetaCodec {
             }
             uniques.add(new UniqueKey(uniqueName, group));
         }
-        List<IndexDef> indexes = new ArrayList<>();
-        if (version >= 2) {
-            int indexCount = reader.u16();
-            if (indexCount < 0 || indexCount > Format.MAX_COLUMNS) {
-                throw new NexException("esquema da tabela está corrompido");
-            }
-            for (int i = 0; i < indexCount; i++) {
-                String indexName = reader.utf();
-                boolean unique = reader.u8() != 0;
-                int size = reader.u16();
-                if (size <= 0 || size > columns.size()) {
-                    throw new NexException("esquema da tabela está corrompido");
-                }
-                int[] group = new int[size];
-                for (int j = 0; j < size; j++) {
-                    int column = reader.u16();
-                    if (column < 0 || column >= columns.size()) {
-                        throw new NexException("esquema da tabela está corrompido");
-                    }
-                    group[j] = column;
-                }
-                boolean descending = version >= 5 && reader.u8() != 0;
-                indexes.add(new IndexDef(indexName, group, unique, descending));
-            }
+        int indexCount = reader.u16();
+        if (indexCount < 0 || indexCount > Format.MAX_COLUMNS) {
+            throw new NexException("esquema da tabela está corrompido");
         }
-        String primaryConstraint = "";
-        String primaryIndex = "";
-        boolean primaryDescending = false;
-        List<ForeignKey> foreignKeys = new ArrayList<>();
-        if (version >= 5) {
-            primaryConstraint = reader.utf();
-            primaryIndex = reader.utf();
-            primaryDescending = reader.u8() != 0;
-            int foreignCount = reader.u16();
-            if (foreignCount < 0 || foreignCount > Format.MAX_COLUMNS) {
+        List<IndexDef> indexes = new ArrayList<>();
+        for (int i = 0; i < indexCount; i++) {
+            String indexName = reader.utf();
+            boolean unique = reader.u8() != 0;
+            int size = reader.u16();
+            if (size <= 0 || size > columns.size()) {
                 throw new NexException("esquema da tabela está corrompido");
             }
-            for (int i = 0; i < foreignCount; i++) {
-                String foreignName = reader.utf();
-                int size = reader.u16();
-                if (size <= 0 || size > columns.size()) {
+            int[] group = new int[size];
+            for (int j = 0; j < size; j++) {
+                int column = reader.u16();
+                if (column < 0 || column >= columns.size()) {
                     throw new NexException("esquema da tabela está corrompido");
                 }
-                int[] local = new int[size];
-                for (int j = 0; j < size; j++) {
-                    int column = reader.u16();
-                    if (column < 0 || column >= columns.size()) {
-                        throw new NexException("esquema da tabela está corrompido");
-                    }
-                    local[j] = column;
-                }
-                String referencedSchema = reader.utf();
-                String referencedTable = reader.utf();
-                int referencedCount = reader.u16();
-                if (referencedCount <= 0 || referencedCount > Format.MAX_COLUMNS) {
-                    throw new NexException("esquema da tabela está corrompido");
-                }
-                String[] referenced = new String[referencedCount];
-                for (int j = 0; j < referencedCount; j++) {
-                    referenced[j] = reader.utf();
-                }
-                String indexName = reader.utf();
-                boolean descending = reader.u8() != 0;
-                ReferentialAction onUpdate = ReferentialAction.NO_ACTION;
-                ReferentialAction onDelete = ReferentialAction.NO_ACTION;
-                if (version >= 6) {
-                    onUpdate = ReferentialAction.stored(reader.u8());
-                    onDelete = ReferentialAction.stored(reader.u8());
-                }
-                foreignKeys.add(new ForeignKey(foreignName, local, referencedSchema, referencedTable,
-                        referenced, indexName, descending, onUpdate, onDelete));
+                group[j] = column;
             }
-        } else if (primary.length > 0) {
-            primaryConstraint = "PK_" + name;
-            primaryIndex = primaryConstraint;
+            boolean descending = reader.u8() != 0;
+            indexes.add(new IndexDef(indexName, group, unique, descending));
+        }
+        String primaryConstraint = reader.utf();
+        String primaryIndex = reader.utf();
+        boolean primaryDescending = reader.u8() != 0;
+        int foreignCount = reader.u16();
+        if (foreignCount < 0 || foreignCount > Format.MAX_COLUMNS) {
+            throw new NexException("esquema da tabela está corrompido");
+        }
+        List<ForeignKey> foreignKeys = new ArrayList<>();
+        for (int i = 0; i < foreignCount; i++) {
+            String foreignName = reader.utf();
+            int size = reader.u16();
+            if (size <= 0 || size > columns.size()) {
+                throw new NexException("esquema da tabela está corrompido");
+            }
+            int[] local = new int[size];
+            for (int j = 0; j < size; j++) {
+                int column = reader.u16();
+                if (column < 0 || column >= columns.size()) {
+                    throw new NexException("esquema da tabela está corrompido");
+                }
+                local[j] = column;
+            }
+            String referencedSchema = reader.utf();
+            String referencedTable = reader.utf();
+            int referencedCount = reader.u16();
+            if (referencedCount <= 0 || referencedCount > Format.MAX_COLUMNS) {
+                throw new NexException("esquema da tabela está corrompido");
+            }
+            String[] referenced = new String[referencedCount];
+            for (int j = 0; j < referencedCount; j++) {
+                referenced[j] = reader.utf();
+            }
+            String indexName = reader.utf();
+            boolean descending = reader.u8() != 0;
+            ReferentialAction onUpdate = ReferentialAction.stored(reader.u8());
+            ReferentialAction onDelete = ReferentialAction.stored(reader.u8());
+            foreignKeys.add(new ForeignKey(foreignName, local, referencedSchema, referencedTable,
+                    referenced, indexName, descending, onUpdate, onDelete));
         }
         return new Schema(name, columns, primary, uniques, indexes,
                 primaryConstraint, primaryIndex, primaryDescending, foreignKeys);

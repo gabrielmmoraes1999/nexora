@@ -435,9 +435,6 @@ public final class Ddl {
             return false;
         }
         String folded = name.toLowerCase(Locale.ROOT);
-        if (folded.startsWith("unique_")) {
-            return digits(folded.substring("unique_".length()));
-        }
         if (!folded.startsWith("unq")) {
             return false;
         }

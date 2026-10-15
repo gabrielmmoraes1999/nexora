@@ -348,7 +348,7 @@ DROP INDEX idx_cliente ON pedido;
 DROP INDEX IF EXISTS idx_cliente ON pedido;
 ```
 
-`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNQ1_tabela`, `UNQ2_tabela`, … estão reservados para o índice do `UNIQUE` declarado na tabela. O formato antigo `UNIQUE_1` também continua reservado. O índice da chave primária, o de cada chave estrangeira e o de cada `UNIQUE` não saem com `DROP INDEX`. Remover uma coluna remove os índices que a usam.
+`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNQ1_tabela`, `UNQ2_tabela`, … estão reservados para o índice do `UNIQUE` declarado na tabela. O índice da chave primária, o de cada chave estrangeira e o de cada `UNIQUE` não saem com `DROP INDEX`. Remover uma coluna remove os índices que a usam.
 
 As entradas ficam em páginas de 4096 bytes na região da tabela. O arquivo cresce com as chaves. A igualdade lê só as páginas do caminho, da raiz até a folha, e a lista inteira de chaves não permanece na memória. Os registros da tabela continuam sendo carregados ao abrir.
 
@@ -552,7 +552,7 @@ Falha de SQL vira `SQLException`. Mensagem de sintaxe ou de regra do banco usa S
 
 O banco é o arquivo `.db`: a página 0 é o cabeçalho, o catálogo vem em seguida e cada tabela ocupa páginas inteiras, com o `BLOB` na própria tabela. Ao lado fica o `.log`, com o mesmo nome e a extensão trocada (`loja.db` e `loja.log`). Cada transação confirmada fica nesse log, comprimida, e o commit grava o log antes das páginas. O checkpoint sincroniza o `.db` e conserva esse histórico, desde a criação ou o último backup completo. O backup de modificação só copia o `.log`. Se o processo cair no meio, a próxima abertura reaplica o que ficou depois do checkpoint. `apply` descomprime as transações e executa o SQL de novo sobre um `.db`. Não há pasta de tabelas. O tamanho da página é o escolhido em `create`. `NEX$FORMAT` continua `1`.
 
-Treze tabelas nascem com o arquivo. Um arquivo antigo ganha, ao abrir, as que ainda não existirem, entre elas `NEX$SCHEMAS` com a linha `public`. `CREATE TABLE` acrescenta o dono em `NEX$PRIVILEGES`. O prefixo `NEX$` é reservado. `DROP`, `ALTER` e `CREATE INDEX` nelas falham. Identificadores podem usar `$`.
+Treze tabelas nascem com o arquivo, entre elas `NEX$SCHEMAS` com a linha `public`. `CREATE TABLE` acrescenta o dono em `NEX$PRIVILEGES`. O prefixo `NEX$` é reservado. `DROP`, `ALTER` e `CREATE INDEX` nelas falham. Identificadores podem usar `$`.
 
 
 | Tabela                     | Papel                                                               | Gravação                        |

@@ -92,10 +92,6 @@ final class SystemTables {
         ), new int[]{0, 1, 2}, List.of(), List.of());
     }
 
-    static Schema connectionsSchema() {
-        return connections();
-    }
-
     private static Schema connections() {
         return new Schema(CONNECTIONS, List.of(
                 new Column("NEX$ATTACHMENT_ID", DataType.INTEGER, 0, 0, true, true, 1L, false, null),
