@@ -533,10 +533,21 @@ final class SqlParser {
             return new AddColumn(table, column());
         }
         if (consumeKeyword("DROP")) {
+            if (consumeKeyword("CONSTRAINT")) {
+                return new DropConstraint(table, expectIdent());
+            }
+            if (consumeKeyword("PRIMARY")) {
+                expectKeyword("KEY");
+                return new DropPrimaryKey(table);
+            }
+            if (consumeKeyword("FOREIGN")) {
+                expectKeyword("KEY");
+                return new DropForeignKey(table, expectIdent());
+            }
             optionalKeyword("COLUMN");
             return new DropColumn(table, expectIdent());
         }
-        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN, ADD PRIMARY KEY e ADD FOREIGN KEY");
+        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN, ADD e DROP de PRIMARY KEY, FOREIGN KEY e CONSTRAINT");
     }
 
     private Stmt addTableConstraint(String table) {

@@ -5,7 +5,8 @@ import java.util.List;
 record ParsedSql(List<Stmt> statements, int parameters) {
 }
 
-sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AddPrimaryKey, AddForeignKey, Insert, Update, Delete, Select,
+sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AddPrimaryKey, AddForeignKey,
+        DropConstraint, DropPrimaryKey, DropForeignKey, Insert, Update, Delete, Select,
         SelectProcedure, Grant, Revoke, BeginTx, CommitTx, RollbackTx, CreateGenerator, DropGenerator, SetGenerator,
         CreateProcedure, DropProcedure, ExecuteProcedure, CreateTrigger, DropTrigger, AlterTrigger, CreateView, DropView,
         CreateRole, DropRole, GrantRole, RevokeRole, DropConnection, CreateSchema, DropSchema, SetSchema {
@@ -69,6 +70,15 @@ record AddPrimaryKey(String table, List<String> columns, String constraint, Stri
 
 record AddForeignKey(String table, List<String> columns, String constraint, String index, boolean descending,
                      String refTable, List<String> refColumns, ReferentialAction onUpdate, ReferentialAction onDelete) implements Stmt {
+}
+
+record DropConstraint(String table, String name) implements Stmt {
+}
+
+record DropPrimaryKey(String table) implements Stmt {
+}
+
+record DropForeignKey(String table, String name) implements Stmt {
 }
 
 record Insert(String table, List<String> columns, List<List<Expr>> rows) implements Stmt {

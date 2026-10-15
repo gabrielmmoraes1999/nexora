@@ -623,6 +623,52 @@ final class Engine implements AutoCloseable {
                 });
                 yield SqlResult.update(0);
             }
+            case DropConstraint drop -> {
+                guardDdl(drop.table());
+                rejectBorrowed(require(drop.table()));
+                mutating(drop.table(), () -> {
+                    TableStore table = require(drop.table());
+                    if (table.schema().primaryKey.length > 0
+                            && Names.same(table.schema().primaryConstraint, drop.name())) {
+                        guardPrimaryReferenced(table);
+                        table.dropPrimaryKey();
+                        return 0;
+                    }
+                    boolean foreign = false;
+                    for (ForeignKey key : table.schema().foreignKeys) {
+                        if (Names.same(key.name, drop.name())) {
+                            foreign = true;
+                            break;
+                        }
+                    }
+                    if (!foreign) {
+                        throw new NexException("restrição não encontrada: " + drop.name());
+                    }
+                    table.dropForeignKey(drop.name());
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
+            case DropPrimaryKey drop -> {
+                guardDdl(drop.table());
+                rejectBorrowed(require(drop.table()));
+                mutating(drop.table(), () -> {
+                    TableStore table = require(drop.table());
+                    guardPrimaryReferenced(table);
+                    table.dropPrimaryKey();
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
+            case DropForeignKey drop -> {
+                guardDdl(drop.table());
+                rejectBorrowed(require(drop.table()));
+                mutating(drop.table(), () -> {
+                    require(drop.table()).dropForeignKey(drop.name());
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
             case Insert insert -> SqlResult.update(insert(insert));
             case Update update -> SqlResult.update(update(update));
             case Delete delete -> SqlResult.update(delete(delete));
@@ -1245,6 +1291,31 @@ final class Engine implements AutoCloseable {
             }
         }
         return false;
+    }
+
+    private void guardPrimaryReferenced(TableStore table) {
+        Schema schema = table.schema();
+        if (schema.primaryKey.length == 0) {
+            return;
+        }
+        for (TableStore other : tables.values()) {
+            for (ForeignKey key : other.schema().foreignKeys) {
+                if (!pointsAt(key, table) || !Arrays.equals(referencedIndexes(schema, key), schema.primaryKey)) {
+                    continue;
+                }
+                boolean covered = false;
+                for (int[] unique : schema.uniques) {
+                    if (Arrays.equals(unique, schema.primaryKey)) {
+                        covered = true;
+                        break;
+                    }
+                }
+                if (!covered) {
+                    throw new NexException("chave primária em uso pela chave estrangeira " + key.name
+                            + " em " + other.schema().name);
+                }
+            }
+        }
     }
 
     private void guardReferenced(TableStore table) {
@@ -2451,6 +2522,8 @@ final class Engine implements AutoCloseable {
                 || statement instanceof CreateIndex || statement instanceof DropIndex
                 || statement instanceof AddColumn || statement instanceof DropColumn
                 || statement instanceof AddPrimaryKey || statement instanceof AddForeignKey
+                || statement instanceof DropConstraint || statement instanceof DropPrimaryKey
+                || statement instanceof DropForeignKey
                 || statement instanceof Grant || statement instanceof Revoke
                 || statement instanceof CreateGenerator || statement instanceof DropGenerator
                 || statement instanceof CreateProcedure || statement instanceof DropProcedure

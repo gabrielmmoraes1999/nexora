@@ -139,8 +139,10 @@ final class ObjectPane extends JPanel {
         primaryKeys = Tables.create();
         foreignKeys = Tables.create();
         uniqueKeys = Tables.create();
-        constraints.addTab("Primary key", Look.scroll(primaryKeys));
-        constraints.addTab("Foreign keys", Look.scroll(foreignKeys));
+        constraints.addTab("Primary key", wrap(Look.scroll(primaryKeys), buttons(
+                button("Excluir", () -> dropConstraint(primaryKeys, columns, indexes, ddl), editableShape))));
+        constraints.addTab("Foreign keys", wrap(Look.scroll(foreignKeys), buttons(
+                button("Excluir", () -> dropConstraint(foreignKeys, columns, indexes, ddl), editableShape))));
         constraints.addTab("Uniques", Look.scroll(uniqueKeys));
         tabs.addTab("Constraints", constraints);
         tabs.addTab("Triggers", Look.scroll(triggers));
@@ -688,6 +690,33 @@ final class ObjectPane extends JPanel {
             fillIndexes(indexes, Outline.indexes(connection, node.schema(), node.name()));
             refreshConstraints(connection);
             reloadDdl(ddl);
+        } catch (SQLException exception) {
+            Dialogs.error(hub.owner(), Dialogs.message(exception));
+        }
+    }
+
+    private void dropConstraint(JTable keys, JTable columns, JTable indexes, JTextArea ddl) {
+        if (keys.getSelectedRow() < 0) {
+            return;
+        }
+        String name = String.valueOf(Tables.row(keys, keys.getSelectedRow()).get(0));
+        if (!Dialogs.confirm(hub.owner(), "Excluir a constraint " + name + "?")) {
+            return;
+        }
+        Connection connection = requireQuiet();
+        if (connection == null) {
+            return;
+        }
+        try {
+            Commands.run(connection, Ddl.dropConstraint(node.schema(), node.name(), name));
+            reloadColumns(columns);
+            fillIndexes(indexes, Outline.indexes(connection, node.schema(), node.name()));
+            refreshConstraints(connection);
+            reloadDdl(ddl);
+            if (data != null && data.loaded()) {
+                data.load();
+            }
+            hub.refreshOutline(node.databaseId());
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
         }

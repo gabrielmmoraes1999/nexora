@@ -273,6 +273,10 @@ public final class Ddl {
         return "ALTER TABLE " + SqlNames.qualify(schema, table) + " DROP COLUMN " + SqlNames.quote(column);
     }
 
+    public static String dropConstraint(String schema, String table, String constraint) {
+        return "ALTER TABLE " + SqlNames.qualify(schema, table) + " DROP CONSTRAINT " + SqlNames.quote(constraint);
+    }
+
     public static String dropIndex(String schema, String table, String index) {
         return "DROP INDEX " + SqlNames.quote(index) + " ON " + SqlNames.qualify(schema, table);
     }

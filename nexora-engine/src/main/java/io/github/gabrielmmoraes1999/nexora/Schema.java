@@ -222,6 +222,41 @@ final class Schema {
         return copy(columns, primaryKey, uniques, indexes, primaryConstraint, primaryIndex, primaryDescending, copy);
     }
 
+    Schema withoutPrimaryKey() {
+        if (primaryKey.length == 0) {
+            throw new NexException("a tabela " + name + " não possui chave primária");
+        }
+        return copy(columns, new int[0], uniques, indexes, "", "", false, foreignKeys);
+    }
+
+    Schema withoutForeignKey(String constraint) {
+        ForeignKey found = null;
+        List<ForeignKey> keys = new ArrayList<>();
+        for (ForeignKey key : foreignKeys) {
+            if (found == null && Names.same(key.name, constraint)) {
+                found = key;
+                continue;
+            }
+            keys.add(key);
+        }
+        if (found == null) {
+            throw new NexException("restrição não encontrada: " + constraint);
+        }
+        List<IndexDef> kept = new ArrayList<>();
+        boolean removed = false;
+        for (IndexDef index : indexes) {
+            if (!removed && Names.same(index.name, found.indexName)) {
+                removed = true;
+                continue;
+            }
+            kept.add(index);
+        }
+        if (!removed) {
+            throw new NexException("índice não encontrado: " + found.indexName);
+        }
+        return copy(columns, primaryKey, uniques, kept, primaryConstraint, primaryIndex, primaryDescending, keys);
+    }
+
     Schema withoutIndex(String indexName) {
         List<IndexDef> copy = new ArrayList<>();
         boolean found = false;

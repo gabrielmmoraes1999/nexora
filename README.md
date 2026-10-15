@@ -267,6 +267,7 @@ CREATE TABLE nota (
 );
 
 ALTER TABLE nota ADD PRIMARY KEY (id);
+ALTER TABLE nota DROP PRIMARY KEY;
 DROP TABLE IF EXISTS rascunho;
 DROP TABLE pedido;
 ```
@@ -278,7 +279,7 @@ ALTER TABLE teste
   ADD CONSTRAINT PK_teste PRIMARY KEY (id) USING DESCENDING INDEX ix_teste;
 ```
 
-`USING INDEX` sem `DESCENDING` continua Ascending. A ordem física do índice permanece crescente; `DESCENDING` fica registrado na constraint e aparece em `ASC_OR_DESC`. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
+`USING INDEX` sem `DESCENDING` continua Ascending. A ordem física do índice permanece crescente; `DESCENDING` fica registrado na constraint e aparece em `ASC_OR_DESC`. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `DROP PRIMARY KEY` e `DROP CONSTRAINT nome` removem a chave e o índice ligado a ela. As colunas continuam `NOT NULL`. Se uma chave estrangeira ainda aponta para essa primária, e não houver um `UNIQUE` nas mesmas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
 
 Chave estrangeira também cria índice, com o prefixo `FK_`. O padrão é `FK_` mais o nome da tabela, Ascending, e o índice recebe o mesmo nome da constraint. A segunda chave da mesma tabela usa `FK_tabela_coluna`. Sem a lista de colunas referenciadas, vale a chave primária da outra tabela. A referência precisa ser a chave primária ou um `UNIQUE`, com o mesmo tipo. Nulo em qualquer coluna da chave não exige registro do outro lado. `ON DELETE` e `ON UPDATE` aceitam `NO ACTION`, `RESTRICT`, `CASCADE`, `SET NULL` e `SET DEFAULT`. Sem a cláusula, vale `NO ACTION`: apagar ou alterar a chave referenciada falha enquanto houver filho. `CASCADE` repete a exclusão ou a nova chave nos filhos. `SET NULL` grava nulo nas colunas da chave, que precisam aceitar nulo. `SET DEFAULT` grava o padrão de cada coluna, que precisa ter `DEFAULT`.
 
@@ -292,7 +293,12 @@ CREATE TABLE item (
 ALTER TABLE item
   ADD CONSTRAINT FK_item_extra FOREIGN KEY (extra) REFERENCES pedido (id)
   USING DESCENDING INDEX ix_extra;
+
+ALTER TABLE item DROP CONSTRAINT FK_item;
+ALTER TABLE item DROP FOREIGN KEY FK_item_extra;
 ```
+
+`DROP CONSTRAINT nome` e `DROP FOREIGN KEY nome` removem a chave estrangeira e o índice vinculado, mesmo quando o índice tem outro nome. `DROP INDEX` continua sem remover índice de `PRIMARY KEY`, `FOREIGN KEY` ou `UNIQUE`.
 
 `getGeneratedKeys()` devolve um resultado vazio. O valor gerado se lê com `SELECT`.
 

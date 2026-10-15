@@ -569,6 +569,118 @@ class DatabaseTest {
     }
 
     @Test
+    void removeChavePrimariaEEstrangeiraJuntoComOIndice() {
+        try (Database db = open()) {
+            db.execute("CREATE TABLE pedido (id INTEGER, nota VARCHAR(20), codigo INTEGER UNIQUE)");
+            db.execute("INSERT INTO pedido VALUES (1, 'a', 10)");
+            db.execute("ALTER TABLE pedido ADD CONSTRAINT PK_pedido PRIMARY KEY (id) USING DESCENDING INDEX ix_pedido");
+            db.execute("CREATE INDEX idx_nota ON pedido (nota)");
+            db.execute("""
+                    CREATE TABLE item (
+                        id INTEGER PRIMARY KEY,
+                        pedido_id INTEGER,
+                        extra INTEGER,
+                        CONSTRAINT FK_item FOREIGN KEY (pedido_id) REFERENCES pedido (id)
+                    )
+                    """);
+            db.execute("""
+                    ALTER TABLE item ADD CONSTRAINT FK_extra FOREIGN KEY (extra) REFERENCES pedido (codigo)
+                    USING DESCENDING INDEX ix_extra
+                    """);
+            db.execute("INSERT INTO item VALUES (1, 1, 10)");
+
+            NexException emUso = assertThrows(NexException.class, () -> db.execute("ALTER TABLE pedido DROP PRIMARY KEY"));
+            assertTrue(emUso.getMessage().contains("FK_item"));
+            assertEquals("PK_pedido", table(db, "pedido").primaryConstraint());
+            assertEquals("ix_pedido", table(db, "pedido").primaryIndex());
+            assertTrue(table(db, "pedido").primaryDescending());
+            assertThrows(NexException.class, () -> db.execute("DROP INDEX ix_pedido ON pedido"));
+
+            db.execute("ALTER TABLE item DROP CONSTRAINT fk_item");
+            TableDescription item = table(db, "item");
+            assertEquals(List.of("FK_extra"), item.foreignKeys().stream().map(TableDescription.ForeignKey::name).toList());
+            assertFalse(item.indexes().stream().anyMatch(index -> index.name().equals("FK_item")));
+            assertTrue(item.indexes().stream().anyMatch(index -> index.name().equals("ix_extra") && index.descending()));
+            db.execute("INSERT INTO item VALUES (2, 9, 10)");
+            assertThrows(NexException.class, () -> db.execute("DELETE FROM pedido WHERE codigo = 10"));
+
+            db.execute("ALTER TABLE pedido DROP CONSTRAINT PK_pedido");
+            TableDescription pedido = table(db, "pedido");
+            assertEquals("", pedido.primaryConstraint());
+            assertEquals("", pedido.primaryIndex());
+            assertEquals(0, pedido.columns().get(0).primaryKeyPosition());
+            assertFalse(pedido.columns().get(0).nullable());
+            assertEquals(List.of("UNIQUE_1", "idx_nota"),
+                    pedido.indexes().stream().map(TableDescription.TableIndex::name).toList());
+            db.execute("INSERT INTO pedido VALUES (1, 'b', 11)");
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO pedido VALUES (NULL, 'c', 12)"));
+            assertThrows(NexException.class, () -> db.execute("DROP INDEX ix_pedido ON pedido"));
+            db.execute("CREATE INDEX ix_pedido ON pedido (id)");
+
+            db.execute("ALTER TABLE item DROP FOREIGN KEY FK_extra");
+            assertTrue(table(db, "item").foreignKeys().isEmpty());
+            assertFalse(table(db, "item").indexes().stream().anyMatch(index -> index.name().equals("ix_extra")));
+            db.execute("DELETE FROM pedido WHERE codigo = 10");
+            db.execute("INSERT INTO pedido VALUES (1, 'c', 12)");
+            db.execute("CREATE INDEX ix_extra ON item (extra)");
+
+            NexException ausente = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE item DROP CONSTRAINT FK_extra"));
+            assertTrue(ausente.getMessage().contains("FK_extra"));
+            assertThrows(NexException.class, () -> db.execute("ALTER TABLE pedido DROP PRIMARY KEY"));
+
+            db.execute("BEGIN");
+            NexException transacao = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE item DROP CONSTRAINT PK_item"));
+            assertTrue(transacao.getMessage().contains("transação"));
+            db.execute("ROLLBACK");
+            assertEquals("PK_item", table(db, "item").primaryConstraint());
+
+            db.execute("CREATE TABLE par (a INTEGER NOT NULL, b INTEGER NOT NULL, PRIMARY KEY (a, b))");
+            db.execute("INSERT INTO par VALUES (1, 1)");
+            db.execute("ALTER TABLE par DROP PRIMARY KEY");
+            db.execute("INSERT INTO par VALUES (1, 1)");
+            assertEquals("", table(db, "par").primaryConstraint());
+            assertTrue(table(db, "par").indexes().isEmpty());
+
+            db.execute("CREATE TABLE arvore (id INTEGER PRIMARY KEY, pai INTEGER)");
+            db.execute("ALTER TABLE arvore ADD FOREIGN KEY (pai) REFERENCES arvore (id)");
+            assertEquals("FK_arvore", table(db, "arvore").foreignKeys().get(0).name());
+            assertThrows(NexException.class, () -> db.execute("ALTER TABLE arvore DROP PRIMARY KEY"));
+            db.execute("ALTER TABLE arvore DROP FOREIGN KEY FK_arvore");
+            db.execute("ALTER TABLE arvore DROP PRIMARY KEY");
+            assertEquals("", table(db, "arvore").primaryConstraint());
+            assertTrue(table(db, "arvore").foreignKeys().isEmpty());
+            assertTrue(table(db, "arvore").indexes().isEmpty());
+            assertFalse(table(db, "arvore").columns().get(0).nullable());
+
+            db.execute("CREATE SCHEMA vendas");
+            db.execute("CREATE TABLE vendas.nota (id INTEGER PRIMARY KEY)");
+            db.execute("ALTER TABLE vendas.nota DROP CONSTRAINT PK_nota");
+            TableDescription nota = db.describeTables().stream()
+                    .filter(described -> described.schema().equals("vendas") && described.name().equals("nota"))
+                    .findFirst().orElseThrow();
+            assertEquals("", nota.primaryConstraint());
+            assertTrue(nota.indexes().isEmpty());
+        }
+        try (Database db = open()) {
+            assertEquals("", table(db, "pedido").primaryConstraint());
+            assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("idx_nota")));
+            assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("ix_pedido")));
+            assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("UNIQUE_1")));
+            assertEquals(0, table(db, "item").foreignKeys().size());
+            assertEquals("PK_item", table(db, "item").primaryIndex());
+            assertEquals(2, db.query("SELECT id FROM pedido WHERE id = 1").size());
+            assertEquals(0, db.query("SELECT codigo FROM pedido WHERE codigo = 10").size());
+            db.execute("DELETE FROM pedido WHERE nota = 'c'");
+            db.execute("ALTER TABLE pedido ADD CONSTRAINT PK_pedido PRIMARY KEY (id)");
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO pedido VALUES (1, 'd', 13)"));
+            assertEquals("PK_pedido", table(db, "pedido").primaryIndex());
+            assertTrue(table(db, "arvore").indexes().isEmpty());
+        }
+    }
+
+    @Test
     void segundoAcessoEhRecusadoEnquantoAberto() {
         try (Database primeiro = open()) {
             NexException erro = assertThrows(NexException.class, () -> open());

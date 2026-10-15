@@ -143,6 +143,42 @@ final class TableStore implements AutoCloseable {
     void dropIndex(String name) {
         Schema next = schema.withoutIndex(name);
         validate(next);
+        releaseIndex(name);
+        schema = next;
+        dirty = true;
+    }
+
+    void dropPrimaryKey() {
+        if (schema.primaryKey.length == 0) {
+            throw new NexException("a tabela " + schema.name + " não possui chave primária");
+        }
+        String indexName = schema.primaryIndex;
+        Schema next = schema.withoutPrimaryKey();
+        validate(next);
+        releaseIndex(indexName);
+        schema = next;
+        dirty = true;
+    }
+
+    void dropForeignKey(String name) {
+        String indexName = null;
+        for (ForeignKey key : schema.foreignKeys) {
+            if (Names.same(key.name, name)) {
+                indexName = key.indexName;
+                break;
+            }
+        }
+        if (indexName == null) {
+            throw new NexException("chave estrangeira não encontrada: " + name);
+        }
+        Schema next = schema.withoutForeignKey(name);
+        validate(next);
+        releaseIndex(indexName);
+        schema = next;
+        dirty = true;
+    }
+
+    private void releaseIndex(String name) {
         List<IndexTree.DiskIndex> kept = new ArrayList<>();
         IndexTree.DiskIndex removed = null;
         for (IndexTree.DiskIndex index : indexes) {
@@ -156,9 +192,7 @@ final class TableStore implements AutoCloseable {
             throw new NexException("índice não encontrado: " + name);
         }
         removed.release(pendingFree, pages());
-        schema = next;
         indexes = kept;
-        dirty = true;
     }
 
     List<StoredRow> lookup(Map<Integer, Object> equals) {
