@@ -346,10 +346,9 @@ final class Engine implements AutoCloseable {
             indexes.add(new TableDescription.TableIndex(
                     schema.name, schema.primaryIndex, true, names(schema, schema.primaryKey), schema.primaryDescending));
         }
-        int sequence = 1;
-        for (int[] unique : schema.uniques) {
+        for (UniqueKey unique : schema.uniques) {
             indexes.add(new TableDescription.TableIndex(
-                    schema.name, "UNIQUE_" + sequence++, true, names(schema, unique), false));
+                    schema.name, unique.name, true, names(schema, unique.columns), false));
         }
         for (IndexDef index : schema.indexes) {
             indexes.add(new TableDescription.TableIndex(
@@ -641,10 +640,16 @@ final class Engine implements AutoCloseable {
                             break;
                         }
                     }
-                    if (!foreign) {
+                    if (foreign) {
+                        table.dropForeignKey(drop.name());
+                        return 0;
+                    }
+                    UniqueKey unique = uniqueNamed(table.schema(), drop.name());
+                    if (unique == null) {
                         throw new NexException("restrição não encontrada: " + drop.name());
                     }
-                    table.dropForeignKey(drop.name());
+                    guardUniqueReferenced(table, unique);
+                    table.dropUnique(unique.name);
                     return 0;
                 });
                 yield SqlResult.update(0);
@@ -665,6 +670,31 @@ final class Engine implements AutoCloseable {
                 rejectBorrowed(require(drop.table()));
                 mutating(drop.table(), () -> {
                     require(drop.table()).dropForeignKey(drop.name());
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
+            case AddUnique add -> {
+                guardDdl(add.table());
+                rejectBorrowed(require(add.table()));
+                mutating(add.table(), () -> {
+                    TableStore table = require(add.table());
+                    table.addUnique(buildUnique(table.schema(), add.constraint(), add.columns()));
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
+            case DropUnique drop -> {
+                guardDdl(drop.table());
+                rejectBorrowed(require(drop.table()));
+                mutating(drop.table(), () -> {
+                    TableStore table = require(drop.table());
+                    UniqueKey unique = uniqueNamed(table.schema(), drop.name());
+                    if (unique == null) {
+                        throw new NexException("chave única não encontrada: " + drop.name());
+                    }
+                    guardUniqueReferenced(table, unique);
+                    table.dropUnique(unique.name);
                     return 0;
                 });
                 yield SqlResult.update(0);
@@ -791,23 +821,7 @@ final class Engine implements AutoCloseable {
     }
 
     private static boolean reservedIndexName(String name) {
-        if (Names.same(name, "PRIMARY")) {
-            return true;
-        }
-        String folded = Names.fold(name);
-        if (!folded.startsWith("unique_")) {
-            return false;
-        }
-        String suffix = folded.substring("unique_".length());
-        if (suffix.isEmpty()) {
-            return false;
-        }
-        for (int i = 0; i < suffix.length(); i++) {
-            if (!Character.isDigit(suffix.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
+        return Names.same(name, "PRIMARY") || Names.generatedUnique(name);
     }
 
     private void claim(Schema schema, String constraint, String index, boolean replacingPrimary) {
@@ -836,8 +850,8 @@ final class Engine implements AutoCloseable {
                 return true;
             }
         }
-        for (int i = 1; i <= schema.uniques.size(); i++) {
-            if (Names.same("UNIQUE_" + i, name)) {
+        for (UniqueKey key : schema.uniques) {
+            if (Names.same(key.name, name)) {
                 return true;
             }
         }
@@ -957,8 +971,8 @@ final class Engine implements AutoCloseable {
         if (Arrays.equals(schema.primaryKey, columns)) {
             return;
         }
-        for (int[] unique : schema.uniques) {
-            if (Arrays.equals(unique, columns)) {
+        for (UniqueKey unique : schema.uniques) {
+            if (Arrays.equals(unique.columns, columns)) {
                 return;
             }
         }
@@ -1304,8 +1318,8 @@ final class Engine implements AutoCloseable {
                     continue;
                 }
                 boolean covered = false;
-                for (int[] unique : schema.uniques) {
-                    if (Arrays.equals(unique, schema.primaryKey)) {
+                for (UniqueKey unique : schema.uniques) {
+                    if (Arrays.equals(unique.columns, schema.primaryKey)) {
                         covered = true;
                         break;
                     }
@@ -1316,6 +1330,55 @@ final class Engine implements AutoCloseable {
                 }
             }
         }
+    }
+
+    private void guardUniqueReferenced(TableStore table, UniqueKey unique) {
+        Schema schema = table.schema();
+        for (TableStore other : tables.values()) {
+            for (ForeignKey key : other.schema().foreignKeys) {
+                if (!pointsAt(key, table) || !Arrays.equals(referencedIndexes(schema, key), unique.columns)) {
+                    continue;
+                }
+                if (coveredWithout(schema, unique)) {
+                    continue;
+                }
+                throw new NexException("chave única em uso pela chave estrangeira " + key.name
+                        + " em " + other.schema().name);
+            }
+        }
+    }
+
+    private static boolean coveredWithout(Schema schema, UniqueKey dropping) {
+        if (Arrays.equals(schema.primaryKey, dropping.columns)) {
+            return true;
+        }
+        for (UniqueKey other : schema.uniques) {
+            if (!Names.same(other.name, dropping.name) && Arrays.equals(other.columns, dropping.columns)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static UniqueKey uniqueNamed(Schema schema, String name) {
+        for (UniqueKey key : schema.uniques) {
+            if (Names.same(key.name, name)) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private UniqueKey buildUnique(Schema schema, String constraint, List<String> columnNames) {
+        int[] columns = resolve(schema.columns, columnNames, "chave única");
+        for (int column : columns) {
+            if (schema.columns.get(column).type == DataType.BLOB) {
+                throw new NexException("BLOB não pode ser chave");
+            }
+        }
+        String name = constraint == null || constraint.isBlank() ? schema.freshUniqueName() : constraint;
+        claim(schema, name, name, false);
+        return new UniqueKey(name, columns);
     }
 
     private void guardReferenced(TableStore table) {
@@ -2367,7 +2430,7 @@ final class Engine implements AutoCloseable {
         }
     }
 
-    private Schema compile(String name, List<ColDef> definitions, List<String> primary, List<List<String>> uniques) {
+    private Schema compile(String name, List<ColDef> definitions, List<String> primary, List<UniqueClause> uniques) {
         List<Column> columns = new ArrayList<>();
         List<String> columnPrimary = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -2388,15 +2451,6 @@ final class Engine implements AutoCloseable {
             throw new NexException("chave primária repetida");
         }
         int[] primaryIndexes = resolve(columns, primary.isEmpty() ? columnPrimary : primary, "chave primária");
-        List<int[]> groups = new ArrayList<>();
-        for (int i = 0; i < definitions.size(); i++) {
-            if (definitions.get(i).unique() && !definitions.get(i).primaryKey()) {
-                groups.add(new int[]{i});
-            }
-        }
-        for (List<String> unique : uniques) {
-            groups.add(resolve(columns, unique, "chave única"));
-        }
         for (int index : primaryIndexes) {
             Column column = columns.get(index);
             if (!column.notNull) {
@@ -2404,7 +2458,19 @@ final class Engine implements AutoCloseable {
                         column.autoIncrement, column.nextIdentity, column.hasDefault, column.defaultValue));
             }
         }
-        return new Schema(name, columns, primaryIndexes, groups, List.of());
+        Schema schema = new Schema(name, columns, primaryIndexes, List.of(), List.of());
+        for (int i = 0; i < definitions.size(); i++) {
+            if (definitions.get(i).unique() && !definitions.get(i).primaryKey()) {
+                if (columns.get(i).type == DataType.BLOB) {
+                    throw new NexException("BLOB não pode ser chave");
+                }
+                schema = schema.withUnique(new UniqueKey(schema.freshUniqueName(), new int[]{i}));
+            }
+        }
+        for (UniqueClause clause : uniques) {
+            schema = schema.withUnique(buildUnique(schema, clause.constraint(), clause.columns()));
+        }
+        return schema;
     }
 
     private Column column(ColDef definition) {
@@ -2522,8 +2588,9 @@ final class Engine implements AutoCloseable {
                 || statement instanceof CreateIndex || statement instanceof DropIndex
                 || statement instanceof AddColumn || statement instanceof DropColumn
                 || statement instanceof AddPrimaryKey || statement instanceof AddForeignKey
+                || statement instanceof AddUnique
                 || statement instanceof DropConstraint || statement instanceof DropPrimaryKey
-                || statement instanceof DropForeignKey
+                || statement instanceof DropForeignKey || statement instanceof DropUnique
                 || statement instanceof Grant || statement instanceof Revoke
                 || statement instanceof CreateGenerator || statement instanceof DropGenerator
                 || statement instanceof CreateProcedure || statement instanceof DropProcedure

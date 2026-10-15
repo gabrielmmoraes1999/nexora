@@ -37,9 +37,8 @@ final class IndexTree {
         if (schema.primaryKey.length > 0) {
             list.add(new Spec(schema.primaryIndex, schema.primaryKey, true, true));
         }
-        int sequence = 1;
-        for (int[] unique : schema.uniques) {
-            list.add(new Spec("UNIQUE_" + sequence++, unique, false, true));
+        for (UniqueKey unique : schema.uniques) {
+            list.add(new Spec(unique.name, unique.columns, false, true));
         }
         for (IndexDef index : schema.indexes) {
             list.add(new Spec(index.name, index.columns, false, index.unique));
@@ -437,25 +436,18 @@ final class IndexTree {
 
         private NexException duplicate(Schema schema, Object[] values) {
             String kind = primary ? "chave primária"
-                    : generatedUnique() ? "chave única"
+                    : declaredUnique(schema) ? "chave única"
                     : "índice " + name;
             return new NexException("valor duplicado para " + kind + " em " + schema.name + ": " + Arrays.toString(values));
         }
 
-        private boolean generatedUnique() {
-            if (primary || !name.startsWith("UNIQUE_")) {
-                return false;
-            }
-            String suffix = name.substring("UNIQUE_".length());
-            if (suffix.isEmpty()) {
-                return false;
-            }
-            for (int i = 0; i < suffix.length(); i++) {
-                if (!Character.isDigit(suffix.charAt(i))) {
-                    return false;
+        private boolean declaredUnique(Schema schema) {
+            for (UniqueKey key : schema.uniques) {
+                if (Names.same(key.name, name)) {
+                    return true;
                 }
             }
-            return true;
+            return false;
         }
 
         private NexException corrupted(Schema schema) {

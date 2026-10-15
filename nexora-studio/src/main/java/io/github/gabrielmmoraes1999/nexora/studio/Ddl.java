@@ -170,9 +170,11 @@ public final class Ddl {
             }
         }
         for (IndexInfo index : indexes) {
-            if (index.unique && reservedUnique(index.name)) {
-                sql.append(",\n    UNIQUE (").append(quotedList(index.columns)).append(')');
+            if (!index.unique || (indexName != null && index.name.equalsIgnoreCase(indexName) && !primary.isEmpty())) {
+                continue;
             }
+            sql.append(",\n    CONSTRAINT ").append(SqlNames.quote(index.name))
+                    .append(" UNIQUE (").append(quotedList(index.columns)).append(')');
         }
         sql.append("\n)");
         if (foreignKeys != null) {
@@ -194,7 +196,7 @@ public final class Ddl {
             }
         }
         for (IndexInfo index : indexes) {
-            if (index.name == null || reservedIndex(index.name)) {
+            if (index.name == null || reservedIndex(index.name) || index.unique) {
                 continue;
             }
             if (primaryKey != null && index.name.equalsIgnoreCase(indexName)) {
@@ -428,20 +430,34 @@ public final class Ddl {
         return name.equalsIgnoreCase("PRIMARY") || reservedUnique(name);
     }
 
-    private static boolean reservedUnique(String name) {
-        if (name == null) {
+    static boolean generatedUnique(String name) {
+        if (name == null || name.isBlank()) {
             return false;
         }
         String folded = name.toLowerCase(Locale.ROOT);
-        if (!folded.startsWith("unique_")) {
+        if (folded.startsWith("unique_")) {
+            return digits(folded.substring("unique_".length()));
+        }
+        if (!folded.startsWith("unq")) {
             return false;
         }
-        String suffix = folded.substring("unique_".length());
-        if (suffix.isEmpty()) {
+        int split = folded.indexOf('_');
+        if (split <= 3) {
             return false;
         }
-        for (int i = 0; i < suffix.length(); i++) {
-            if (!Character.isDigit(suffix.charAt(i))) {
+        return digits(folded.substring(3, split)) && !folded.substring(split + 1).isEmpty();
+    }
+
+    private static boolean reservedUnique(String name) {
+        return generatedUnique(name);
+    }
+
+    private static boolean digits(String text) {
+        if (text.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < text.length(); i++) {
+            if (!Character.isDigit(text.charAt(i))) {
                 return false;
             }
         }

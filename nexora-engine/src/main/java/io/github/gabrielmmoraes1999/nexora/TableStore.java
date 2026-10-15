@@ -148,6 +148,47 @@ final class TableStore implements AutoCloseable {
         dirty = true;
     }
 
+    void addUnique(UniqueKey key) {
+        if (hasIndex(key.name)) {
+            throw new NexException("índice já existe: " + key.name);
+        }
+        rejectBlobKey(schema, key.columns);
+        Schema next = schema.withUnique(key);
+        validate(next);
+        List<Extent> extra = new ArrayList<>();
+        IndexTree.DiskIndex created = IndexTree.DiskIndex.empty(new IndexTree.Spec(key.name, key.columns, false, true))
+                .fill(next, rows.values(), this::keyParts, extra, pages());
+        int at = (schema.primaryKey.length > 0 ? 1 : 0) + schema.uniques.size();
+        List<IndexTree.DiskIndex> copy = new ArrayList<>();
+        copy.addAll(indexes.subList(0, at));
+        copy.add(created);
+        if (at < indexes.size()) {
+            copy.addAll(indexes.subList(at, indexes.size()));
+        }
+        schema = next;
+        indexes = copy;
+        pendingFree.addAll(extra);
+        dirty = true;
+    }
+
+    void dropUnique(String name) {
+        boolean found = false;
+        for (UniqueKey key : schema.uniques) {
+            if (Names.same(key.name, name)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            throw new NexException("chave única não encontrada: " + name);
+        }
+        Schema next = schema.withoutUnique(name);
+        validate(next);
+        releaseIndex(name);
+        schema = next;
+        dirty = true;
+    }
+
     void dropPrimaryKey() {
         if (schema.primaryKey.length == 0) {
             throw new NexException("a tabela " + schema.name + " não possui chave primária");
@@ -385,7 +426,7 @@ final class TableStore implements AutoCloseable {
         }
         Schema nextSchema = schema.add(stored, primary, unique);
         validate(nextSchema);
-        indexes = indexesAfterAdd(nextSchema, next, primary, unique);
+        indexes = indexesAfterAdd(nextSchema, next, primary);
         schema = nextSchema;
         rows = next;
         pendingFree.addAll(freed);
@@ -1033,7 +1074,7 @@ final class TableStore implements AutoCloseable {
         indexes = next;
     }
 
-    private List<IndexTree.DiskIndex> indexesAfterAdd(Schema nextSchema, Map<Long, StoredRow> rows, boolean primary, boolean unique) {
+    private List<IndexTree.DiskIndex> indexesAfterAdd(Schema nextSchema, Map<Long, StoredRow> rows, boolean primary) {
         List<IndexTree.DiskIndex> next = new ArrayList<>();
         List<Extent> extra = new ArrayList<>();
         int column = nextSchema.columns.size() - 1;
@@ -1048,8 +1089,9 @@ final class TableStore implements AutoCloseable {
         for (int i = uniqueFrom; i < uniqueFrom + uniqueCount; i++) {
             next.add(indexes.get(i));
         }
-        if (unique) {
-            next.add(IndexTree.DiskIndex.empty(new IndexTree.Spec("UNIQUE_" + (uniqueCount + 1), new int[]{column}, false, true))
+        if (nextSchema.uniques.size() > schema.uniques.size()) {
+            UniqueKey added = nextSchema.uniques.get(nextSchema.uniques.size() - 1);
+            next.add(IndexTree.DiskIndex.empty(new IndexTree.Spec(added.name, added.columns, false, true))
                     .fill(nextSchema, rows.values(), this::keyParts, extra, pages()));
         }
         for (int i = uniqueFrom + uniqueCount; i < indexes.size(); i++) {
@@ -1115,19 +1157,7 @@ final class TableStore implements AutoCloseable {
     }
 
     private static boolean generatedName(String name) {
-        if (!name.startsWith("UNIQUE_")) {
-            return false;
-        }
-        String suffix = name.substring("UNIQUE_".length());
-        if (suffix.isEmpty()) {
-            return false;
-        }
-        for (int i = 0; i < suffix.length(); i++) {
-            if (!Character.isDigit(suffix.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
+        return Names.generatedUnique(name);
     }
 
     private List<IndexTree.DiskIndex> rebuild(Schema target, Map<Long, StoredRow> source) {
@@ -1331,8 +1361,8 @@ final class TableStore implements AutoCloseable {
             }
         }
         rejectBlobKey(schema, schema.primaryKey);
-        for (int[] unique : schema.uniques) {
-            rejectBlobKey(schema, unique);
+        for (UniqueKey unique : schema.uniques) {
+            rejectBlobKey(schema, unique.columns);
         }
         for (IndexDef index : schema.indexes) {
             if (index.columns.length == 0) {

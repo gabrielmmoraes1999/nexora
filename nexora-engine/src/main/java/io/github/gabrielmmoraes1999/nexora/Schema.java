@@ -68,6 +68,20 @@ final class IndexDef {
     }
 }
 
+final class UniqueKey {
+    final String name;
+    final int[] columns;
+
+    UniqueKey(String name, int[] columns) {
+        this.name = name;
+        this.columns = columns.clone();
+    }
+
+    UniqueKey withColumns(int[] columns) {
+        return new UniqueKey(name, columns);
+    }
+}
+
 final class ForeignKey {
     final String name;
     final int[] columns;
@@ -103,14 +117,14 @@ final class Schema {
     final String name;
     final List<Column> columns;
     final int[] primaryKey;
-    final List<int[]> uniques;
+    final List<UniqueKey> uniques;
     final List<IndexDef> indexes;
     final String primaryConstraint;
     final String primaryIndex;
     final boolean primaryDescending;
     final List<ForeignKey> foreignKeys;
 
-    Schema(String name, List<Column> columns, int[] primaryKey, List<int[]> uniques, List<IndexDef> indexes) {
+    Schema(String name, List<Column> columns, int[] primaryKey, List<UniqueKey> uniques, List<IndexDef> indexes) {
         this(name, columns, primaryKey, uniques, indexes,
                 primaryKey.length == 0 ? "" : "PK_" + name,
                 primaryKey.length == 0 ? "" : "PK_" + name,
@@ -118,12 +132,12 @@ final class Schema {
                 List.of());
     }
 
-    Schema(String name, List<Column> columns, int[] primaryKey, List<int[]> uniques, List<IndexDef> indexes,
+    Schema(String name, List<Column> columns, int[] primaryKey, List<UniqueKey> uniques, List<IndexDef> indexes,
            String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignKey> foreignKeys) {
         this.name = name;
         this.columns = List.copyOf(columns);
         this.primaryKey = primaryKey.clone();
-        this.uniques = uniques.stream().map(int[]::clone).toList();
+        this.uniques = uniques.stream().map(key -> new UniqueKey(key.name, key.columns)).toList();
         this.indexes = indexes.stream()
                 .map(index -> new IndexDef(index.name, index.columns, index.unique, index.descending))
                 .toList();
@@ -188,9 +202,9 @@ final class Schema {
         copy.add(column);
         int index = copy.size() - 1;
         int[] pk = primary ? new int[]{index} : primaryKey;
-        List<int[]> groups = new ArrayList<>(uniques);
+        List<UniqueKey> groups = new ArrayList<>(uniques);
         if (unique && !primary) {
-            groups.add(new int[]{index});
+            groups.add(new UniqueKey(freshUniqueName(), new int[]{index}));
         }
         String constraint = primaryConstraint;
         String indexName = primaryIndex;
@@ -214,6 +228,64 @@ final class Schema {
         List<IndexDef> copy = new ArrayList<>(indexes);
         copy.add(index);
         return copy(columns, primaryKey, uniques, copy, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
+    }
+
+    Schema withUnique(UniqueKey key) {
+        List<UniqueKey> copy = new ArrayList<>(uniques);
+        copy.add(key);
+        return copy(columns, primaryKey, copy, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
+    }
+
+    Schema withoutUnique(String constraint) {
+        List<UniqueKey> copy = new ArrayList<>();
+        boolean found = false;
+        for (UniqueKey key : uniques) {
+            if (!found && Names.same(key.name, constraint)) {
+                found = true;
+                continue;
+            }
+            copy.add(key);
+        }
+        if (!found) {
+            throw new NexException("chave única não encontrada: " + constraint);
+        }
+        return copy(columns, primaryKey, copy, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
+    }
+
+    String freshUniqueName() {
+        for (int sequence = 1; sequence < 1000; sequence++) {
+            String candidate = "UNQ" + sequence + "_" + name;
+            if (candidate.length() > Format.MAX_NAME) {
+                break;
+            }
+            if (!nameTaken(candidate)) {
+                return candidate;
+            }
+        }
+        throw new NexException("não foi possível nomear a chave única");
+    }
+
+    boolean nameTaken(String candidate) {
+        if (primaryKey.length > 0
+                && (Names.same(primaryConstraint, candidate) || Names.same(primaryIndex, candidate))) {
+            return true;
+        }
+        for (UniqueKey key : uniques) {
+            if (Names.same(key.name, candidate)) {
+                return true;
+            }
+        }
+        for (ForeignKey key : foreignKeys) {
+            if (Names.same(key.name, candidate) || Names.same(key.indexName, candidate)) {
+                return true;
+            }
+        }
+        for (IndexDef definition : indexes) {
+            if (Names.same(definition.name, candidate)) {
+                return true;
+            }
+        }
+        return Names.same(candidate, "PRIMARY");
     }
 
     Schema withForeignKey(ForeignKey key) {
@@ -281,12 +353,12 @@ final class Schema {
             }
         }
         int[] primary = remap(primaryKey, index);
-        List<int[]> unique = new ArrayList<>();
-        for (int[] group : uniques) {
-            if (contains(group, index)) {
+        List<UniqueKey> unique = new ArrayList<>();
+        for (UniqueKey key : uniques) {
+            if (contains(key.columns, index)) {
                 continue;
             }
-            unique.add(remap(group, index));
+            unique.add(key.withColumns(remap(key.columns, index)));
         }
         List<IndexDef> kept = new ArrayList<>();
         for (IndexDef definition : indexes) {
@@ -317,10 +389,15 @@ final class Schema {
                 return true;
             }
         }
+        for (UniqueKey key : uniques) {
+            if (Names.same(key.name, indexName)) {
+                return true;
+            }
+        }
         return false;
     }
 
-    private Schema copy(List<Column> columns, int[] primaryKey, List<int[]> uniques, List<IndexDef> indexes,
+    private Schema copy(List<Column> columns, int[] primaryKey, List<UniqueKey> uniques, List<IndexDef> indexes,
                         String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignKey> foreignKeys) {
         return new Schema(name, columns, primaryKey, uniques, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
@@ -391,5 +468,36 @@ final class Names {
         if (name.length() > Format.MAX_NAME) {
             throw new NexException(kind + " excede " + Format.MAX_NAME + " caracteres");
         }
+    }
+
+    /** Nome gerado de UNIQUE: {@code UNQ1_tabela} ou o formato antigo {@code UNIQUE_1}. */
+    static boolean generatedUnique(String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        String folded = fold(name);
+        if (folded.startsWith("unique_")) {
+            return digits(folded.substring("unique_".length()));
+        }
+        if (!folded.startsWith("unq")) {
+            return false;
+        }
+        int split = folded.indexOf('_');
+        if (split <= 3) {
+            return false;
+        }
+        return digits(folded.substring(3, split)) && !folded.substring(split + 1).isEmpty();
+    }
+
+    private static boolean digits(String text) {
+        if (text.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < text.length(); i++) {
+            if (!Character.isDigit(text.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 }

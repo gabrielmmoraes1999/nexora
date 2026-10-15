@@ -610,7 +610,7 @@ class DatabaseTest {
             assertEquals("", pedido.primaryIndex());
             assertEquals(0, pedido.columns().get(0).primaryKeyPosition());
             assertFalse(pedido.columns().get(0).nullable());
-            assertEquals(List.of("UNIQUE_1", "idx_nota"),
+            assertEquals(List.of("UNQ1_pedido", "idx_nota"),
                     pedido.indexes().stream().map(TableDescription.TableIndex::name).toList());
             db.execute("INSERT INTO pedido VALUES (1, 'b', 11)");
             assertThrows(NexException.class, () -> db.execute("INSERT INTO pedido VALUES (NULL, 'c', 12)"));
@@ -667,7 +667,7 @@ class DatabaseTest {
             assertEquals("", table(db, "pedido").primaryConstraint());
             assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("idx_nota")));
             assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("ix_pedido")));
-            assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("UNIQUE_1")));
+            assertTrue(table(db, "pedido").indexes().stream().anyMatch(index -> index.name().equals("UNQ1_pedido")));
             assertEquals(0, table(db, "item").foreignKeys().size());
             assertEquals("PK_item", table(db, "item").primaryIndex());
             assertEquals(2, db.query("SELECT id FROM pedido WHERE id = 1").size());
@@ -677,6 +677,73 @@ class DatabaseTest {
             assertThrows(NexException.class, () -> db.execute("INSERT INTO pedido VALUES (1, 'd', 13)"));
             assertEquals("PK_pedido", table(db, "pedido").primaryIndex());
             assertTrue(table(db, "arvore").indexes().isEmpty());
+        }
+    }
+
+    @Test
+    void uniqueUsaOProprioNomeESaiComOIndice() {
+        try (Database db = open()) {
+            db.execute("""
+                    CREATE TABLE cliente (
+                        id INTEGER PRIMARY KEY,
+                        email VARCHAR(40) UNIQUE,
+                        documento VARCHAR(20),
+                        CONSTRAINT UQ_documento UNIQUE (documento)
+                    )
+                    """);
+            TableDescription cliente = table(db, "cliente");
+            assertEquals(List.of("PK_cliente", "UNQ1_cliente", "UQ_documento"),
+                    cliente.indexes().stream().map(TableDescription.TableIndex::name).toList());
+            db.execute("ALTER TABLE cliente ADD COLUMN extra INTEGER UNIQUE");
+            assertTrue(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UNQ2_cliente")));
+            db.execute("ALTER TABLE cliente DROP COLUMN extra");
+            assertTrue(cliente.indexes().get(1).unique());
+            assertTrue(cliente.indexes().get(2).unique());
+            db.execute("INSERT INTO cliente VALUES (1, 'a@x', 'd1')");
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO cliente VALUES (2, 'a@x', 'd2')"));
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO cliente VALUES (2, 'b@x', 'd1')"));
+            assertThrows(NexException.class, () -> db.execute("DROP INDEX UNQ1_cliente ON cliente"));
+            assertThrows(NexException.class, () -> db.execute("DROP INDEX UQ_documento ON cliente"));
+
+            db.execute("CREATE TABLE filho (id INTEGER PRIMARY KEY, documento VARCHAR(20))");
+            db.execute("ALTER TABLE filho ADD FOREIGN KEY (documento) REFERENCES cliente (documento)");
+            NexException emUso = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE cliente DROP CONSTRAINT UQ_documento"));
+            assertTrue(emUso.getMessage().contains("FK_filho"));
+            assertTrue(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UQ_documento")));
+            db.execute("ALTER TABLE filho DROP CONSTRAINT FK_filho");
+
+            db.execute("ALTER TABLE cliente DROP UNIQUE UNQ1_cliente");
+            db.execute("INSERT INTO cliente VALUES (2, 'a@x', 'd2')");
+            assertFalse(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UNQ1_cliente")));
+            assertTrue(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UQ_documento")));
+
+            db.execute("ALTER TABLE cliente DROP CONSTRAINT UQ_documento");
+            assertEquals(List.of("PK_cliente"),
+                    table(db, "cliente").indexes().stream().map(TableDescription.TableIndex::name).toList());
+
+            db.execute("INSERT INTO cliente VALUES (3, 'c@x', 'd3'), (4, 'e@x', 'd3')");
+            assertThrows(NexException.class, () -> db.execute("ALTER TABLE cliente ADD UNIQUE (documento)"));
+            assertEquals(List.of("PK_cliente"),
+                    table(db, "cliente").indexes().stream().map(TableDescription.TableIndex::name).toList());
+            db.execute("DELETE FROM cliente WHERE id = 4");
+            db.execute("ALTER TABLE cliente ADD CONSTRAINT UQ_documento UNIQUE (documento)");
+            assertTrue(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UQ_documento") && index.unique()));
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO cliente VALUES (5, 'f@x', 'd3')"));
+
+            db.execute("ALTER TABLE cliente ADD COLUMN codigo INTEGER UNIQUE");
+            assertTrue(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UNQ1_cliente")));
+            db.execute("ALTER TABLE cliente DROP COLUMN codigo");
+            assertFalse(table(db, "cliente").indexes().stream().anyMatch(index -> index.name().equals("UNQ1_cliente")));
+        }
+        try (Database db = open()) {
+            assertEquals(List.of("PK_cliente", "UQ_documento"),
+                    table(db, "cliente").indexes().stream().map(TableDescription.TableIndex::name).toList());
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO cliente VALUES (9, 'z@x', 'd3')"));
+            db.execute("ALTER TABLE cliente DROP UNIQUE UQ_documento");
+            db.execute("INSERT INTO cliente VALUES (9, 'z@x', 'd3')");
+            assertEquals(List.of("PK_cliente"),
+                    table(db, "cliente").indexes().stream().map(TableDescription.TableIndex::name).toList());
         }
     }
 

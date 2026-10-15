@@ -278,14 +278,13 @@ final class SqlParser {
         expectSymbol("(");
         List<ColDef> columns = new ArrayList<>();
         List<String> primary = new ArrayList<>();
-        List<List<String>> uniques = new ArrayList<>();
         TableKeys keys = new TableKeys();
         if (!peekSymbol(")")) {
             do {
                 if (peekKeyword("CONSTRAINT") || (peekKeyword("PRIMARY") && peekKeyword(1, "KEY"))
                         || (peekKeyword("FOREIGN") && peekKeyword(1, "KEY"))
                         || (peekKeyword("UNIQUE") && peekSymbol(1, "("))) {
-                    tableConstraint(primary, uniques, keys);
+                    tableConstraint(primary, keys);
                 } else {
                     columns.add(column());
                 }
@@ -295,7 +294,7 @@ final class SqlParser {
         if (columns.isEmpty()) {
             throw error("CREATE TABLE precisa de ao menos uma coluna");
         }
-        return new CreateTable(ifNotExists, name, columns, primary, uniques,
+        return new CreateTable(ifNotExists, name, columns, primary, List.copyOf(keys.uniques),
                 keys.primaryConstraint, keys.primaryIndex, keys.primaryDescending, List.copyOf(keys.foreignKeys));
     }
 
@@ -339,7 +338,7 @@ final class SqlParser {
         return new CreateIndex(unique, ifNotExists, name, table, columnList());
     }
 
-    private void tableConstraint(List<String> primary, List<List<String>> uniques, TableKeys keys) {
+    private void tableConstraint(List<String> primary, TableKeys keys) {
         String name = null;
         if (consumeKeyword("CONSTRAINT")) {
             name = expectIdent();
@@ -369,10 +368,11 @@ final class SqlParser {
             return;
         }
         expectKeyword("UNIQUE");
-        uniques.add(columnList());
+        List<String> columns = columnList();
         if (peekKeyword("USING")) {
             throw error("USING INDEX vale para PRIMARY KEY e FOREIGN KEY");
         }
+        keys.uniques.add(new UniqueClause(name, columns));
     }
 
     private Using usingIndex() {
@@ -450,6 +450,7 @@ final class SqlParser {
         private String primaryConstraint;
         private String primaryIndex;
         private boolean primaryDescending;
+        private final List<UniqueClause> uniques = new ArrayList<>();
         private final List<ForeignClause> foreignKeys = new ArrayList<>();
     }
 
@@ -526,7 +527,8 @@ final class SqlParser {
         expectKeyword("TABLE");
         String table = expectRelation();
         if (consumeKeyword("ADD")) {
-            if (peekKeyword("CONSTRAINT") || peekKeyword("PRIMARY") || peekKeyword("FOREIGN")) {
+            if (peekKeyword("CONSTRAINT") || peekKeyword("PRIMARY") || peekKeyword("FOREIGN")
+                    || (peekKeyword("UNIQUE") && peekSymbol(1, "("))) {
                 return addTableConstraint(table);
             }
             optionalKeyword("COLUMN");
@@ -544,10 +546,13 @@ final class SqlParser {
                 expectKeyword("KEY");
                 return new DropForeignKey(table, expectIdent());
             }
+            if (consumeKeyword("UNIQUE")) {
+                return new DropUnique(table, expectIdent());
+            }
             optionalKeyword("COLUMN");
             return new DropColumn(table, expectIdent());
         }
-        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN, ADD e DROP de PRIMARY KEY, FOREIGN KEY e CONSTRAINT");
+        throw error("ALTER TABLE suporta ADD COLUMN, DROP COLUMN, ADD e DROP de PRIMARY KEY, FOREIGN KEY, UNIQUE e CONSTRAINT");
     }
 
     private Stmt addTableConstraint(String table) {
@@ -572,7 +577,14 @@ final class SqlParser {
             return new AddForeignKey(table, columns, name, using.name, using.descending, refTable, refColumns,
                     actions.onUpdate, actions.onDelete);
         }
-        throw error("ADD CONSTRAINT espera PRIMARY KEY ou FOREIGN KEY");
+        if (consumeKeyword("UNIQUE")) {
+            List<String> columns = columnList();
+            if (peekKeyword("USING")) {
+                throw error("USING INDEX vale para PRIMARY KEY e FOREIGN KEY");
+            }
+            return new AddUnique(table, columns, name);
+        }
+        throw error("ADD CONSTRAINT espera PRIMARY KEY, FOREIGN KEY ou UNIQUE");
     }
 
     private Stmt setGenerator() {

@@ -11,7 +11,7 @@ final class Format {
     static final byte[] MAGIC = "NEXORANEX".getBytes(StandardCharsets.US_ASCII);
     static final byte[] DB_MAGIC = "NEXORADBF".getBytes(StandardCharsets.US_ASCII);
     static final byte[] LOG_MAGIC = "NEXORALOG".getBytes(StandardCharsets.US_ASCII);
-    static final int VERSION = 6;
+    static final int VERSION = 7;
     /** A partir desta versão o registro traz o tamanho declarado no bloco. */
     static final int VARIABLE_RECORDS = 3;
     static final int DB_VERSION = 1;

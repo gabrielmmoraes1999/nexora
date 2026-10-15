@@ -173,9 +173,10 @@ final class MetaCodec {
             writer.u16(index);
         }
         writer.u16(schema.uniques.size());
-        for (int[] group : schema.uniques) {
-            writer.u16(group.length);
-            for (int index : group) {
+        for (UniqueKey key : schema.uniques) {
+            writer.utf(key.name);
+            writer.u16(key.columns.length);
+            for (int index : key.columns) {
                 writer.u16(index);
             }
         }
@@ -244,14 +245,15 @@ final class MetaCodec {
             primary[i] = reader.u16();
         }
         int uniqueCount = reader.u16();
-        List<int[]> uniques = new ArrayList<>();
+        List<UniqueKey> uniques = new ArrayList<>();
         for (int i = 0; i < uniqueCount; i++) {
+            String uniqueName = version >= 7 ? reader.utf() : "UNIQUE_" + (i + 1);
             int size = reader.u16();
             int[] group = new int[size];
             for (int j = 0; j < size; j++) {
                 group[j] = reader.u16();
             }
-            uniques.add(group);
+            uniques.add(new UniqueKey(uniqueName, group));
         }
         List<IndexDef> indexes = new ArrayList<>();
         if (version >= 2) {

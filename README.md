@@ -279,7 +279,7 @@ ALTER TABLE teste
   ADD CONSTRAINT PK_teste PRIMARY KEY (id) USING DESCENDING INDEX ix_teste;
 ```
 
-`USING INDEX` sem `DESCENDING` continua Ascending. A ordem física do índice permanece crescente; `DESCENDING` fica registrado na constraint e aparece em `ASC_OR_DESC`. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `DROP PRIMARY KEY` e `DROP CONSTRAINT nome` removem a chave e o índice ligado a ela. As colunas continuam `NOT NULL`. Se uma chave estrangeira ainda aponta para essa primária, e não houver um `UNIQUE` nas mesmas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
+`USING INDEX` sem `DESCENDING` continua Ascending. A ordem física do índice permanece crescente; `DESCENDING` fica registrado na constraint e aparece em `ASC_OR_DESC`. A tabela só aceita uma chave. As colunas da chave passam a ser `NOT NULL`. Se já houver nulo ou valor repetido nessas colunas, o comando falha e a tabela fica como estava. `DROP PRIMARY KEY` e `DROP CONSTRAINT nome` removem a chave e o índice ligado a ela. As colunas continuam `NOT NULL`. Se uma chave estrangeira ainda aponta para essa primária, e não houver um `UNIQUE` nas mesmas colunas, o comando falha e a tabela fica como estava. `AUTOINCREMENT` e `IDENTITY` valem em `SMALLINT`, `INTEGER` e `BIGINT`, e o primeiro valor é 1. `UNIQUE` pode ser da coluna ou da tabela e cria um índice com o mesmo nome da constraint. Sem nome, o primeiro é `UNQ1_` mais o nome da tabela, o seguinte `UNQ2_` mais o nome da tabela, e assim por diante. `CONSTRAINT UQ_email UNIQUE (email)` guarda esse nome no índice. `DROP CONSTRAINT nome` e `DROP UNIQUE nome` removem a constraint e o índice. Se uma chave estrangeira ainda aponta para essas colunas, e não houver outra chave cobrindo as mesmas, o comando falha e a tabela fica como estava. `DEFAULT` aceita um literal, `NULL`, `TRUE` ou `FALSE`. `NOT NULL` e `NULL` não se combinam na mesma coluna.
 
 Chave estrangeira também cria índice, com o prefixo `FK_`. O padrão é `FK_` mais o nome da tabela, Ascending, e o índice recebe o mesmo nome da constraint. A segunda chave da mesma tabela usa `FK_tabela_coluna`. Sem a lista de colunas referenciadas, vale a chave primária da outra tabela. A referência precisa ser a chave primária ou um `UNIQUE`, com o mesmo tipo. Nulo em qualquer coluna da chave não exige registro do outro lado. `ON DELETE` e `ON UPDATE` aceitam `NO ACTION`, `RESTRICT`, `CASCADE`, `SET NULL` e `SET DEFAULT`. Sem a cláusula, vale `NO ACTION`: apagar ou alterar a chave referenciada falha enquanto houver filho. `CASCADE` repete a exclusão ou a nova chave nos filhos. `SET NULL` grava nulo nas colunas da chave, que precisam aceitar nulo. `SET DEFAULT` grava o padrão de cada coluna, que precisa ter `DEFAULT`.
 
@@ -299,6 +299,19 @@ ALTER TABLE item DROP FOREIGN KEY FK_item_extra;
 ```
 
 `DROP CONSTRAINT nome` e `DROP FOREIGN KEY nome` removem a chave estrangeira e o índice vinculado, mesmo quando o índice tem outro nome. `DROP INDEX` continua sem remover índice de `PRIMARY KEY`, `FOREIGN KEY` ou `UNIQUE`.
+
+```sql
+CREATE TABLE cliente (
+    id INTEGER PRIMARY KEY,
+    email VARCHAR(120) UNIQUE,
+    documento VARCHAR(20),
+    CONSTRAINT UQ_documento UNIQUE (documento)
+);
+
+ALTER TABLE cliente DROP UNIQUE UNQ1_cliente;
+ALTER TABLE cliente DROP CONSTRAINT UQ_documento;
+ALTER TABLE cliente ADD CONSTRAINT UQ_email UNIQUE (email);
+```
 
 `getGeneratedKeys()` devolve um resultado vazio. O valor gerado se lê com `SELECT`.
 
@@ -335,7 +348,7 @@ DROP INDEX idx_cliente ON pedido;
 DROP INDEX IF EXISTS idx_cliente ON pedido;
 ```
 
-`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNIQUE_1`, `UNIQUE_2`, … estão reservados. O índice da chave primária e o de cada chave estrangeira também não saem com `DROP INDEX`. Remover uma coluna remove os índices que a usam.
+`CREATE UNIQUE INDEX` recusa duplicata, inclusive nas linhas que já existem. `BLOB` não entra em índice nem em chave. Os nomes `PRIMARY` e `UNQ1_tabela`, `UNQ2_tabela`, … estão reservados para o índice do `UNIQUE` declarado na tabela. O formato antigo `UNIQUE_1` também continua reservado. O índice da chave primária, o de cada chave estrangeira e o de cada `UNIQUE` não saem com `DROP INDEX`. Remover uma coluna remove os índices que a usam.
 
 As entradas ficam em páginas de 4096 bytes na região da tabela. O arquivo cresce com as chaves. A igualdade lê só as páginas do caminho, da raiz até a folha, e a lista inteira de chaves não permanece na memória. Os registros da tabela continuam sendo carregados ao abrir.
 

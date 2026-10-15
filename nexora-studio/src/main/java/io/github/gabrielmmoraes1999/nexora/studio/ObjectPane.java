@@ -143,7 +143,8 @@ final class ObjectPane extends JPanel {
                 button("Excluir", () -> dropConstraint(primaryKeys, columns, indexes, ddl), editableShape))));
         constraints.addTab("Foreign keys", wrap(Look.scroll(foreignKeys), buttons(
                 button("Excluir", () -> dropConstraint(foreignKeys, columns, indexes, ddl), editableShape))));
-        constraints.addTab("Uniques", Look.scroll(uniqueKeys));
+        constraints.addTab("Uniques", wrap(Look.scroll(uniqueKeys), buttons(
+                button("Excluir", () -> dropConstraint(uniqueKeys, columns, indexes, ddl), editableShape))));
         tabs.addTab("Constraints", constraints);
         tabs.addTab("Triggers", Look.scroll(triggers));
         tabs.addTab("Privilégios", wrap(grants, buttons(
@@ -674,8 +675,8 @@ final class ObjectPane extends JPanel {
             return;
         }
         String name = String.valueOf(Tables.row(indexes, indexes.getSelectedRow()).get(0));
-        if (name.equalsIgnoreCase("PRIMARY") || name.toLowerCase(java.util.Locale.ROOT).startsWith("unique_")) {
-            Dialogs.error(hub.owner(), "PRIMARY e UNIQUE nascem com a tabela. Remova a coluna ou recrie a tabela.");
+        if (name.equalsIgnoreCase("PRIMARY") || Ddl.generatedUnique(name)) {
+            Dialogs.error(hub.owner(), "Este índice pertence a uma constraint. Exclua a chave na aba Constraints.");
             return;
         }
         if (!Dialogs.confirm(hub.owner(), "Excluir o índice " + name + "?")) {

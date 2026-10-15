@@ -6,7 +6,7 @@ record ParsedSql(List<Stmt> statements, int parameters) {
 }
 
 sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AddPrimaryKey, AddForeignKey,
-        DropConstraint, DropPrimaryKey, DropForeignKey, Insert, Update, Delete, Select,
+        AddUnique, DropConstraint, DropPrimaryKey, DropForeignKey, DropUnique, Insert, Update, Delete, Select,
         SelectProcedure, Grant, Revoke, BeginTx, CommitTx, RollbackTx, CreateGenerator, DropGenerator, SetGenerator,
         CreateProcedure, DropProcedure, ExecuteProcedure, CreateTrigger, DropTrigger, AlterTrigger, CreateView, DropView,
         CreateRole, DropRole, GrantRole, RevokeRole, DropConnection, CreateSchema, DropSchema, SetSchema {
@@ -42,8 +42,11 @@ record DropConnection(Expr attachment) implements Stmt {
 record DropView(boolean ifExists, String name) implements Stmt {
 }
 
-record CreateTable(boolean ifNotExists, String name, List<ColDef> columns, List<String> primaryKey, List<List<String>> uniques,
+record CreateTable(boolean ifNotExists, String name, List<ColDef> columns, List<String> primaryKey, List<UniqueClause> uniques,
                    String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignClause> foreignKeys) implements Stmt {
+}
+
+record UniqueClause(String constraint, List<String> columns) {
 }
 
 record ForeignClause(String constraint, List<String> columns, String index, boolean descending,
@@ -79,6 +82,12 @@ record DropPrimaryKey(String table) implements Stmt {
 }
 
 record DropForeignKey(String table, String name) implements Stmt {
+}
+
+record AddUnique(String table, List<String> columns, String constraint) implements Stmt {
+}
+
+record DropUnique(String table, String name) implements Stmt {
 }
 
 record Insert(String table, List<String> columns, List<List<Expr>> rows) implements Stmt {
