@@ -28,6 +28,8 @@ final class Engine implements AutoCloseable {
     private final Map<String, TableStore> tables = new LinkedHashMap<>();
     private final Map<Long, Session> attachments = new HashMap<>();
     private boolean inTransaction;
+    /** DDL of this command commits on its own and stays out of the open transaction. */
+    private boolean ddlAside;
     private Session transactionSession;
     private long nextTransaction = 1;
     private Long transactionId;
@@ -232,8 +234,10 @@ final class Engine implements AutoCloseable {
         }
         this.params = bound;
         SqlResult last = SqlResult.update(0);
-        for (Stmt statement : parsed.statements()) {
-            last = executeOne(statement);
+        List<Stmt> statements = parsed.statements();
+        boolean pureDdl = inTransaction && !statements.isEmpty() && statements.stream().allMatch(Engine::isDdl);
+        for (int i = 0; i < statements.size(); i++) {
+            last = executeOne(statements.get(i), pureDdl && i == statements.size() - 1);
         }
         return last;
     }
@@ -433,9 +437,27 @@ final class Engine implements AutoCloseable {
     }
 
     private SqlResult executeOne(Stmt statement) {
-        if (inTransaction && isDdl(statement)) {
-            throw new NexException("DDL cannot run inside a transaction. COMMIT or ROLLBACK first.");
+        return executeOne(statement, false);
+    }
+
+    private SqlResult executeOne(Stmt statement, boolean logScript) {
+        boolean aside = inTransaction && isDdl(statement);
+        if (!aside) {
+            return dispatch(statement);
         }
+        rejectDdlConflict(statement);
+        boolean previousAside = ddlAside;
+        ddlAside = true;
+        try {
+            SqlResult result = dispatch(statement);
+            flushAside(logScript);
+            return result;
+        } finally {
+            ddlAside = previousAside;
+        }
+    }
+
+    private SqlResult dispatch(Stmt statement) {
         return switch (statement) {
             case BeginTx ignored -> {
                 if (actor != null && transactions.containsKey(actor)) {
@@ -2214,11 +2236,35 @@ final class Engine implements AutoCloseable {
         pending.clear();
     }
 
-    private void flushMatching(Predicate<TableStore> include) {
-        flushMatching(include, List.of());
+    /**
+     * Writes DDL that does not belong to the open transaction.
+     * Tables the transaction already changed stay dirty until COMMIT or ROLLBACK.
+     */
+    private void flushAside(boolean logScript) {
+        Session owner = transactionSession != null ? transactionSession : actor;
+        OpenTxn txn = owner == null ? null : transactions.get(owner);
+        Predicate<TableStore> include = table -> txn == null || !txn.tables.containsKey(table);
+        List<TransactionLog.Applied> logged = List.of();
+        int script = -1;
+        if (logScript && !pending.isEmpty()) {
+            for (TableStore table : tables.values()) {
+                if (table.isDirty() && include.test(table)) {
+                    script = pending.size() - 1;
+                    logged = List.of(pending.get(script));
+                    break;
+                }
+            }
+        }
+        if (flushMatching(include, logged) && script >= 0) {
+            pending.remove(script);
+        }
     }
 
-    private void flushMatching(Predicate<TableStore> include, List<TransactionLog.Applied> transactions) {
+    private boolean flushMatching(Predicate<TableStore> include) {
+        return flushMatching(include, List.of());
+    }
+
+    private boolean flushMatching(Predicate<TableStore> include, List<TransactionLog.Applied> transactions) {
         List<TableStore> dirty = new ArrayList<>();
         for (TableStore table : tables.values()) {
             if (table.isDirty() && include.test(table)) {
@@ -2227,7 +2273,7 @@ final class Engine implements AutoCloseable {
         }
         if (dirty.isEmpty()) {
             storage.ensureScrubbed();
-            return;
+            return false;
         }
         storage.ensureScrubbed();
         storage.beginCommit();
@@ -2337,7 +2383,7 @@ final class Engine implements AutoCloseable {
                         table.install(plan);
                     }
                 }
-                return;
+                return true;
             }
             for (TableStore table : dirty) {
                 if (oldBase.containsKey(table)) {
@@ -2356,6 +2402,7 @@ final class Engine implements AutoCloseable {
         if (reclaimed) {
             compactFile();
         }
+        return true;
     }
 
     private boolean shouldShrink(TableStore table) {
@@ -2570,6 +2617,78 @@ final class Engine implements AutoCloseable {
             return new ColumnMeta(item.label(), type, namespace, tableName);
         }
         return new ColumnMeta(item.label(), type);
+    }
+
+    private void rejectDdlConflict(Stmt statement) {
+        for (TableStore table : ddlTargets(statement)) {
+            if (!transactionUses(table)) {
+                continue;
+            }
+            String name = Relation.catalogName(table.namespace(), table.schema().name);
+            throw new NexException("DDL cannot change " + name
+                    + " while the transaction is using it. COMMIT or ROLLBACK first.");
+        }
+    }
+
+    private boolean transactionUses(TableStore table) {
+        if (table == null) {
+            return false;
+        }
+        Session owner = transactionSession != null ? transactionSession : actor;
+        if (owner == null) {
+            return false;
+        }
+        OpenTxn txn = transactions.get(owner);
+        return txn != null && txn.tables.containsKey(table);
+    }
+
+    private List<TableStore> ddlTargets(Stmt statement) {
+        return switch (statement) {
+            case DropTable drop -> one(findTable(drop.name()));
+            case CreateIndex index -> one(findTable(index.table()));
+            case DropIndex index -> one(findTable(index.table()));
+            case AddColumn add -> one(findTable(add.table()));
+            case DropColumn drop -> one(findTable(drop.table()));
+            case AddPrimaryKey add -> one(findTable(add.table()));
+            case AddForeignKey add -> one(findTable(add.table()));
+            case DropConstraint drop -> one(findTable(drop.table()));
+            case DropPrimaryKey drop -> one(findTable(drop.table()));
+            case DropForeignKey drop -> one(findTable(drop.table()));
+            case AddUnique add -> one(findTable(add.table()));
+            case DropUnique drop -> one(findTable(drop.table()));
+            case CreateTrigger trigger -> one(findTable(trigger.table()));
+            case DropTrigger trigger -> one(triggerTable(trigger.name()));
+            case AlterTrigger trigger -> one(triggerTable(trigger.name()));
+            case DropSchema drop -> tablesInSchema(drop.name());
+            default -> List.of();
+        };
+    }
+
+    private static List<TableStore> one(TableStore table) {
+        return table == null ? List.of() : List.of(table);
+    }
+
+    private TableStore triggerTable(String name) {
+        StoredRow row = findRow(SystemTables.TRIGGERS, "NEX$TRIGGER_NAME", name);
+        if (row == null) {
+            return null;
+        }
+        String relation = text(require(SystemTables.TRIGGERS), row, "NEX$RELATION_NAME");
+        return relation == null ? null : findTable(relation);
+    }
+
+    private List<TableStore> tablesInSchema(String name) {
+        if (!schemaExists(name)) {
+            return List.of();
+        }
+        String schema = canonicalSchema(name);
+        List<TableStore> found = new ArrayList<>();
+        for (TableStore table : tables.values()) {
+            if (Names.same(table.namespace(), schema) && !SystemTables.isSystem(table.schema().name)) {
+                found.add(table);
+            }
+        }
+        return found;
     }
 
     private static boolean isDdl(Stmt statement) {
@@ -4905,6 +5024,9 @@ final class Engine implements AutoCloseable {
     }
 
     private void track(TableStore table) {
+        if (ddlAside) {
+            return;
+        }
         Session owner = transactionSession != null ? transactionSession : actor;
         if (owner == null) {
             return;

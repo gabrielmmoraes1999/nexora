@@ -270,14 +270,53 @@ class DatabaseTest {
     void ddlForaDaTransacaoExplicita() {
         try (Database db = open()) {
             db.execute("BEGIN");
-            assertThrows(NexException.class, () -> db.execute("CREATE TABLE t (id INTEGER)"));
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");
             assertTrue(db.transactionActive());
             db.execute("ROLLBACK");
+            assertTrue(db.tables().stream().anyMatch(name -> name.equalsIgnoreCase("t")));
+            db.execute("DROP TABLE t");
             db.execute("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)");
             db.execute("CREATE TABLE IF NOT EXISTS t (id INTEGER)");
             db.execute("DROP TABLE IF EXISTS ausente");
             db.execute("DROP TABLE t");
             assertTrue(db.tables().isEmpty());
+        }
+    }
+
+    @Test
+    void ddlDeOutraTabelaDuranteATransacao() {
+        try (Database db = open()) {
+            db.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO pedido VALUES (1, 'ana')");
+            db.execute("BEGIN");
+            db.execute("INSERT INTO pedido VALUES (2, 'bia')");
+            db.execute("CREATE TABLE nota (id INTEGER PRIMARY KEY, texto VARCHAR(20))");
+            NexException conflito = assertThrows(NexException.class,
+                    () -> db.execute("CREATE INDEX ix_pedido ON pedido (nome)"));
+            assertTrue(conflito.getMessage().contains("pedido"));
+            assertTrue(conflito.getMessage().contains("COMMIT or ROLLBACK"));
+            assertTrue(db.transactionActive());
+            db.execute("CREATE UNIQUE INDEX ix_nota ON nota (id)");
+            db.execute("ROLLBACK");
+            assertFalse(db.transactionActive());
+            assertEquals(1, db.query("SELECT id FROM pedido").size());
+            assertEquals("ana", db.query("SELECT nome FROM pedido").rows().get(0).getString("nome"));
+            assertEquals(0, db.query("SELECT id FROM nota").size());
+            db.execute("INSERT INTO nota VALUES (1, 'ok')");
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO nota VALUES (1, 'dup')"));
+
+            db.execute("BEGIN");
+            db.execute("INSERT INTO pedido VALUES (2, 'bia')");
+            db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY)");
+            db.execute("COMMIT");
+            assertEquals(2, db.query("SELECT id FROM pedido").size());
+            assertEquals(0, db.query("SELECT id FROM item").size());
+        }
+        try (Database db = open()) {
+            assertEquals(2, db.query("SELECT id FROM pedido").size());
+            assertEquals(1, db.query("SELECT id FROM nota").size());
+            assertEquals(0, db.query("SELECT id FROM item").size());
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO nota VALUES (1, 'dup')"));
         }
     }
 
@@ -401,6 +440,7 @@ class DatabaseTest {
 
             db.execute("CREATE TABLE aberto (id INTEGER)");
             db.execute("BEGIN");
+            db.execute("INSERT INTO aberto VALUES (1)");
             NexException transacao = assertThrows(NexException.class,
                     () -> db.execute("ALTER TABLE aberto ADD PRIMARY KEY (id)"));
             assertTrue(transacao.getMessage().contains("transaction"));
@@ -630,6 +670,7 @@ class DatabaseTest {
             assertThrows(NexException.class, () -> db.execute("ALTER TABLE pedido DROP PRIMARY KEY"));
 
             db.execute("BEGIN");
+            db.execute("UPDATE item SET extra = 10 WHERE id = 1");
             NexException transacao = assertThrows(NexException.class,
                     () -> db.execute("ALTER TABLE item DROP CONSTRAINT PK_item"));
             assertTrue(transacao.getMessage().contains("transaction"));
@@ -861,6 +902,7 @@ class DatabaseTest {
             db.execute("ALTER TABLE pessoa ADD COLUMN foto BLOB");
             assertThrows(NexException.class, () -> db.execute("CREATE INDEX idx_blob ON pessoa (foto)"));
             db.execute("BEGIN");
+            db.execute("UPDATE pessoa SET nome = 'Ana' WHERE id = 1");
             assertThrows(NexException.class, () -> db.execute("CREATE INDEX idx_id ON pessoa (id)"));
             db.execute("ROLLBACK");
         }
