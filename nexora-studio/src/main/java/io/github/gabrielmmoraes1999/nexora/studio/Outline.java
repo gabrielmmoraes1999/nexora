@@ -21,7 +21,7 @@ public record Outline(
         List<RelationName> tables,
         List<RelationName> systemTables,
         List<RelationName> views,
-        List<String> procedures,
+        List<RelationName> procedures,
         List<TriggerRef> triggers,
         List<GeneratorRef> generators,
         List<String> schemas,
@@ -132,8 +132,17 @@ public record Outline(
         }
         schemas.sort(Outline::schemaOrder);
 
-        List<String> procedures = names(tryQuery(connection, warnings, "procedures",
-                "SELECT NEX$PROCEDURE_NAME FROM NEX$PROCEDURES"), "NEX$PROCEDURE_NAME");
+        List<RelationName> procedures = new ArrayList<>();
+        for (Row row : tryQuery(connection, warnings, "procedures",
+                "SELECT NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME FROM NEX$PROCEDURES")) {
+            String schema = row.text("NEX$SCHEMA_NAME");
+            String name = row.text("NEX$PROCEDURE_NAME");
+            if (schema == null || schema.isBlank() || name == null || name.isBlank()) {
+                continue;
+            }
+            procedures.add(new RelationName(schema, name, "PROCEDURE"));
+        }
+        procedures.sort(order);
         List<TriggerRef> triggers = new ArrayList<>();
         for (Row row : tryQuery(connection, warnings, "triggers", """
                 SELECT NEX$TRIGGER_NAME, NEX$RELATION_NAME, NEX$TRIGGER_TYPE, NEX$TRIGGER_INACTIVE
@@ -395,25 +404,29 @@ public record Outline(
         return list;
     }
 
-    public static Routine procedure(Connection connection, String name) throws SQLException {
+    public static Routine procedure(Connection connection, String schema, String name) throws SQLException {
         Routine found = null;
-        for (Row row : query(connection, "SELECT NEX$PROCEDURE_NAME, NEX$PROCEDURE_SOURCE, NEX$OWNER_NAME FROM NEX$PROCEDURES")) {
-            if (SqlNames.same(name, row.text("NEX$PROCEDURE_NAME"))) {
-                found = new Routine(row.text("NEX$PROCEDURE_NAME"), row.text("NEX$OWNER_NAME"),
-                        row.text("NEX$PROCEDURE_SOURCE"), List.of());
-                break;
+        for (Row row : query(connection, """
+                SELECT NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME, NEX$PROCEDURE_SOURCE, NEX$OWNER_NAME
+                FROM NEX$PROCEDURES
+                """)) {
+            if (!SqlNames.same(schema, row.text("NEX$SCHEMA_NAME")) || !SqlNames.same(name, row.text("NEX$PROCEDURE_NAME"))) {
+                continue;
             }
+            found = new Routine(row.text("NEX$PROCEDURE_NAME"), row.text("NEX$OWNER_NAME"),
+                    row.text("NEX$PROCEDURE_SOURCE"), List.of());
+            break;
         }
         if (found == null) {
             throw new SQLException("procedure não encontrada: " + name);
         }
         List<Parameter> parameters = new ArrayList<>();
         for (Row row : query(connection, """
-                SELECT NEX$PROCEDURE_NAME, NEX$PARAMETER_NAME, NEX$PARAMETER_NUMBER, NEX$PARAMETER_TYPE,
+                SELECT NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME, NEX$PARAMETER_NAME, NEX$PARAMETER_NUMBER, NEX$PARAMETER_TYPE,
                        NEX$FIELD_TYPE, NEX$FIELD_LENGTH, NEX$FIELD_SCALE
                 FROM NEX$PROCEDURE_PARAMETERS
                 """)) {
-            if (!SqlNames.same(name, row.text("NEX$PROCEDURE_NAME"))) {
+            if (!SqlNames.same(schema, row.text("NEX$SCHEMA_NAME")) || !SqlNames.same(name, row.text("NEX$PROCEDURE_NAME"))) {
                 continue;
             }
             parameters.add(new Parameter(

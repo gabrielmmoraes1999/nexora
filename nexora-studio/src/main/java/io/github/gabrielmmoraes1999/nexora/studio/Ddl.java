@@ -326,13 +326,13 @@ public final class Ddl {
         return sql.toString();
     }
 
-    public static String procedure(String name, List<Field> parameters, String body) {
+    public static String procedure(String schema, String name, List<Field> parameters, String body) {
         List<Field> inputs = new ArrayList<>();
         List<Field> outputs = new ArrayList<>();
         for (Field field : parameters) {
             (field.input ? inputs : outputs).add(field);
         }
-        StringBuilder sql = new StringBuilder("CREATE PROCEDURE ").append(SqlNames.quote(name));
+        StringBuilder sql = new StringBuilder("CREATE PROCEDURE ").append(SqlNames.qualify(schema, name));
         if (!inputs.isEmpty()) {
             sql.append(" (").append(parameters(inputs)).append(')');
         }

@@ -123,14 +123,16 @@ final class SystemTables {
 
     private static Schema procedures() {
         return new Schema(PROCEDURES, List.of(
+                text("NEX$SCHEMA_NAME", 128, true),
                 text("NEX$PROCEDURE_NAME", 63, true),
                 text("NEX$PROCEDURE_SOURCE", Format.MAX_CHAR, true),
                 text("NEX$OWNER_NAME", 63, true)
-        ), new int[]{0}, List.of(), List.of());
+        ), new int[]{0, 1}, List.of(), List.of());
     }
 
     private static Schema procedureParameters() {
         return new Schema(PROCEDURE_PARAMETERS, List.of(
+                text("NEX$SCHEMA_NAME", 128, true),
                 text("NEX$PROCEDURE_NAME", 63, true),
                 text("NEX$PARAMETER_NAME", 63, true),
                 column("NEX$PARAMETER_NUMBER", DataType.INTEGER, 0, true, false, null),
@@ -138,7 +140,7 @@ final class SystemTables {
                 text("NEX$FIELD_TYPE", 32, true),
                 column("NEX$FIELD_LENGTH", DataType.INTEGER, 0, true, false, null),
                 column("NEX$FIELD_SCALE", DataType.INTEGER, 0, true, false, null)
-        ), new int[]{0, 3, 2}, List.of(), List.of());
+        ), new int[]{0, 1, 4, 3}, List.of(), List.of());
     }
 
     private static Schema triggers() {

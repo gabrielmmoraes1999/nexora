@@ -250,7 +250,7 @@ class NexDriverTest {
             DatabaseMetaData meta = connection.getMetaData();
             try (ResultSet procedures = meta.getProcedures(null, "public", "%")) {
                 assertTrue(procedures.next());
-                assertNull(procedures.getString("PROCEDURE_SCHEM"));
+                assertEquals("public", procedures.getString("PROCEDURE_SCHEM"));
                 assertEquals("nada", procedures.getString("PROCEDURE_NAME"));
                 assertEquals(DatabaseMetaData.procedureNoResult, procedures.getShort("PROCEDURE_TYPE"));
                 assertTrue(procedures.next());
@@ -260,10 +260,25 @@ class NexDriverTest {
             }
             assertFalse(meta.getProcedures(null, "outro", "%").next());
             connection.createStatement().execute("CREATE SCHEMA vendas");
-            assertTrue(meta.getProcedures(null, "vendas", "serie").next());
+            assertFalse(meta.getProcedures(null, "vendas", "serie").next());
+            connection.createStatement().execute("""
+                    CREATE PROCEDURE vendas.serie (ate INTEGER)
+                    RETURNS (n INTEGER)
+                    AS
+                    BEGIN
+                      n = ate;
+                      SUSPEND;
+                    END
+                    """);
+            try (ResultSet vendas = meta.getProcedures(null, "vendas", "serie")) {
+                assertTrue(vendas.next());
+                assertEquals("vendas", vendas.getString("PROCEDURE_SCHEM"));
+                assertEquals("serie", vendas.getString("PROCEDURE_NAME"));
+                assertFalse(vendas.next());
+            }
             try (ResultSet columns = meta.getProcedureColumns(null, "PUBLIC", "serie", "%")) {
                 assertTrue(columns.next());
-                assertNull(columns.getString("PROCEDURE_SCHEM"));
+                assertEquals("public", columns.getString("PROCEDURE_SCHEM"));
                 assertEquals("ate", columns.getString("COLUMN_NAME"));
                 assertEquals(DatabaseMetaData.procedureColumnIn, columns.getShort("COLUMN_TYPE"));
                 assertEquals(Types.INTEGER, columns.getInt("DATA_TYPE"));

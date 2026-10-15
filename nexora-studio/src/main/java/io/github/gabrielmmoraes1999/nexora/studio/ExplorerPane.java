@@ -228,7 +228,6 @@ final class ExplorerPane extends JPanel {
             DefaultMutableTreeNode node = new DefaultMutableTreeNode(database);
             if (outline != null) {
                 addSchemas(node, entry.id(), outline, query);
-                addNames(node, entry.id(), Node.PROCEDURES, "Procedures", outline.procedures(), Node.Kind.PROCEDURE, query);
                 addGenerators(node, entry.id(), outline, query);
                 addNames(node, entry.id(), Node.ROLES, "Papéis", outline.roles(), Node.Kind.ROLE, query);
                 addNames(node, entry.id(), Node.USERS, "Usuários", outline.users(), Node.Kind.USER, query);
@@ -259,6 +258,8 @@ final class ExplorerPane extends JPanel {
                     relationsIn(outline.tables(), schema), Node.Kind.TABLE, query);
             addGroup(schemaNode, databaseId, schema, Node.VIEWS, "Visões",
                     relationsIn(outline.views(), schema), Node.Kind.VIEW, query);
+            addGroup(schemaNode, databaseId, schema, Node.PROCEDURES, "Procedures",
+                    relationsIn(outline.procedures(), schema), Node.Kind.PROCEDURE, query);
             addTriggers(schemaNode, databaseId, schema, outline, query);
             if (query.isBlank() || schema.toLowerCase(java.util.Locale.ROOT).contains(query) || schemaNode.getChildCount() > 0) {
                 group.add(schemaNode);

@@ -317,7 +317,7 @@ DROP SCHEMA vendas RESTRICT;
 DROP SCHEMA IF EXISTS vendas CASCADE;
 ```
 
-`CREATE SCHEMA IF NOT EXISTS` não falha se o esquema já existe. `DROP SCHEMA` sem `CASCADE` exige o esquema vazio. `CASCADE` remove as tabelas e as views desse esquema, e as views de fora que dependem delas. Não remove o esquema da sessão atual: faça `SET SCHEMA public` antes. `GRANT` e `REVOKE` aceitam `esquema.tabela`. Tabelas `NEX$` ficam em `public` e continuam visíveis sem qualificar, em qualquer esquema da sessão.
+`CREATE SCHEMA IF NOT EXISTS` não falha se o esquema já existe. `DROP SCHEMA` sem `CASCADE` exige o esquema vazio. `CASCADE` remove as tabelas, as views e as procedures desse esquema, e as views de fora que dependem delas. Não remove o esquema da sessão atual: faça `SET SCHEMA public` antes. `GRANT` e `REVOKE` aceitam `esquema.tabela`. Tabelas `NEX$` ficam em `public` e continuam visíveis sem qualificar, em qualquer esquema da sessão.
 
 ### Índices
 
@@ -523,7 +523,7 @@ try (ResultSet indexes = meta.getIndexInfo(null, null, "cliente", false, false))
 }
 ```
 
-`getIndexInfo(..., true, ...)` devolve só índices únicos, entre eles `PRIMARY` e cada `UNIQUE`. `getTypeInfo()` lista os tipos da tabela acima. `TABLE_SCHEM` traz o esquema de cada tabela. `getSchemas()` lista os esquemas, começando por `public`. Um esquema que não existe, como `"outro"`, deixa o resultado vazio.
+`getIndexInfo(..., true, ...)` devolve só índices únicos, entre eles `PRIMARY` e cada `UNIQUE`. `getTypeInfo()` lista os tipos da tabela acima. `TABLE_SCHEM` traz o esquema de cada tabela. `PROCEDURE_SCHEM` traz o esquema de cada procedure. `getSchemas()` lista os esquemas, começando por `public`. Um esquema que não existe, como `"outro"`, deixa o resultado vazio.
 
 ## Erros
 
@@ -544,8 +544,8 @@ Treze tabelas nascem com o arquivo. Um arquivo antigo ganha, ao abrir, as que ai
 | `NEX$PRIVILEGES`           | o que cada usuário pode fazer em cada tabela                        | `GRANT` e `REVOKE`              |
 | `NEX$CONNECTIONS`          | conexões ativas: usuário, entrada, estado e origem remota           | o próprio banco                 |
 | `NEX$GENERATORS`           | geradores e sequences: valor atual, início, passo e dono            | `CREATE` / `SET GENERATOR`      |
-| `NEX$PROCEDURES`           | nome, código e dono da procedure                                    | `CREATE PROCEDURE`              |
-| `NEX$PROCEDURE_PARAMETERS` | argumentos e retornos (`NEX$PARAMETER_TYPE` 0 = entrada, 1 = saída) | `CREATE PROCEDURE`              |
+| `NEX$PROCEDURES`           | esquema, nome, código e dono da procedure                           | `CREATE PROCEDURE`              |
+| `NEX$PROCEDURE_PARAMETERS` | esquema, argumentos e retornos (`NEX$PARAMETER_TYPE` 0 ou 1)       | `CREATE PROCEDURE`              |
 | `NEX$TRIGGERS`             | nome, tabela, posição, fase, código, inativo e dono                 | `CREATE TRIGGER`                |
 | `NEX$VIEWS`                | nome, `SELECT`, relação de base, colunas e dono                     | `CREATE VIEW`                   |
 | `NEX$ROLES`                | nome e dono do papel                                                | `CREATE ROLE`                   |
@@ -609,7 +609,9 @@ ALTER SEQUENCE seq_item RESTART WITH 20;
 DROP GENERATOR gen_item;
 ```
 
-Procedure guarda o código e os parâmetros. No corpo, o ponto e vírgula faz parte da rotina: não é preciso `SET TERM`. `EXECUTE PROCEDURE` devolve uma linha com os retornos, parando no primeiro `SUSPEND`. `SELECT` em `nome(argumentos)` devolve uma linha por `SUSPEND`. Sem `SUSPEND`, o `SELECT` vem vazio e o `EXECUTE PROCEDURE` ainda devolve os valores finais. Dentro do SQL da rotina, variável usa `:nome`. Em `IF`, `WHILE` e atribuição, o nome sozinho já é a variável. `NEW` e `OLD` existem no trigger. `OLD` só é lido. Atribuição em `BEFORE INSERT` ou `BEFORE UPDATE` entra na linha; em `AFTER`, não muda o que já foi gravado. `DELETE` só tem `OLD`.
+Procedure guarda o código e os parâmetros, no esquema da sessão ou no esquema escrito no nome. `CREATE PROCEDURE vendas.serie` fica em `vendas`; sem o prefixo, fica no esquema atual. O mesmo nome pode existir em esquemas diferentes. `EXECUTE PROCEDURE serie` e `SELECT ... FROM serie(...)` usam o esquema da sessão quando o nome não traz esquema. No corpo, um nome sem esquema usa o esquema da procedure. `DROP SCHEMA ... CASCADE` apaga as procedures daquele esquema. `NEX$SCHEMA_NAME` guarda o esquema, inclusive `public`.
+
+No corpo, o ponto e vírgula faz parte da rotina: não é preciso `SET TERM`. `EXECUTE PROCEDURE` devolve uma linha com os retornos, parando no primeiro `SUSPEND`. `SELECT` em `nome(argumentos)` devolve uma linha por `SUSPEND`. Sem `SUSPEND`, o `SELECT` vem vazio e o `EXECUTE PROCEDURE` ainda devolve os valores finais. Dentro do SQL da rotina, variável usa `:nome`. Em `IF`, `WHILE` e atribuição, o nome sozinho já é a variável. `NEW` e `OLD` existem no trigger. `OLD` só é lido. Atribuição em `BEFORE INSERT` ou `BEFORE UPDATE` entra na linha; em `AFTER`, não muda o que já foi gravado. `DELETE` só tem `OLD`.
 
 ```sql
 CREATE PROCEDURE serie (ate INTEGER)

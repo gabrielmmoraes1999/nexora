@@ -461,7 +461,7 @@ final class SqlParser {
             return new DropGenerator(ifExists(), expectIdent());
         }
         if (consumeKeyword("PROCEDURE")) {
-            return new DropProcedure(ifExists(), expectIdent());
+            return new DropProcedure(ifExists(), expectRelation());
         }
         if (consumeKeyword("TRIGGER")) {
             return new DropTrigger(ifExists(), expectIdent());
@@ -590,7 +590,7 @@ final class SqlParser {
     }
 
     private Stmt createProcedure() {
-        String name = expectIdent();
+        String name = expectRelation();
         List<ParamDef> inputs = parameterList(false);
         List<ParamDef> outputs = List.of();
         if (consumeKeyword("RETURNS")) {
@@ -677,7 +677,7 @@ final class SqlParser {
 
     private Stmt executeProcedure(boolean insideRoutine) {
         expectKeyword("PROCEDURE");
-        String name = expectIdent();
+        String name = expectRelation();
         List<Expr> arguments = new ArrayList<>();
         if (consumeSymbol("(")) {
             if (!peekSymbol(")")) {
@@ -1094,9 +1094,6 @@ final class SqlParser {
             table = first;
         }
         if (consumeSymbol("(")) {
-            if (table.indexOf('.') >= 0) {
-                throw error("procedure não aceita esquema");
-            }
             List<Expr> arguments = new ArrayList<>();
             if (!peekSymbol(")")) {
                 do {

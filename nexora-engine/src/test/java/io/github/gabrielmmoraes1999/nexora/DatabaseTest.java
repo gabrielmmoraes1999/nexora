@@ -1314,6 +1314,59 @@ class DatabaseTest {
     }
 
     @Test
+    void procedureNoEsquema() {
+        try (Database db = open()) {
+            db.execute("CREATE SCHEMA vendas");
+            db.execute("CREATE TABLE vendas.item (id INTEGER PRIMARY KEY)");
+            db.execute("INSERT INTO vendas.item (id) VALUES (7)");
+            db.execute("""
+                    CREATE PROCEDURE eco
+                    RETURNS (n INTEGER)
+                    AS
+                    BEGIN
+                      n = 1;
+                      SUSPEND;
+                    END
+                    """);
+            db.execute("""
+                    CREATE PROCEDURE vendas.eco
+                    RETURNS (n INTEGER)
+                    AS
+                    BEGIN
+                      n = 2;
+                      SUSPEND;
+                    END
+                    """);
+            db.execute("""
+                    CREATE PROCEDURE vendas.ler
+                    RETURNS (id INTEGER)
+                    AS
+                    BEGIN
+                      SELECT id INTO id FROM item;
+                      SUSPEND;
+                    END
+                    """);
+            assertEquals(1L, db.query("SELECT n FROM eco()").rows().get(0).getLong("n"));
+            assertEquals(2L, db.query("SELECT n FROM vendas.eco()").rows().get(0).getLong("n"));
+            assertEquals(7L, db.query("SELECT id FROM vendas.ler()").rows().get(0).getLong("id"));
+            assertEquals(2L, db.query("EXECUTE PROCEDURE vendas.eco").rows().get(0).getLong("n"));
+            db.execute("SET SCHEMA vendas");
+            assertEquals(2L, db.query("SELECT n FROM eco()").rows().get(0).getLong("n"));
+            assertEquals(1L, db.query("SELECT n FROM public.eco()").rows().get(0).getLong("n"));
+            assertThrows(NexException.class, () -> db.execute("CREATE PROCEDURE eco RETURNS (n INTEGER) AS BEGIN n = 3; SUSPEND; END"));
+            db.execute("SET SCHEMA public");
+            assertThrows(NexException.class, () -> db.execute("DROP SCHEMA vendas"));
+            db.execute("CREATE SCHEMA outro");
+            db.execute("CREATE PROCEDURE outro.nada AS BEGIN EXIT; END");
+            assertThrows(NexException.class, () -> db.execute("DROP SCHEMA outro"));
+            db.execute("DROP SCHEMA outro CASCADE");
+            db.execute("DROP SCHEMA vendas CASCADE");
+            assertThrows(NexException.class, () -> db.query("SELECT n FROM vendas.eco()"));
+            assertEquals(1L, db.query("SELECT n FROM eco()").rows().get(0).getLong("n"));
+        }
+    }
+
+    @Test
     void exclusaoApagaOConteudoDoArquivo() throws Exception {
         String segredo = "SIGILO-9f3c-VALOR-EXCLUSIVO";
         String mantido = "MANTIDO-9f3c-VISIVEL";

@@ -636,24 +636,27 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
         }
         Set<String> returns = new HashSet<>();
         for (Row row : catalogQuery("""
-                SELECT NEX$PROCEDURE_NAME, NEX$PARAMETER_TYPE
+                SELECT NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME, NEX$PARAMETER_TYPE
                 FROM NEX$PROCEDURE_PARAMETERS
                 """).rows()) {
             if (integer(row, "NEX$PARAMETER_TYPE") == 1) {
-                returns.add(row.getString("NEX$PROCEDURE_NAME").toLowerCase(Locale.ROOT));
+                returns.add(procedureKey(row.getString("NEX$SCHEMA_NAME"), row.getString("NEX$PROCEDURE_NAME")));
             }
         }
         List<Object[]> rows = new ArrayList<>();
-        for (Row row : catalogQuery("SELECT NEX$PROCEDURE_NAME FROM NEX$PROCEDURES").rows()) {
+        for (Row row : catalogQuery("SELECT NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME FROM NEX$PROCEDURES").rows()) {
+            String schema = row.getString("NEX$SCHEMA_NAME");
             String name = row.getString("NEX$PROCEDURE_NAME");
-            if (!Jdbc.nameMatches(procedureNamePattern, name)) {
+            if (!matchesSchema(schemaPattern, schema) || !Jdbc.nameMatches(procedureNamePattern, name)) {
                 continue;
             }
-            short type = returns.contains(name.toLowerCase(Locale.ROOT))
+            short type = returns.contains(procedureKey(schema, name))
                     ? (short) procedureReturnsResult : (short) procedureNoResult;
-            rows.add(new Object[]{null, null, name, null, null, null, null, type, name});
+            rows.add(new Object[]{null, schema, name, null, null, null, null, type, name});
         }
-        rows.sort(Comparator.comparing(row -> (String) row[2], String.CASE_INSENSITIVE_ORDER));
+        rows.sort(Comparator
+                .comparing((Object[] row) -> (String) row[1], String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(row -> (String) row[2], String.CASE_INSENSITIVE_ORDER));
         return grid(columns, rows);
     }
 
@@ -686,11 +689,12 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
         }
         List<ProcedureParameter> parameters = new ArrayList<>();
         for (Row row : catalogQuery("""
-                SELECT NEX$PROCEDURE_NAME, NEX$PARAMETER_NAME, NEX$PARAMETER_NUMBER, NEX$PARAMETER_TYPE,
+                SELECT NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME, NEX$PARAMETER_NAME, NEX$PARAMETER_NUMBER, NEX$PARAMETER_TYPE,
                        NEX$FIELD_TYPE, NEX$FIELD_LENGTH, NEX$FIELD_SCALE
                 FROM NEX$PROCEDURE_PARAMETERS
                 """).rows()) {
             parameters.add(new ProcedureParameter(
+                    row.getString("NEX$SCHEMA_NAME"),
                     row.getString("NEX$PROCEDURE_NAME"),
                     row.getString("NEX$PARAMETER_NAME"),
                     integer(row, "NEX$PARAMETER_TYPE"),
@@ -700,20 +704,25 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
                     integer(row, "NEX$FIELD_SCALE")));
         }
         parameters.sort(Comparator
-                .comparing(ProcedureParameter::procedure, String.CASE_INSENSITIVE_ORDER)
+                .comparing(ProcedureParameter::schema, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(ProcedureParameter::procedure, String.CASE_INSENSITIVE_ORDER)
                 .thenComparingInt(ProcedureParameter::direction)
                 .thenComparingInt(ProcedureParameter::number));
         List<Object[]> rows = new ArrayList<>();
+        String currentSchema = null;
         String current = null;
         int ordinal = 0;
         for (ProcedureParameter parameter : parameters) {
-            if (current == null || !current.equalsIgnoreCase(parameter.procedure())) {
+            if (current == null || !current.equalsIgnoreCase(parameter.procedure())
+                    || currentSchema == null || !currentSchema.equalsIgnoreCase(parameter.schema())) {
+                currentSchema = parameter.schema();
                 current = parameter.procedure();
                 ordinal = 1;
             } else {
                 ordinal++;
             }
-            if (!Jdbc.nameMatches(procedureNamePattern, parameter.procedure())
+            if (!matchesSchema(schemaPattern, parameter.schema())
+                    || !Jdbc.nameMatches(procedureNamePattern, parameter.procedure())
                     || !Jdbc.nameMatches(columnNamePattern, parameter.name())) {
                 continue;
             }
@@ -723,7 +732,7 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
             short columnType = parameter.direction() == 0 ? (short) procedureColumnIn : (short) procedureColumnOut;
             rows.add(new Object[]{
                     null,
-                    null,
+                    parameter.schema(),
                     parameter.procedure(),
                     parameter.name(),
                     columnType,
@@ -1629,7 +1638,13 @@ final class NexDatabaseMetaData implements DatabaseMetaData {
         });
     }
 
+    private static String procedureKey(String schema, String name) {
+        String schemaName = schema == null ? "" : schema.toLowerCase(Locale.ROOT);
+        String procedureName = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        return schemaName + "\0" + procedureName;
+    }
+
     private record ProcedureParameter(
-            String procedure, String name, int direction, int number, DataType type, int length, int scale) {
+            String schema, String procedure, String name, int direction, int number, DataType type, int length, int scale) {
     }
 }

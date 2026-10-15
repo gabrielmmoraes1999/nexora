@@ -91,7 +91,8 @@ class StudioTest {
             assertTrue(outline.tables().stream().anyMatch(table -> table.name().equalsIgnoreCase("pedido")
                     && table.schema().equalsIgnoreCase("vendas")));
             assertTrue(outline.views().stream().anyMatch(view -> view.name().equalsIgnoreCase("nomes")));
-            assertTrue(outline.procedures().stream().anyMatch(name -> name.equalsIgnoreCase("eco")));
+            assertTrue(outline.procedures().stream().anyMatch(procedure -> procedure.name().equalsIgnoreCase("eco")
+                    && procedure.schema().equalsIgnoreCase("public")));
             assertTrue(outline.triggers().stream().anyMatch(trigger -> trigger.name().equalsIgnoreCase("cliente_bi")));
             assertTrue(outline.generators().stream().anyMatch(generator -> generator.name().equalsIgnoreCase("gen_item")));
             assertTrue(outline.schemas().get(0).equalsIgnoreCase("public"));
@@ -103,8 +104,8 @@ class StudioTest {
             assertTrue(ddl.contains("PRIMARY KEY"));
             assertTrue(ddl.contains("idx_nome"));
             assertTrue(ddl.contains("ativo") && ddl.toUpperCase().contains("TRUE"));
-            Outline.Routine routine = Outline.procedure(connection, "eco");
-            String procedure = Ddl.procedure(routine.name(), routine.parameters(), routine.source());
+            Outline.Routine routine = Outline.procedure(connection, "public", "eco");
+            String procedure = Ddl.procedure("public", routine.name(), routine.parameters(), routine.source());
             assertTrue(procedure.contains("RETURNS"));
             assertTrue(procedure.contains("SUSPEND"));
             assertNull(ValuesText.parse("", "INTEGER", true));

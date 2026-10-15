@@ -2994,8 +2994,20 @@ final class Engine implements AutoCloseable {
                 break;
             }
         }
+        List<StoredProcedure> proceduresInSchema = new ArrayList<>();
+        for (StoredProcedure procedure : allProcedures()) {
+            if (Names.same(procedure.schema(), schema)) {
+                proceduresInSchema.add(procedure);
+            }
+        }
+        if (!proceduresInSchema.isEmpty()) {
+            occupied = true;
+        }
         if (occupied && !statement.cascade()) {
             throw new NexException("esquema não está vazio: " + schema);
+        }
+        for (StoredProcedure procedure : proceduresInSchema) {
+            deleteProcedure(procedure.schema(), procedure.name());
         }
         boolean changed = true;
         while (changed) {
@@ -3598,14 +3610,16 @@ final class Engine implements AutoCloseable {
     }
 
     private void createProcedure(CreateProcedure statement) {
-        if (SystemTables.isSystem(statement.name())) {
-            throw new NexException("nome reservado: " + statement.name());
+        Relation rel = relation(statement.name());
+        if (SystemTables.isSystem(rel.name())) {
+            throw new NexException("nome reservado: " + rel.name());
         }
+        Names.checkName(rel.name(), "procedure");
         if (statement.source().length() > Format.MAX_CHAR) {
             throw new NexException("código da procedure passa de " + Format.MAX_CHAR + " caracteres");
         }
-        if (findRow(SystemTables.PROCEDURES, "NEX$PROCEDURE_NAME", statement.name()) != null) {
-            throw new NexException("procedure já existe: " + statement.name());
+        if (findProcedure(statement.name()) != null) {
+            throw new NexException("procedure já existe: " + shown(statement.name()));
         }
         Set<String> names = new HashSet<>();
         rejectDuplicate(names, statement.inputs());
@@ -3619,40 +3633,41 @@ final class Engine implements AutoCloseable {
         }
         String owner = ownerName();
         try {
-            systemExecute("INSERT INTO NEX$PROCEDURES (NEX$PROCEDURE_NAME, NEX$PROCEDURE_SOURCE, NEX$OWNER_NAME) VALUES (?, ?, ?)",
-                    statement.name(), statement.source(), owner);
-            insertParameters(statement.name(), statement.inputs(), 0);
-            insertParameters(statement.name(), statement.outputs(), 1);
+            systemExecute("""
+                    INSERT INTO NEX$PROCEDURES (
+                        NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME, NEX$PROCEDURE_SOURCE, NEX$OWNER_NAME
+                    ) VALUES (?, ?, ?, ?)
+                    """, rel.schema(), rel.name(), statement.source(), owner);
+            insertParameters(rel.schema(), rel.name(), statement.inputs(), 0);
+            insertParameters(rel.schema(), rel.name(), statement.outputs(), 1);
         } catch (RuntimeException exception) {
-            deleteCatalog(SystemTables.PROCEDURE_PARAMETERS, "NEX$PROCEDURE_NAME", statement.name());
-            deleteCatalog(SystemTables.PROCEDURES, "NEX$PROCEDURE_NAME", statement.name());
+            deleteProcedure(rel.schema(), rel.name());
             throw exception;
         }
     }
 
-    private void insertParameters(String procedure, List<ParamDef> parameters, int direction) {
+    private void insertParameters(String schema, String procedure, List<ParamDef> parameters, int direction) {
         for (int i = 0; i < parameters.size(); i++) {
             ParamDef parameter = parameters.get(i);
             systemExecute("""
                     INSERT INTO NEX$PROCEDURE_PARAMETERS (
-                        NEX$PROCEDURE_NAME, NEX$PARAMETER_NAME, NEX$PARAMETER_NUMBER, NEX$PARAMETER_TYPE,
+                        NEX$SCHEMA_NAME, NEX$PROCEDURE_NAME, NEX$PARAMETER_NAME, NEX$PARAMETER_NUMBER, NEX$PARAMETER_TYPE,
                         NEX$FIELD_TYPE, NEX$FIELD_LENGTH, NEX$FIELD_SCALE
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, procedure, parameter.name(), i, direction, parameter.type().name(), parameter.length(), parameter.scale());
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, schema, procedure, parameter.name(), i, direction, parameter.type().name(), parameter.length(), parameter.scale());
         }
     }
 
     private void dropProcedure(DropProcedure statement) {
-        StoredRow row = findRow(SystemTables.PROCEDURES, "NEX$PROCEDURE_NAME", statement.name());
-        if (row == null) {
+        StoredProcedure procedure = findProcedure(statement.name());
+        if (procedure == null) {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("procedure não encontrada: " + statement.name());
+            throw new NexException("procedure não encontrada: " + shown(statement.name()));
         }
-        guardRoutine("a procedure", statement.name(), text(require(SystemTables.PROCEDURES), row, "NEX$OWNER_NAME"), null);
-        deleteCatalog(SystemTables.PROCEDURE_PARAMETERS, "NEX$PROCEDURE_NAME", statement.name());
-        deleteCatalog(SystemTables.PROCEDURES, "NEX$PROCEDURE_NAME", statement.name());
+        guardRoutine("a procedure", procedure.label(), procedure.owner(), null);
+        deleteProcedure(procedure.schema(), procedure.name());
     }
 
     private SqlResult invokeProcedure(ExecuteProcedure statement, boolean selectable) {
@@ -3679,20 +3694,21 @@ final class Engine implements AutoCloseable {
     }
 
     private ProcedureRows callProcedure(ExecuteProcedure statement, boolean selectable) {
-        StoredRow header = findRow(SystemTables.PROCEDURES, "NEX$PROCEDURE_NAME", statement.name());
-        if (header == null) {
-            throw new NexException("procedure não encontrada: " + statement.name());
+        StoredProcedure procedure = findProcedure(statement.name());
+        if (procedure == null) {
+            throw new NexException("procedure não encontrada: " + shown(statement.name()));
         }
-        List<ParamDef> inputs = parameters(statement.name(), 0);
-        List<ParamDef> outputs = parameters(statement.name(), 1);
+        String label = procedure.label();
+        List<ParamDef> inputs = parameters(procedure.schema(), procedure.name(), 0);
+        List<ParamDef> outputs = parameters(procedure.schema(), procedure.name(), 1);
         if (selectable && outputs.isEmpty()) {
-            throw new NexException("procedure sem RETURNS não pode ser usada no FROM: " + statement.name());
+            throw new NexException("procedure sem RETURNS não pode ser usada no FROM: " + label);
         }
         if (statement.arguments().size() != inputs.size()) {
-            throw new NexException("procedure " + statement.name() + " espera " + inputs.size() + " argumentos");
+            throw new NexException("procedure " + label + " espera " + inputs.size() + " argumentos");
         }
         if (!statement.returning().isEmpty() && statement.returning().size() != outputs.size()) {
-            throw new NexException("RETURNING_VALUES não corresponde aos retornos de " + statement.name());
+            throw new NexException("RETURNING_VALUES não corresponde aos retornos de " + label);
         }
         Object[] args = new Object[inputs.size()];
         for (int i = 0; i < inputs.size(); i++) {
@@ -3700,10 +3716,15 @@ final class Engine implements AutoCloseable {
             ParamDef input = inputs.get(i);
             args[i] = raw == null ? null : Values.coerce(input.type(), input.length(), input.scale(), raw);
         }
-        String source = text(require(SystemTables.PROCEDURES), header, "NEX$PROCEDURE_SOURCE");
-        Routine routine = SqlParser.parseRoutine(source);
-        List<Object[]> rows = runRoutine(routine, inputs, outputs, args, selectable);
-        return new ProcedureRows(outputs, rows);
+        Routine routine = SqlParser.parseRoutine(procedure.source());
+        String previousPin = pinnedSchema;
+        pinnedSchema = procedure.schema();
+        try {
+            List<Object[]> rows = runRoutine(routine, inputs, outputs, args, selectable);
+            return new ProcedureRows(procedure.name(), outputs, rows);
+        } finally {
+            pinnedSchema = previousPin;
+        }
     }
 
     private List<Object[]> runRoutine(Routine routine, List<ParamDef> inputs, List<ParamDef> outputs, Object[] args, boolean selectable) {
@@ -3749,7 +3770,7 @@ final class Engine implements AutoCloseable {
         if (items.isEmpty()) {
             throw new NexException("SELECT precisa de ao menos uma expressão");
         }
-        Schema schema = outputSchema(statement.procedure(), called.outputs);
+        Schema schema = outputSchema(called.name, called.outputs);
         List<ColumnMeta> columns = new ArrayList<>();
         for (SelectItem item : items) {
             columns.add(new ColumnMeta(item.label(), infer(item.expr(), schema)));
@@ -4191,13 +4212,14 @@ final class Engine implements AutoCloseable {
         return values;
     }
 
-    private List<ParamDef> parameters(String procedure, int direction) {
+    private List<ParamDef> parameters(String schema, String procedure, int direction) {
         TableStore table = require(SystemTables.PROCEDURE_PARAMETERS);
         int numberIndex = table.schema().indexOf("NEX$PARAMETER_NUMBER");
         int typeIndex = table.schema().indexOf("NEX$PARAMETER_TYPE");
         List<StoredRow> rows = new ArrayList<>();
         for (StoredRow row : table.scan()) {
-            if (!Names.same(text(table, row, "NEX$PROCEDURE_NAME"), procedure)) {
+            if (!Names.same(text(table, row, "NEX$SCHEMA_NAME"), schema)
+                    || !Names.same(text(table, row, "NEX$PROCEDURE_NAME"), procedure)) {
                 continue;
             }
             if (Values.toLong(table.value(row, typeIndex)) != direction) {
@@ -4545,6 +4567,76 @@ final class Engine implements AutoCloseable {
                 select.where(), select.orderBy(), select.limit(), select.offset());
     }
 
+    private StoredProcedure findProcedure(String name) {
+        TableStore table = systemTable(SystemTables.PROCEDURES);
+        if (table == null || name == null) {
+            return null;
+        }
+        Relation rel = relation(name);
+        StoredProcedure found = null;
+        for (StoredRow row : table.scan()) {
+            if (!Names.same(text(table, row, "NEX$SCHEMA_NAME"), rel.schema())
+                    || !Names.same(text(table, row, "NEX$PROCEDURE_NAME"), rel.name())) {
+                continue;
+            }
+            if (found != null) {
+                throw new NexException("nome ambíguo: " + shown(name));
+            }
+            found = readProcedure(table, row);
+        }
+        return found;
+    }
+
+    private List<StoredProcedure> allProcedures() {
+        TableStore table = systemTable(SystemTables.PROCEDURES);
+        if (table == null) {
+            return List.of();
+        }
+        List<StoredProcedure> procedures = new ArrayList<>();
+        for (StoredRow row : table.scan()) {
+            procedures.add(readProcedure(table, row));
+        }
+        return procedures;
+    }
+
+    private StoredProcedure readProcedure(TableStore table, StoredRow row) {
+        String schema = text(table, row, "NEX$SCHEMA_NAME");
+        String name = text(table, row, "NEX$PROCEDURE_NAME");
+        if (schema == null || schema.isBlank() || name == null || name.isBlank()) {
+            throw new NexException("catálogo inconsistente na procedure");
+        }
+        return new StoredProcedure(schema, name, text(table, row, "NEX$PROCEDURE_SOURCE"), text(table, row, "NEX$OWNER_NAME"));
+    }
+
+    private void deleteProcedure(String schema, String name) {
+        deleteProcedureRows(SystemTables.PROCEDURE_PARAMETERS, schema, name);
+        deleteProcedureRows(SystemTables.PROCEDURES, schema, name);
+    }
+
+    private void deleteProcedureRows(String tableName, String schema, String name) {
+        TableStore table = require(tableName);
+        List<Long> ids = new ArrayList<>();
+        for (StoredRow row : table.scan()) {
+            if (Names.same(text(table, row, "NEX$SCHEMA_NAME"), schema)
+                    && Names.same(text(table, row, "NEX$PROCEDURE_NAME"), name)) {
+                ids.add(row.id);
+            }
+        }
+        if (ids.isEmpty()) {
+            return;
+        }
+        boolean previous = bypass;
+        bypass = true;
+        try {
+            mutating(tableName, () -> {
+                table.delete(ids);
+                return ids.size();
+            });
+        } finally {
+            bypass = previous;
+        }
+    }
+
     private StoredView findView(String name) {
         TableStore table = systemTable(SystemTables.VIEWS);
         if (table == null || name == null) {
@@ -4608,6 +4700,15 @@ final class Engine implements AutoCloseable {
     private record Projected(StoredRow row, Object[] values, Object[] source) {
     }
 
+    private record StoredProcedure(String schema, String name, String source, String owner) {
+        String label() {
+            if (Names.same(schema, Relation.PUBLIC)) {
+                return name;
+            }
+            return schema + "." + name;
+        }
+    }
+
     private record StoredView(String schema, String name, String source, String relation, List<String> columns, String owner) {
         String storedKey() {
             return Relation.catalogName(schema, name);
@@ -4637,7 +4738,7 @@ final class Engine implements AutoCloseable {
     private record TriggerDef(String name, int position, String source) {
     }
 
-    private record ProcedureRows(List<ParamDef> outputs, List<Object[]> rows) {
+    private record ProcedureRows(String name, List<ParamDef> outputs, List<Object[]> rows) {
     }
 
     private void track(TableStore table) {

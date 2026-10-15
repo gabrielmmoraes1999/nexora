@@ -234,8 +234,8 @@ final class ObjectPane extends JPanel {
         Connection connection = hub.connection(node.databaseId());
         if (connection != null) {
             try {
-                Outline.Routine routine = Outline.procedure(connection, node.name());
-                source.setText(Ddl.procedure(routine.name(), routine.parameters(), routine.source()));
+                Outline.Routine routine = Outline.procedure(connection, node.schema(), node.name());
+                source.setText(Ddl.procedure(node.schema(), routine.name(), routine.parameters(), routine.source()));
                 source.setCaretPosition(0);
                 List<List<Object>> rows = new ArrayList<>();
                 for (Ddl.Field field : routine.parameters()) {

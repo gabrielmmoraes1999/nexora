@@ -413,8 +413,8 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                     yield Ddl.view(node.schema(), node.name(), view.columns(), view.source());
                 }
                 case PROCEDURE -> {
-                    Outline.Routine routine = Outline.procedure(connection, node.name());
-                    yield Ddl.procedure(routine.name(), routine.parameters(), routine.source());
+                    Outline.Routine routine = Outline.procedure(connection, node.schema(), node.name());
+                    yield Ddl.procedure(node.schema(), routine.name(), routine.parameters(), routine.source());
                 }
                 case TRIGGER -> {
                     Outline.TriggerInfo trigger = null;
