@@ -171,7 +171,6 @@ final class ExplorerPane extends JPanel {
         if (!this.focusId.isBlank()) {
             expanded.add(Node.database(this.focusId, "").key());
             expanded.add(Node.folder(this.focusId, Node.SCHEMAS, "").key());
-            expanded.add(new Node(Node.Kind.SCHEMA, this.focusId, "public", "public", "public").key());
         }
         rebuild();
         if (!this.focusId.isBlank()) {
@@ -282,7 +281,8 @@ final class ExplorerPane extends JPanel {
 
     private void addGroup(DefaultMutableTreeNode parent, String databaseId, String schema, String folder, String title,
                            List<Outline.RelationName> relations, Node.Kind kind, String query) {
-        DefaultMutableTreeNode group = new DefaultMutableTreeNode(Node.folder(databaseId, schema, folder, title));
+        DefaultMutableTreeNode group = new DefaultMutableTreeNode(
+                Node.folder(databaseId, schema, folder, counted(title, relations.size())));
         for (Outline.RelationName relation : relations) {
             String label = relation.name();
             Node node = new Node(kind, databaseId, label, relation.schema(), relation.name());
@@ -310,8 +310,14 @@ final class ExplorerPane extends JPanel {
     }
 
     private void addTriggers(DefaultMutableTreeNode parent, String databaseId, String schema, Outline outline, String query) {
+        int count = 0;
+        for (Outline.TriggerRef trigger : outline.triggers()) {
+            if (relationSchema(trigger.relation()).equalsIgnoreCase(schema)) {
+                count++;
+            }
+        }
         DefaultMutableTreeNode group = new DefaultMutableTreeNode(
-                Node.folder(databaseId, schema, Node.TRIGGERS, "Triggers"));
+                Node.folder(databaseId, schema, Node.TRIGGERS, counted("Triggers", count)));
         for (Outline.TriggerRef trigger : outline.triggers()) {
             if (!relationSchema(trigger.relation()).equalsIgnoreCase(schema)) {
                 continue;
@@ -339,8 +345,14 @@ final class ExplorerPane extends JPanel {
     }
 
     private void addGenerators(DefaultMutableTreeNode parent, String databaseId, String schema, Outline outline, String query) {
+        int count = 0;
+        for (Outline.GeneratorRef generator : outline.generators()) {
+            if (generator.schema().equalsIgnoreCase(schema)) {
+                count++;
+            }
+        }
         DefaultMutableTreeNode group = new DefaultMutableTreeNode(
-                Node.folder(databaseId, schema, Node.GENERATORS, "Generators"));
+                Node.folder(databaseId, schema, Node.GENERATORS, counted("Generators", count)));
         for (Outline.GeneratorRef generator : outline.generators()) {
             if (!generator.schema().equalsIgnoreCase(schema)) {
                 continue;
@@ -354,6 +366,14 @@ final class ExplorerPane extends JPanel {
         if (query.isBlank() || group.getChildCount() > 0 || "generators".contains(query)) {
             parent.add(group);
         }
+    }
+
+    private static String counted(String title, int count) {
+        return count > 0 ? title + " (" + count + ")" : title;
+    }
+
+    private static boolean countedFolder(Node node) {
+        return node.kind() == Node.Kind.FOLDER && node.title().matches(".* \\(\\d+\\)");
     }
 
     private void addLeaf(DefaultMutableTreeNode parent, Node node, String query) {
@@ -561,7 +581,7 @@ final class ExplorerPane extends JPanel {
             if (value instanceof DefaultMutableTreeNode node && node.getUserObject() instanceof Node item) {
                 boolean connected = outlines.containsKey(item.databaseId());
                 setIcon(Icons.of(item, connected && item.kind() == Node.Kind.DATABASE || item.kind() != Node.Kind.DATABASE && connected));
-                setFont(item.kind() == Node.Kind.DATABASE ? Look.UI_BOLD : Look.UI);
+                setFont(item.kind() == Node.Kind.DATABASE || countedFolder(item) ? Look.UI_BOLD : Look.UI);
                 if (item.kind() == Node.Kind.DATABASE) {
                     setText(item.title() + (connected ? "" : "  ·  disconnected"));
                 }
