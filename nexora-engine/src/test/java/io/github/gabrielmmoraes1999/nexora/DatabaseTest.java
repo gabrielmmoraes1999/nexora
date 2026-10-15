@@ -1546,6 +1546,42 @@ class DatabaseTest {
     }
 
     @Test
+    void sequencialNoEsquema() {
+        try (Database db = open()) {
+            db.execute("CREATE SCHEMA vendas");
+            db.execute("CREATE SEQUENCE seq_item START WITH 1");
+            db.execute("CREATE SEQUENCE vendas.seq_item START WITH 10 INCREMENT BY 2");
+            db.execute("""
+                    CREATE PROCEDURE vendas.prox
+                    RETURNS (n BIGINT)
+                    AS
+                    BEGIN
+                      n = NEXT VALUE FOR seq_item;
+                      SUSPEND;
+                    END
+                    """);
+            assertEquals(1L, db.query("SELECT NEXT VALUE FOR seq_item AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+            assertEquals(10L, db.query("SELECT NEXT VALUE FOR vendas.seq_item AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+            assertEquals(2L, db.query("SELECT GEN_ID(seq_item, 1) AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+            assertEquals(11L, db.query("SELECT GEN_ID(vendas.seq_item, 1) AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+            assertEquals(13L, db.query("SELECT n FROM vendas.prox()").rows().get(0).getLong("n"));
+            db.execute("SET SCHEMA vendas");
+            assertEquals(15L, db.query("SELECT NEXT VALUE FOR seq_item AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+            assertEquals(3L, db.query("SELECT GEN_ID(public.seq_item, 1) AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+            assertThrows(NexException.class, () -> db.execute("CREATE SEQUENCE seq_item"));
+            db.execute("SET SCHEMA public");
+            assertThrows(NexException.class, () -> db.execute("DROP SCHEMA vendas"));
+            db.execute("DROP SEQUENCE vendas.seq_item");
+            db.execute("DROP PROCEDURE vendas.prox");
+            db.execute("CREATE GENERATOR vendas.gen_item");
+            assertThrows(NexException.class, () -> db.execute("DROP SCHEMA vendas"));
+            db.execute("DROP SCHEMA vendas CASCADE");
+            assertThrows(NexException.class, () -> db.query("SELECT GEN_ID(vendas.gen_item, 1) AS n FROM NEX$DATABASE"));
+            assertEquals(4L, db.query("SELECT NEXT VALUE FOR seq_item AS n FROM NEX$DATABASE").rows().get(0).getLong("n"));
+        }
+    }
+
+    @Test
     void exclusaoApagaOConteudoDoArquivo() throws Exception {
         String segredo = "SIGILO-9f3c-VALOR-EXCLUSIVO";
         String mantido = "MANTIDO-9f3c-VISIVEL";

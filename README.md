@@ -562,7 +562,7 @@ Treze tabelas nascem com o arquivo, entre elas `NEX$SCHEMAS` com a linha `public
 | `NEX$USERS`                | usuários, senha com sal, ativo e administrador                      | DBA                             |
 | `NEX$PRIVILEGES`           | o que cada usuário pode fazer em cada tabela                        | `GRANT` e `REVOKE`              |
 | `NEX$CONNECTIONS`          | conexões ativas: usuário, entrada, estado e origem remota           | o próprio banco                 |
-| `NEX$GENERATORS`           | geradores e sequences: valor atual, início, passo e dono            | `CREATE` / `SET GENERATOR`      |
+| `NEX$GENERATORS`           | esquema, nome, valor atual, início, passo e dono do gerador         | `CREATE` / `SET GENERATOR`      |
 | `NEX$PROCEDURES`           | esquema, nome, código e dono da procedure                           | `CREATE PROCEDURE`              |
 | `NEX$PROCEDURE_PARAMETERS` | esquema, argumentos e retornos (`NEX$PARAMETER_TYPE` 0 ou 1)       | `CREATE PROCEDURE`              |
 | `NEX$TRIGGERS`             | nome, tabela, posição, fase, código, inativo e dono                 | `CREATE TRIGGER`                |
@@ -616,7 +616,9 @@ Session ana = db.login("ana", "ana", "vendas");
 
 ## Geradores, procedures e triggers
 
-O comportamento segue o Firebird. O valor de um gerador é confirmado na hora: `ROLLBACK` desfaz a linha, mas não o `GEN_ID`. `CREATE GENERATOR` começa em 0, então o primeiro `GEN_ID(nome, 1)` devolve 1. `SET GENERATOR nome TO 100` grava 100; o próximo passo 1 devolve 101. `CREATE SEQUENCE nome START WITH 10 INCREMENT BY 2` faz o primeiro `NEXT VALUE FOR nome` devolver 10. `ALTER SEQUENCE nome RESTART WITH 20` faz o próximo valor ser 20. `GEN_ID(nome, 0)` só lê o valor atual. Quem cria o gerador é o dono; o DBA também pode apagar.
+O valor segue o Firebird e é confirmado na hora: `ROLLBACK` desfaz a linha, mas não o `GEN_ID`. `CREATE GENERATOR` começa em 0, então o primeiro `GEN_ID(nome, 1)` devolve 1. `SET GENERATOR nome TO 100` grava 100; o próximo passo 1 devolve 101. `CREATE SEQUENCE nome START WITH 10 INCREMENT BY 2` faz o primeiro `NEXT VALUE FOR nome` devolver 10. `ALTER SEQUENCE nome RESTART WITH 20` faz o próximo valor ser 20. `GEN_ID(nome, 0)` só lê o valor atual. Quem cria o gerador é o dono; o DBA também pode apagar.
+
+Gerador e sequence ficam no esquema, como tabela e procedure. Sem prefixo, o nome usa o esquema da sessão. `CREATE SEQUENCE vendas.seq_item` grava em `vendas`, e o mesmo nome pode existir em outro esquema. `GEN_ID` e `NEXT VALUE FOR` sem esquema usam a sessão; dentro de procedure ou trigger, usam o esquema da rotina ou da tabela. `DROP SCHEMA ... CASCADE` apaga os sequenciais desse esquema. `NEX$SCHEMA_NAME` guarda o esquema, inclusive `public`.
 
 ```sql
 CREATE GENERATOR gen_item;

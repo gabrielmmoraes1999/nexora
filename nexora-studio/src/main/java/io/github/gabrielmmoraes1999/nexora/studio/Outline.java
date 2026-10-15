@@ -49,7 +49,7 @@ public record Outline(
     public record TriggerRef(String name, String relation, String type, boolean inactive) {
     }
 
-    public record GeneratorRef(String name, long current) {
+    public record GeneratorRef(String schema, String name, long current) {
     }
 
     public record TriggerInfo(String name, String relation, int position, String type, String source,
@@ -154,10 +154,16 @@ public record Outline(
         triggers.sort(Comparator.comparing(TriggerRef::name, String.CASE_INSENSITIVE_ORDER));
         List<GeneratorRef> generators = new ArrayList<>();
         for (Row row : tryQuery(connection, warnings, "geradores",
-                "SELECT NEX$GENERATOR_NAME, NEX$CURRENT_VALUE FROM NEX$GENERATORS")) {
-            generators.add(new GeneratorRef(row.text("NEX$GENERATOR_NAME"), row.number("NEX$CURRENT_VALUE")));
+                "SELECT NEX$SCHEMA_NAME, NEX$GENERATOR_NAME, NEX$CURRENT_VALUE FROM NEX$GENERATORS")) {
+            String schema = row.text("NEX$SCHEMA_NAME");
+            String name = row.text("NEX$GENERATOR_NAME");
+            if (schema == null || schema.isBlank() || name == null || name.isBlank()) {
+                continue;
+            }
+            generators.add(new GeneratorRef(schema, name, row.number("NEX$CURRENT_VALUE")));
         }
-        generators.sort(Comparator.comparing(GeneratorRef::name, String.CASE_INSENSITIVE_ORDER));
+        generators.sort(Comparator.comparing(GeneratorRef::schema, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(GeneratorRef::name, String.CASE_INSENSITIVE_ORDER));
         List<String> roles = names(tryQuery(connection, warnings, "papéis",
                 "SELECT NEX$ROLE_NAME FROM NEX$ROLES"), "NEX$ROLE_NAME");
         List<String> users = names(tryQuery(connection, warnings, "usuários",
@@ -463,12 +469,14 @@ public record Outline(
         throw new SQLException("view não encontrada: " + name);
     }
 
-    public static GeneratorInfo generator(Connection connection, String name) throws SQLException {
+    public static GeneratorInfo generator(Connection connection, String schema, String name) throws SQLException {
+        String expected = schema == null || schema.isBlank() ? "public" : schema;
         for (Row row : query(connection, """
-                SELECT NEX$GENERATOR_NAME, NEX$INITIAL_VALUE, NEX$INCREMENT, NEX$CURRENT_VALUE, NEX$OWNER_NAME
+                SELECT NEX$SCHEMA_NAME, NEX$GENERATOR_NAME, NEX$INITIAL_VALUE, NEX$INCREMENT, NEX$CURRENT_VALUE, NEX$OWNER_NAME
                 FROM NEX$GENERATORS
                 """)) {
-            if (SqlNames.same(name, row.text("NEX$GENERATOR_NAME"))) {
+            if (SqlNames.same(expected, row.text("NEX$SCHEMA_NAME"))
+                    && SqlNames.same(name, row.text("NEX$GENERATOR_NAME"))) {
                 return new GeneratorInfo(row.text("NEX$GENERATOR_NAME"), row.number("NEX$INITIAL_VALUE"),
                         row.number("NEX$INCREMENT"), row.number("NEX$CURRENT_VALUE"), row.text("NEX$OWNER_NAME"));
             }

@@ -108,13 +108,14 @@ final class SystemTables {
 
     private static Schema generators() {
         return new Schema(GENERATORS, List.of(
+                text("NEX$SCHEMA_NAME", 128, true),
                 text("NEX$GENERATOR_NAME", 63, true),
                 column("NEX$GENERATOR_ID", DataType.INTEGER, 0, true, false, null),
                 column("NEX$INITIAL_VALUE", DataType.BIGINT, 0, true, false, null),
                 column("NEX$INCREMENT", DataType.BIGINT, 0, true, false, null),
                 column("NEX$CURRENT_VALUE", DataType.BIGINT, 0, true, false, null),
                 text("NEX$OWNER_NAME", 63, true)
-        ), new int[]{0}, List.of(), List.of());
+        ), new int[]{0, 1}, List.of(), List.of());
     }
 
     private static Schema procedures() {

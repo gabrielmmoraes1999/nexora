@@ -430,9 +430,9 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                             trigger.position(), trigger.source());
                 }
                 case GENERATOR -> {
-                    Outline.GeneratorInfo generator = Outline.generator(connection, node.name());
-                    yield "CREATE GENERATOR " + SqlNames.quote(generator.name()) + ";\nSET GENERATOR "
-                            + SqlNames.quote(generator.name()) + " TO " + generator.current();
+                    Outline.GeneratorInfo generator = Outline.generator(connection, node.schema(), node.name());
+                    String qualified = SqlNames.qualify(node.schema(), generator.name());
+                    yield "CREATE GENERATOR " + qualified + ";\nSET GENERATOR " + qualified + " TO " + generator.current();
                 }
                 default -> null;
             };

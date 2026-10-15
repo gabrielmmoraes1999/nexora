@@ -94,7 +94,8 @@ class StudioTest {
             assertTrue(outline.procedures().stream().anyMatch(procedure -> procedure.name().equalsIgnoreCase("eco")
                     && procedure.schema().equalsIgnoreCase("public")));
             assertTrue(outline.triggers().stream().anyMatch(trigger -> trigger.name().equalsIgnoreCase("cliente_bi")));
-            assertTrue(outline.generators().stream().anyMatch(generator -> generator.name().equalsIgnoreCase("gen_item")));
+            assertTrue(outline.generators().stream().anyMatch(generator -> generator.name().equalsIgnoreCase("gen_item")
+                    && generator.schema().equalsIgnoreCase("public")));
             assertTrue(outline.schemas().get(0).equalsIgnoreCase("public"));
             assertTrue(outline.schemas().stream().anyMatch(schema -> schema.equalsIgnoreCase("vendas")));
             List<Ddl.ColumnInfo> columns = Outline.columns(connection, "public", "cliente");

@@ -308,7 +308,7 @@ final class ObjectPane extends JPanel {
         Connection connection = hub.connection(node.databaseId());
         if (connection != null) {
             try {
-                Outline.GeneratorInfo generator = Outline.generator(connection, node.name());
+                Outline.GeneratorInfo generator = Outline.generator(connection, node.schema(), node.name());
                 current.setText(Long.toString(generator.current()));
                 apply.addActionListener(event -> {
                     Connection live = hub.connection(node.databaseId());
@@ -317,8 +317,8 @@ final class ObjectPane extends JPanel {
                     }
                     try {
                         long next = Long.parseLong(value.getText().trim());
-                        Commands.run(live, "SET GENERATOR " + SqlNames.quote(node.name()) + " TO " + next);
-                        current.setText(Long.toString(Outline.generator(live, node.name()).current()));
+                        Commands.run(live, "SET GENERATOR " + SqlNames.qualify(node.schema(), node.name()) + " TO " + next);
+                        current.setText(Long.toString(Outline.generator(live, node.schema(), node.name()).current()));
                         hub.refreshOutline(node.databaseId());
                     } catch (RuntimeException | SQLException exception) {
                         Dialogs.error(hub.owner(), Dialogs.message(exception));

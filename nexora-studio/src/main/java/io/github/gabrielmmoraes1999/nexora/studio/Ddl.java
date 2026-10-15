@@ -289,7 +289,7 @@ public final class Ddl {
             case VIEW -> "DROP VIEW " + SqlNames.qualify(schema, name);
             case PROCEDURE -> "DROP PROCEDURE " + SqlNames.quote(name);
             case TRIGGER -> "DROP TRIGGER " + SqlNames.quote(name);
-            case GENERATOR -> "DROP GENERATOR " + SqlNames.quote(name);
+            case GENERATOR -> "DROP GENERATOR " + SqlNames.qualify(schema, name);
             case ROLE -> "DROP ROLE " + SqlNames.quote(name);
             case SCHEMA -> "DROP SCHEMA " + SqlNames.quote(name) + " RESTRICT";
             default -> null;

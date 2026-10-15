@@ -3098,11 +3098,18 @@ final class Engine implements AutoCloseable {
         if (!proceduresInSchema.isEmpty()) {
             occupied = true;
         }
+        List<String> generatorsInSchema = generatorNames(schema);
+        if (!generatorsInSchema.isEmpty()) {
+            occupied = true;
+        }
         if (occupied && !statement.cascade()) {
             throw new NexException("esquema não está vazio: " + schema);
         }
         for (StoredProcedure procedure : proceduresInSchema) {
             deleteProcedure(procedure.schema(), procedure.name());
+        }
+        for (String generator : generatorsInSchema) {
+            deleteGenerator(schema, generator);
         }
         boolean changed = true;
         while (changed) {
@@ -3616,11 +3623,12 @@ final class Engine implements AutoCloseable {
     }
 
     private long nextGenerator(String name, Long step) {
-        Names.checkName(name, "gerador");
+        Relation rel = relation(name);
+        Names.checkName(rel.name(), "gerador");
         TableStore table = require(SystemTables.GENERATORS);
-        StoredRow row = findRow(SystemTables.GENERATORS, "NEX$GENERATOR_NAME", name);
+        StoredRow row = findGenerator(name);
         if (row == null) {
-            throw new NexException("gerador não encontrado: " + name);
+            throw new NexException("gerador não encontrado: " + shown(name));
         }
         int currentIndex = table.schema().indexOf("NEX$CURRENT_VALUE");
         int incrementIndex = table.schema().indexOf("NEX$INCREMENT");
@@ -3644,12 +3652,13 @@ final class Engine implements AutoCloseable {
     }
 
     private void createGenerator(CreateGenerator statement) {
-        String name = statement.name();
-        if (SystemTables.isSystem(name)) {
-            throw new NexException("nome reservado: " + name);
+        Relation rel = relation(statement.name());
+        if (SystemTables.isSystem(rel.name())) {
+            throw new NexException("nome reservado: " + rel.name());
         }
-        if (findRow(SystemTables.GENERATORS, "NEX$GENERATOR_NAME", name) != null) {
-            throw new NexException("gerador já existe: " + name);
+        Names.checkName(rel.name(), "gerador");
+        if (findGenerator(statement.name()) != null) {
+            throw new NexException("gerador já existe: " + shown(statement.name()));
         }
         long increment = statement.increment() == null ? 1L : statement.increment();
         if (increment == 0) {
@@ -3660,28 +3669,29 @@ final class Engine implements AutoCloseable {
         long id = nextCatalogId(SystemTables.GENERATORS, "NEX$GENERATOR_ID");
         systemExecute("""
                 INSERT INTO NEX$GENERATORS (
-                    NEX$GENERATOR_NAME, NEX$GENERATOR_ID, NEX$INITIAL_VALUE, NEX$INCREMENT, NEX$CURRENT_VALUE, NEX$OWNER_NAME
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """, name, id, initial, increment, current, ownerName());
+                    NEX$SCHEMA_NAME, NEX$GENERATOR_NAME, NEX$GENERATOR_ID, NEX$INITIAL_VALUE, NEX$INCREMENT, NEX$CURRENT_VALUE, NEX$OWNER_NAME
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, rel.schema(), rel.name(), id, initial, increment, current, ownerName());
     }
 
     private void dropGenerator(DropGenerator statement) {
-        StoredRow row = findRow(SystemTables.GENERATORS, "NEX$GENERATOR_NAME", statement.name());
+        StoredRow row = findGenerator(statement.name());
         if (row == null) {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("gerador não encontrado: " + statement.name());
+            throw new NexException("gerador não encontrado: " + shown(statement.name()));
         }
-        guardRoutine("o gerador", statement.name(), text(require(SystemTables.GENERATORS), row, "NEX$OWNER_NAME"), null);
-        deleteCatalog(SystemTables.GENERATORS, "NEX$GENERATOR_NAME", statement.name());
+        Relation rel = relation(statement.name());
+        guardRoutine("o gerador", shown(statement.name()), text(require(SystemTables.GENERATORS), row, "NEX$OWNER_NAME"), null);
+        deleteGenerator(rel.schema(), rel.name());
     }
 
     private void setGenerator(SetGenerator statement) {
         TableStore table = require(SystemTables.GENERATORS);
-        StoredRow row = findRow(SystemTables.GENERATORS, "NEX$GENERATOR_NAME", statement.name());
+        StoredRow row = findGenerator(statement.name());
         if (row == null) {
-            throw new NexException("gerador não encontrado: " + statement.name());
+            throw new NexException("gerador não encontrado: " + shown(statement.name()));
         }
         Object raw = evaluator(null, null).eval(statement.value());
         if (raw == null) {
@@ -4660,6 +4670,64 @@ final class Engine implements AutoCloseable {
         }
         return new Select(select.distinct(), select.star(), select.items(), bound, select.alias(),
                 select.where(), select.orderBy(), select.limit(), select.offset());
+    }
+
+    private StoredRow findGenerator(String written) {
+        TableStore table = systemTable(SystemTables.GENERATORS);
+        if (table == null || written == null) {
+            return null;
+        }
+        Relation rel = relation(written);
+        StoredRow found = null;
+        for (StoredRow row : table.scan()) {
+            if (!Names.same(text(table, row, "NEX$SCHEMA_NAME"), rel.schema())
+                    || !Names.same(text(table, row, "NEX$GENERATOR_NAME"), rel.name())) {
+                continue;
+            }
+            if (found != null) {
+                throw new NexException("nome ambíguo: " + shown(written));
+            }
+            found = row;
+        }
+        return found;
+    }
+
+    private List<String> generatorNames(String schema) {
+        TableStore table = systemTable(SystemTables.GENERATORS);
+        if (table == null) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        for (StoredRow row : table.scan()) {
+            if (Names.same(text(table, row, "NEX$SCHEMA_NAME"), schema)) {
+                names.add(text(table, row, "NEX$GENERATOR_NAME"));
+            }
+        }
+        return names;
+    }
+
+    private void deleteGenerator(String schema, String name) {
+        TableStore table = require(SystemTables.GENERATORS);
+        List<Long> ids = new ArrayList<>();
+        for (StoredRow row : table.scan()) {
+            if (Names.same(text(table, row, "NEX$SCHEMA_NAME"), schema)
+                    && Names.same(text(table, row, "NEX$GENERATOR_NAME"), name)) {
+                ids.add(row.id);
+            }
+        }
+        if (ids.isEmpty()) {
+            return;
+        }
+        boolean previous = bypass;
+        bypass = true;
+        try {
+            mutating(SystemTables.GENERATORS, () -> {
+                table.delete(ids);
+                return ids.size();
+            });
+        } finally {
+            bypass = previous;
+        }
     }
 
     private StoredProcedure findProcedure(String name) {

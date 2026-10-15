@@ -228,7 +228,6 @@ final class ExplorerPane extends JPanel {
             DefaultMutableTreeNode node = new DefaultMutableTreeNode(database);
             if (outline != null) {
                 addSchemas(node, entry.id(), outline, query);
-                addGenerators(node, entry.id(), outline, query);
                 addNames(node, entry.id(), Node.ROLES, "Papéis", outline.roles(), Node.Kind.ROLE, query);
                 addNames(node, entry.id(), Node.USERS, "Usuários", outline.users(), Node.Kind.USER, query);
                 addGroup(node, entry.id(), "", Node.SYSTEM, "Sistema", outline.systemTables(), Node.Kind.SYSTEM_TABLE, query);
@@ -260,6 +259,7 @@ final class ExplorerPane extends JPanel {
                     relationsIn(outline.views(), schema), Node.Kind.VIEW, query);
             addGroup(schemaNode, databaseId, schema, Node.PROCEDURES, "Procedures",
                     relationsIn(outline.procedures(), schema), Node.Kind.PROCEDURE, query);
+            addGenerators(schemaNode, databaseId, schema, outline, query);
             addTriggers(schemaNode, databaseId, schema, outline, query);
             if (query.isBlank() || schema.toLowerCase(java.util.Locale.ROOT).contains(query) || schemaNode.getChildCount() > 0) {
                 group.add(schemaNode);
@@ -338,15 +338,20 @@ final class ExplorerPane extends JPanel {
         return relation.substring(0, dot);
     }
 
-    private void addGenerators(DefaultMutableTreeNode parent, String databaseId, Outline outline, String query) {
-        DefaultMutableTreeNode group = new DefaultMutableTreeNode(Node.folder(databaseId, Node.GENERATORS, "Geradores"));
+    private void addGenerators(DefaultMutableTreeNode parent, String databaseId, String schema, Outline outline, String query) {
+        DefaultMutableTreeNode group = new DefaultMutableTreeNode(
+                Node.folder(databaseId, schema, Node.GENERATORS, "Geradores"));
         for (Outline.GeneratorRef generator : outline.generators()) {
+            if (!generator.schema().equalsIgnoreCase(schema)) {
+                continue;
+            }
             String label = generator.name() + " = " + generator.current();
             if (query.isBlank() || generator.name().toLowerCase(java.util.Locale.ROOT).contains(query)) {
-                group.add(new DefaultMutableTreeNode(new Node(Node.Kind.GENERATOR, databaseId, label, "", generator.name())));
+                group.add(new DefaultMutableTreeNode(
+                        new Node(Node.Kind.GENERATOR, databaseId, label, schema, generator.name())));
             }
         }
-        if (query.isBlank() || group.getChildCount() > 0) {
+        if (query.isBlank() || group.getChildCount() > 0 || "geradores".contains(query)) {
             parent.add(group);
         }
     }

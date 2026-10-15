@@ -390,8 +390,8 @@ final class Evaluator {
         }
         Expr name = call.args().get(0);
         String generator;
-        if (name instanceof ColumnRef column && column.qualifier() == null) {
-            generator = column.name();
+        if (name instanceof ColumnRef column) {
+            generator = column.qualifier() == null ? column.name() : column.qualifier() + "." + column.name();
         } else if (name instanceof Literal literal && literal.value() instanceof String text) {
             generator = text;
         } else {

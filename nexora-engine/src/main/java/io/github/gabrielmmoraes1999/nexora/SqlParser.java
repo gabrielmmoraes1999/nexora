@@ -459,7 +459,7 @@ final class SqlParser {
 
     private Stmt drop() {
         if (consumeKeyword("GENERATOR") || consumeKeyword("SEQUENCE")) {
-            return new DropGenerator(ifExists(), expectIdent());
+            return new DropGenerator(ifExists(), expectRelation());
         }
         if (consumeKeyword("PROCEDURE")) {
             return new DropProcedure(ifExists(), expectRelation());
@@ -519,7 +519,7 @@ final class SqlParser {
             throw error("ALTER TRIGGER aceita ACTIVE ou INACTIVE");
         }
         if (consumeKeyword("SEQUENCE") || consumeKeyword("GENERATOR")) {
-            String name = expectIdent();
+            String name = expectRelation();
             expectKeyword("RESTART");
             expectKeyword("WITH");
             return new SetGenerator(name, expression(), true);
@@ -589,13 +589,13 @@ final class SqlParser {
 
     private Stmt setGenerator() {
         expectKeyword("GENERATOR");
-        String name = expectIdent();
+        String name = expectRelation();
         expectKeyword("TO");
         return new SetGenerator(name, expression(), false);
     }
 
     private Stmt createGenerator(boolean sequence) {
-        String name = expectIdent();
+        String name = expectRelation();
         Long start = null;
         Long increment = null;
         if (consumeKeyword("START")) {
@@ -1554,7 +1554,7 @@ final class SqlParser {
             consumeKeyword("NEXT");
             expectKeyword("VALUE");
             expectKeyword("FOR");
-            return new NextValue(expectIdent());
+            return new NextValue(expectRelation());
         }
         if (token.kind == TokenKind.IDENT && !token.quoted && contextVariable(token.text) && !peekSymbol(".")) {
             String name = token.text.toUpperCase(Locale.ROOT);
