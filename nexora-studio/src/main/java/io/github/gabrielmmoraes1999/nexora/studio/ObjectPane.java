@@ -130,7 +130,9 @@ final class ObjectPane extends JPanel {
                         }
                     }
                 }, editableShape),
-                button("Delete column", () -> dropColumn(columns, ddl), editableShape))));
+                button("Delete column", () -> dropColumn(columns, ddl), editableShape),
+                button("Move up", () -> moveColumn(columns, ddl, -1), editableShape),
+                button("Move down", () -> moveColumn(columns, ddl, 1), editableShape))));
         tabs.addTab("Data", data);
         tabs.addTab("Indexes", wrap(indexes, buttons(
                 button("New index", () -> newIndex(indexes, ddl), editableShape),
@@ -740,9 +742,45 @@ final class ObjectPane extends JPanel {
             reloadColumns(columns);
             refreshConstraints(connection);
             reloadDdl(ddl);
+            reloadData();
             hub.refreshOutline(node.databaseId());
         } catch (SQLException exception) {
             Dialogs.error(hub.owner(), Dialogs.message(exception));
+        }
+    }
+
+    private void moveColumn(JTable columns, JTextArea ddl, int delta) {
+        int row = columns.getSelectedRow();
+        if (row < 0) {
+            return;
+        }
+        int target = row + delta;
+        if (target < 0 || target >= columns.getRowCount()) {
+            return;
+        }
+        String name = String.valueOf(Tables.row(columns, row).get(0));
+        Connection connection = requireQuiet();
+        if (connection == null) {
+            return;
+        }
+        try {
+            Commands.run(connection, Ddl.position(node.schema(), node.name(), name, target + 1));
+            reloadColumns(columns);
+            if (target < columns.getRowCount()) {
+                columns.setRowSelectionInterval(target, target);
+                columns.scrollRectToVisible(columns.getCellRect(target, 0, true));
+            }
+            reloadDdl(ddl);
+            reloadData();
+            hub.refreshOutline(node.databaseId());
+        } catch (SQLException exception) {
+            Dialogs.error(hub.owner(), Dialogs.message(exception));
+        }
+    }
+
+    private void reloadData() {
+        if (data != null && data.loaded()) {
+            data.load();
         }
     }
 
@@ -873,14 +911,15 @@ final class ObjectPane extends JPanel {
 
     private static void fillColumns(JTable table, List<Ddl.ColumnInfo> columns) {
         List<List<Object>> rows = new ArrayList<>();
-        for (Ddl.ColumnInfo column : columns) {
-            rows.add(List.of(column.name(), Ddl.typeSql(column.typeName(), column.size(), column.scale()),
+        for (int i = 0; i < columns.size(); i++) {
+            Ddl.ColumnInfo column = columns.get(i);
+            rows.add(List.of(column.name(), i + 1, Ddl.typeSql(column.typeName(), column.size(), column.scale()),
                     column.nullable() ? "yes" : "no",
                     column.primaryKeyPosition() == 0 ? "" : Integer.toString(column.primaryKeyPosition()),
                     column.autoIncrement() ? "yes" : "",
                     column.defaultSql() == null ? "" : column.defaultSql()));
         }
-        Tables.show(table, List.of("Name", "Type", "Null", "PK", "Auto", "Default"), rows);
+        Tables.show(table, List.of("Name", "Position", "Type", "Null", "PK", "Auto", "Default"), rows);
     }
 
     private static void fillIndexes(JTable table, List<Ddl.IndexInfo> indexes) {

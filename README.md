@@ -127,7 +127,7 @@ The studio is the administrative screen, in the spirit of IBExpert: an explorer 
 java -jar nexora-studio/target/nexora-studio-1.0.jar
 ```
 
-F9 runs the script in the editor. Ctrl+Enter does the same. A `SELECT` has to be the last command, as in JDBC. The grid writes to tables that have a primary key. An empty cell becomes `NULL`; for `CHAR` and `VARCHAR`, `''` stores empty text.
+F9 runs the script in the editor. Ctrl+Enter does the same. A `SELECT` has to be the last command, as in JDBC. The grid writes to tables that have a primary key. An empty cell becomes `NULL`; for `CHAR` and `VARCHAR`, `''` stores empty text. On the Columns tab of a table, Move up and Move down run `ALTER COLUMN ... POSITION` and the data grid follows that order.
 
 The embedded connection opens the `.db` in this process. If the server already holds the file, it fails: register the database over the network, with the `host`, the port, and the name from the JSON file. The registration is stored in `~/.nexora/studio.json`. The password is written to that file only when "remember password" is checked.
 

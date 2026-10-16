@@ -275,6 +275,19 @@ public final class Ddl {
         return "ALTER TABLE " + SqlNames.qualify(schema, table) + " DROP COLUMN " + SqlNames.quote(column);
     }
 
+    /** Moves a column. {@code position} starts at 1. */
+    public static String position(String schema, String table, String column, int position) {
+        if (column == null || column.isBlank()) {
+            throw new IllegalArgumentException("enter the column name");
+        }
+        if (position < 1) {
+            throw new IllegalArgumentException("position starts at 1");
+        }
+        return "ALTER TABLE " + SqlNames.qualify(schema, table)
+                + " ALTER COLUMN " + SqlNames.quote(column.trim())
+                + " POSITION " + position;
+    }
+
     public static String dropConstraint(String schema, String table, String constraint) {
         return "ALTER TABLE " + SqlNames.qualify(schema, table) + " DROP CONSTRAINT " + SqlNames.quote(constraint);
     }

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 
@@ -112,6 +113,36 @@ class StudioTest {
             assertNull(ValuesText.parse("", "INTEGER", true));
             assertEquals(12L, ValuesText.parse("12", "INTEGER", false));
             assertEquals("", ValuesText.parse("''", "VARCHAR", true));
+        }
+    }
+
+    @Test
+    void moveColunaAtualizaAOrdemDoCatalogo() throws Exception {
+        Path file = dir.resolve("agencia.db");
+        Database.create(file, new DatabaseOptions(8192, "DBA", "dba", "LOJA", "Nexora", "UTF8"));
+        String sql = Ddl.position("public", "agencia", "id_empresa", 1);
+        assertEquals("ALTER TABLE \"agencia\" ALTER COLUMN \"id_empresa\" POSITION 1", sql);
+        try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + file.toAbsolutePath(), "dba", "dba");
+             Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    CREATE TABLE agencia (
+                        id INTEGER PRIMARY KEY,
+                        nome VARCHAR(20),
+                        id_empresa INTEGER
+                    )
+                    """);
+            statement.execute("INSERT INTO agencia VALUES (1, 'centro', 10)");
+            statement.execute(sql);
+            List<String> names = Outline.columns(connection, "public", "agencia").stream()
+                    .map(Ddl.ColumnInfo::name).toList();
+            assertEquals(List.of("id_empresa", "id", "nome"), names);
+            try (ResultSet result = statement.executeQuery("SELECT * FROM agencia")) {
+                assertTrue(result.next());
+                assertEquals("id_empresa", result.getMetaData().getColumnName(1));
+                assertEquals(10, result.getInt("id_empresa"));
+                assertEquals(1, result.getInt("id"));
+                assertEquals("centro", result.getString("nome"));
+            }
         }
     }
 }
