@@ -174,7 +174,7 @@ public record Outline(
     public static List<Ddl.ColumnInfo> columns(Connection connection, String schema, String table) throws SQLException {
         DatabaseMetaData meta = connection.getMetaData();
         Map<String, Integer> keys = new LinkedHashMap<>();
-        try (ResultSet result = meta.getPrimaryKeys(null, SqlNames.likeExact(schema), SqlNames.likeExact(table))) {
+        try (ResultSet result = meta.getPrimaryKeys(null, schema, table)) {
             while (result.next()) {
                 if (!SqlNames.same(table, result.getString("TABLE_NAME"))) {
                     continue;
@@ -209,7 +209,7 @@ public record Outline(
         Map<String, List<IndexColumn>> grouped = new LinkedHashMap<>();
         Map<String, Boolean> unique = new LinkedHashMap<>();
         Map<String, Boolean> descending = new LinkedHashMap<>();
-        try (ResultSet result = meta.getIndexInfo(null, SqlNames.likeExact(schema), SqlNames.likeExact(table), false, false)) {
+        try (ResultSet result = meta.getIndexInfo(null, schema, table, false, false)) {
             while (result.next()) {
                 if (!SqlNames.same(table, result.getString("TABLE_NAME"))) {
                     continue;
@@ -250,7 +250,7 @@ public record Outline(
         DatabaseMetaData meta = connection.getMetaData();
         Map<Integer, String> columns = new java.util.TreeMap<>();
         String name = null;
-        try (ResultSet result = meta.getPrimaryKeys(null, SqlNames.likeExact(schema), SqlNames.likeExact(table))) {
+        try (ResultSet result = meta.getPrimaryKeys(null, schema, table)) {
             while (result.next()) {
                 if (!SqlNames.same(table, result.getString("TABLE_NAME"))) {
                     continue;
@@ -280,7 +280,7 @@ public record Outline(
                                                        List<Ddl.IndexInfo> indexes) throws SQLException {
         DatabaseMetaData meta = connection.getMetaData();
         Map<String, List<ForeignColumn>> grouped = new LinkedHashMap<>();
-        try (ResultSet result = meta.getImportedKeys(null, SqlNames.likeExact(schema), SqlNames.likeExact(table))) {
+        try (ResultSet result = meta.getImportedKeys(null, schema, table)) {
             while (result.next()) {
                 if (!SqlNames.same(table, result.getString("FKTABLE_NAME"))) {
                     continue;

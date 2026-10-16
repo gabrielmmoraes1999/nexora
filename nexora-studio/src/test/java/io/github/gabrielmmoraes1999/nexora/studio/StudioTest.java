@@ -117,6 +117,43 @@ class StudioTest {
     }
 
     @Test
+    void tabelaComSublinhadoCarregaIndicesEConstraints() throws Exception {
+        Path file = dir.resolve("pedido.db");
+        Database.create(file, new DatabaseOptions(8192, "DBA", "dba", "LOJA", "Nexora", "UTF8"));
+        try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + file.toAbsolutePath(), "dba", "dba");
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA app_vendas");
+            statement.execute("""
+                    CREATE TABLE app_vendas.item_pedido (
+                        id INTEGER PRIMARY KEY,
+                        pedido_id INTEGER,
+                        codigo VARCHAR(20),
+                        CONSTRAINT FK_item_pedido FOREIGN KEY (pedido_id) REFERENCES app_vendas.item_pedido (id),
+                        CONSTRAINT UQ_item_codigo UNIQUE (codigo)
+                    )
+                    """);
+            statement.execute("CREATE INDEX ix_item_pedido ON app_vendas.item_pedido (pedido_id)");
+            List<Ddl.ColumnInfo> columns = Outline.columns(connection, "app_vendas", "item_pedido");
+            assertEquals(1, columns.get(0).primaryKeyPosition());
+            List<String> indexNames = Outline.indexes(connection, "app_vendas", "item_pedido").stream()
+                    .map(Ddl.IndexInfo::name).toList();
+            assertTrue(indexNames.stream().anyMatch(name -> name.equalsIgnoreCase("PK_item_pedido")));
+            assertTrue(indexNames.stream().anyMatch(name -> name.equalsIgnoreCase("ix_item_pedido")));
+            assertTrue(indexNames.stream().anyMatch(name -> name.equalsIgnoreCase("UQ_item_codigo")));
+            List<Ddl.IndexInfo> indexes = Outline.indexes(connection, "app_vendas", "item_pedido");
+            List<Ddl.ConstraintInfo> primary = Outline.primaryKeys(connection, "app_vendas", "item_pedido", indexes);
+            assertEquals(1, primary.size());
+            assertEquals(List.of("id"), primary.get(0).columns());
+            List<Ddl.ConstraintInfo> foreign = Outline.foreignKeys(connection, "app_vendas", "item_pedido", indexes);
+            assertEquals(1, foreign.size());
+            assertTrue(foreign.get(0).name().equalsIgnoreCase("FK_item_pedido"));
+            assertEquals(List.of("pedido_id"), foreign.get(0).columns());
+            assertTrue(Outline.uniques(indexes, primary).stream()
+                    .anyMatch(key -> key.name().equalsIgnoreCase("UQ_item_codigo")));
+        }
+    }
+
+    @Test
     void moveColunaAtualizaAOrdemDoCatalogo() throws Exception {
         Path file = dir.resolve("agencia.db");
         Database.create(file, new DatabaseOptions(8192, "DBA", "dba", "LOJA", "Nexora", "UTF8"));
