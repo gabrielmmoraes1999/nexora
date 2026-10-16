@@ -260,6 +260,7 @@ CREATE TABLE IF NOT EXISTS orders (
 
 ALTER TABLE orders ADD COLUMN notes VARCHAR(200) DEFAULT '';
 ALTER TABLE orders DROP COLUMN notes;
+ALTER TABLE orders ALTER notes POSITION 1;
 
 CREATE TABLE note (
     id INTEGER NOT NULL,
@@ -271,6 +272,8 @@ ALTER TABLE note DROP PRIMARY KEY;
 DROP TABLE IF EXISTS draft;
 DROP TABLE orders;
 ```
+
+`ALTER [COLUMN] ... POSITION` moves a column. Positions start at 1. The columns in between shift. `SELECT *`, `INSERT` without a column list, and the catalog follow the new order. The values stay on the column. A view keeps the column order it had when it was created.
 
 A table has one primary key. It can be a single column (`id INTEGER PRIMARY KEY`) or composite (`PRIMARY KEY (a, b)`), at creation or later with `ALTER TABLE ... ADD PRIMARY KEY`. The index is created with it, with the constraint name and Ascending order. Without an explicit name, both are called `PK_` plus the table name. `ADD CONSTRAINT PK_orders PRIMARY KEY (id)` stores that name. For another name or descending order:
 

@@ -552,7 +552,19 @@ final class SqlParser {
             optionalKeyword("COLUMN");
             return new DropColumn(table, expectIdent());
         }
-        throw error("ALTER TABLE supports ADD COLUMN, DROP COLUMN, and ADD and DROP of PRIMARY KEY, FOREIGN KEY, UNIQUE, and CONSTRAINT");
+        if (consumeKeyword("ALTER")) {
+            optionalKeyword("COLUMN");
+            String column = expectIdent();
+            if (!consumeKeyword("POSITION")) {
+                throw error("ALTER COLUMN supports POSITION");
+            }
+            long raw = signedLong("POSITION");
+            if (raw > Integer.MAX_VALUE) {
+                throw error("POSITION is too large");
+            }
+            return new AlterColumnPosition(table, column, (int) raw);
+        }
+        throw error("ALTER TABLE supports ADD COLUMN, DROP COLUMN, ALTER COLUMN POSITION, and ADD and DROP of PRIMARY KEY, FOREIGN KEY, UNIQUE, and CONSTRAINT");
     }
 
     private Stmt addTableConstraint(String table) {

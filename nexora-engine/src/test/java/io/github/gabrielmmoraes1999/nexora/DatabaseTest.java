@@ -1871,6 +1871,128 @@ class DatabaseTest {
         }
     }
 
+    @Test
+    void alteraPosicaoDaColuna() {
+        byte[] corpo = new byte[20_000];
+        Arrays.fill(corpo, (byte) 4);
+        try (Database db = open()) {
+            db.execute("""
+                    CREATE TABLE agencia (
+                        id INTEGER NOT NULL,
+                        nome VARCHAR(20),
+                        id_empresa INTEGER,
+                        PRIMARY KEY (id),
+                        UNIQUE (nome)
+                    )
+                    """);
+            db.execute("CREATE INDEX ix_empresa ON agencia (id_empresa)");
+            db.execute("INSERT INTO agencia VALUES (1, 'centro', 10), (2, 'norte', 20)");
+            db.execute("""
+                    CREATE TABLE conta (
+                        id INTEGER PRIMARY KEY,
+                        agencia_id INTEGER,
+                        CONSTRAINT FK_conta FOREIGN KEY (agencia_id) REFERENCES agencia (id)
+                    )
+                    """);
+            db.execute("INSERT INTO conta VALUES (1, 1)");
+            db.execute("CREATE VIEW agencia_v AS SELECT * FROM agencia WHERE id = 1");
+            db.execute("CREATE VIEW apelido (codigo, titulo, empresa) AS SELECT * FROM agencia");
+            db.execute("CREATE TABLE doc (id INTEGER PRIMARY KEY, corpo BLOB, titulo VARCHAR(10))");
+            db.execute("INSERT INTO doc VALUES (1, ?, 'a')", corpo);
+
+            db.execute("""
+                    ALTER TABLE agencia
+                      ALTER id_empresa POSITION 1
+                    """);
+            SqlResult linhas = db.query("SELECT * FROM agencia ORDER BY id");
+            assertEquals(List.of("id_empresa", "id", "nome"),
+                    linhas.columns().stream().map(ColumnMeta::name).toList());
+            assertEquals(10, linhas.rows().get(0).getInt("id_empresa"));
+            assertEquals(1, linhas.rows().get(0).getInt("id"));
+            assertEquals("centro", linhas.rows().get(0).getString("nome"));
+            assertEquals(20, linhas.rows().get(1).getInt("id_empresa"));
+            assertEquals("norte", linhas.rows().get(1).getString("nome"));
+
+            TableDescription agencia = table(db, "agencia");
+            assertEquals(List.of("id_empresa", "id", "nome"),
+                    agencia.columns().stream().map(TableDescription.TableColumn::name).toList());
+            assertEquals(0, agencia.columns().get(0).primaryKeyPosition());
+            assertEquals(1, agencia.columns().get(1).primaryKeyPosition());
+            assertEquals(List.of("id"), agencia.indexes().get(0).columns());
+            assertEquals(List.of("nome"), agencia.indexes().get(1).columns());
+            assertEquals(List.of("id_empresa"), agencia.indexes().get(2).columns());
+
+            assertEquals("centro", db.query("SELECT nome FROM agencia WHERE id_empresa = 10").rows().get(0).getString(0));
+            assertEquals(1, db.query("SELECT id FROM agencia WHERE nome = 'centro'").rows().get(0).getInt("id"));
+            db.execute("INSERT INTO agencia VALUES (30, 3, 'leste')");
+            assertEquals("leste", db.query("SELECT nome FROM agencia WHERE id = 3").rows().get(0).getString(0));
+            assertEquals(30, db.query("SELECT id_empresa FROM agencia WHERE id = 3").rows().get(0).getInt("id_empresa"));
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO agencia VALUES (30, 3, 'oeste')"));
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO conta VALUES (2, 99)"));
+
+            SqlResult vista = db.query("SELECT * FROM agencia_v");
+            assertEquals(List.of("id", "nome", "id_empresa"),
+                    vista.columns().stream().map(ColumnMeta::name).toList());
+            assertEquals(1, vista.rows().get(0).getInt("id"));
+            assertEquals("centro", vista.rows().get(0).getString("nome"));
+            assertEquals(10, vista.rows().get(0).getInt("id_empresa"));
+            SqlResult apelido = db.query("SELECT * FROM apelido WHERE codigo = 2");
+            assertEquals(List.of("codigo", "titulo", "empresa"),
+                    apelido.columns().stream().map(ColumnMeta::name).toList());
+            assertEquals(2, apelido.rows().get(0).getInt("codigo"));
+            assertEquals("norte", apelido.rows().get(0).getString("titulo"));
+            assertEquals(20, apelido.rows().get(0).getInt("empresa"));
+
+            db.execute("ALTER TABLE doc ALTER COLUMN titulo POSITION 1");
+            SqlResult doc = db.query("SELECT * FROM doc");
+            assertEquals(List.of("titulo", "id", "corpo"),
+                    doc.columns().stream().map(ColumnMeta::name).toList());
+            assertEquals("a", doc.rows().get(0).getString("titulo"));
+            assertArrayEquals(corpo, doc.rows().get(0).getBytes("corpo"));
+
+            db.execute("ALTER TABLE agencia ALTER id_empresa POSITION 1");
+            assertEquals(List.of("id_empresa", "id", "nome"),
+                    db.query("SELECT * FROM agencia").columns().stream().map(ColumnMeta::name).toList());
+            NexException zero = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE agencia ALTER id POSITION 0"));
+            assertTrue(zero.getMessage().contains("between 1 and 3"));
+            assertThrows(NexException.class, () -> db.execute("ALTER TABLE agencia ALTER id POSITION 4"));
+            assertThrows(NexException.class, () -> db.execute("ALTER TABLE agencia ALTER ausente POSITION 1"));
+            assertEquals(List.of("id_empresa", "id", "nome"),
+                    db.query("SELECT * FROM agencia").columns().stream().map(ColumnMeta::name).toList());
+
+            db.execute("BEGIN");
+            db.execute("UPDATE agencia SET nome = 'centro' WHERE id = 1");
+            NexException transacao = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE agencia ALTER nome POSITION 1"));
+            assertTrue(transacao.getMessage().contains("transaction"));
+            db.execute("ROLLBACK");
+
+            db.execute("CREATE SCHEMA vendas");
+            db.execute("CREATE TABLE vendas.agencia (id INTEGER, nome VARCHAR(10))");
+            db.execute("INSERT INTO vendas.agencia VALUES (7, 'loja')");
+            db.execute("ALTER TABLE vendas.agencia ALTER nome POSITION 1");
+            SqlResult vendas = db.query("SELECT * FROM vendas.agencia");
+            assertEquals(List.of("nome", "id"), vendas.columns().stream().map(ColumnMeta::name).toList());
+            assertEquals("loja", vendas.rows().get(0).getString("nome"));
+            assertEquals(7, vendas.rows().get(0).getInt("id"));
+        }
+        try (Database db = open()) {
+            SqlResult linhas = db.query("SELECT * FROM agencia ORDER BY id");
+            assertEquals(List.of("id_empresa", "id", "nome"),
+                    linhas.columns().stream().map(ColumnMeta::name).toList());
+            assertEquals("leste", linhas.rows().get(2).getString("nome"));
+            assertEquals(30, linhas.rows().get(2).getInt("id_empresa"));
+            assertEquals("centro", db.query("SELECT nome FROM agencia WHERE id = 1").rows().get(0).getString(0));
+            SqlResult vista = db.query("SELECT * FROM agencia_v");
+            assertEquals(1, vista.rows().get(0).getInt("id"));
+            assertEquals(10, vista.rows().get(0).getInt("id_empresa"));
+            assertArrayEquals(corpo, db.query("SELECT corpo FROM doc").rows().get(0).getBytes(0));
+            assertEquals(List.of("titulo", "id", "corpo"),
+                    db.query("SELECT * FROM doc").columns().stream().map(ColumnMeta::name).toList());
+        }
+    }
+
     private static long checkpoint(Path database) throws Exception {
         byte[] header = Files.readAllBytes(database);
         return ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).getLong(Format.CHECKPOINT_LSN_OFFSET);

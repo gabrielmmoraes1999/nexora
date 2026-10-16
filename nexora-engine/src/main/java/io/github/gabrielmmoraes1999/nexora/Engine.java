@@ -614,6 +614,16 @@ final class Engine implements AutoCloseable {
                 });
                 yield SqlResult.update(0);
             }
+            case AlterColumnPosition alter -> {
+                guardDdl(alter.table());
+                rejectBorrowed(require(alter.table()));
+                mutating(alter.table(), () -> {
+                    TableStore table = require(alter.table());
+                    table.moveColumn(alter.column(), alter.position(), () -> bindViewColumns(table));
+                    return 0;
+                });
+                yield SqlResult.update(0);
+            }
             case AddPrimaryKey add -> {
                 guardDdl(add.table());
                 rejectBorrowed(require(add.table()));
@@ -1791,7 +1801,7 @@ final class Engine implements AutoCloseable {
             actor = ownerSession(view.owner());
             SqlResult produced;
             try {
-                produced = query(boundView(view));
+                produced = query(preparedView(view));
             } finally {
                 actor = previous;
             }
@@ -2649,6 +2659,7 @@ final class Engine implements AutoCloseable {
             case DropIndex index -> one(findTable(index.table()));
             case AddColumn add -> one(findTable(add.table()));
             case DropColumn drop -> one(findTable(drop.table()));
+            case AlterColumnPosition alter -> one(findTable(alter.table()));
             case AddPrimaryKey add -> one(findTable(add.table()));
             case AddForeignKey add -> one(findTable(add.table()));
             case DropConstraint drop -> one(findTable(drop.table()));
@@ -2695,6 +2706,7 @@ final class Engine implements AutoCloseable {
         return statement instanceof CreateTable || statement instanceof DropTable
                 || statement instanceof CreateIndex || statement instanceof DropIndex
                 || statement instanceof AddColumn || statement instanceof DropColumn
+                || statement instanceof AlterColumnPosition
                 || statement instanceof AddPrimaryKey || statement instanceof AddForeignKey
                 || statement instanceof AddUnique
                 || statement instanceof DropConstraint || statement instanceof DropPrimaryKey
@@ -4611,6 +4623,8 @@ final class Engine implements AutoCloseable {
     }
 
     private static final String VIEW_COLUMN_SEPARATOR = "\u001f";
+    /** Splits output names from the base columns captured before ALTER COLUMN POSITION. */
+    private static final String VIEW_BINDING_SEPARATOR = "\u001e";
 
     private void createView(CreateView statement) {
         Relation rel = relation(statement.name());
@@ -4719,7 +4733,7 @@ final class Engine implements AutoCloseable {
         }
         viewDepth++;
         try {
-            Select select = boundView(view);
+            Select select = preparedView(view);
             Schema base = relationSchema(select.table());
             List<SelectItem> items = select.star() ? star(base) : select.items();
             if (items.size() != view.columns().size()) {
@@ -4776,6 +4790,55 @@ final class Engine implements AutoCloseable {
             throw new NexException("qualified name exceeds 128 characters");
         }
         return stored;
+    }
+
+    /**
+     * A view defined with {@code SELECT *} is positional. Before the first move,
+     * record the base columns in that order so each view column keeps its value.
+     */
+    private void bindViewColumns(TableStore table) {
+        String relation = Relation.catalogName(table.namespace(), table.schema().name);
+        List<String> sources = new ArrayList<>();
+        for (Column column : table.schema().columns) {
+            sources.add(column.name);
+        }
+        for (StoredView view : allViews()) {
+            if (!Names.same(view.relation(), relation) || !view.sources().isEmpty()) {
+                continue;
+            }
+            Select select = SqlParser.parseView(view.source());
+            if (!select.star() || view.columns().size() != sources.size()) {
+                continue;
+            }
+            String packed = packViewColumns(view.columns(), sources);
+            if (packed.length() > Format.MAX_CHAR) {
+                throw new NexException("view column list exceeds " + Format.MAX_CHAR + " characters");
+            }
+            systemExecute("UPDATE NEX$VIEWS SET NEX$COLUMNS = ? WHERE NEX$VIEW_NAME = ?", packed, view.storedKey());
+        }
+    }
+
+    private static String packViewColumns(List<String> columns, List<String> sources) {
+        String joined = String.join(VIEW_COLUMN_SEPARATOR, columns);
+        if (sources == null || sources.isEmpty()) {
+            return joined;
+        }
+        return joined + VIEW_BINDING_SEPARATOR + String.join(VIEW_COLUMN_SEPARATOR, sources);
+    }
+
+    private Select preparedView(StoredView view) {
+        Select select = boundView(view);
+        if (!select.star() || view.sources().isEmpty() || view.sources().size() != view.columns().size()) {
+            return select;
+        }
+        Schema base = relationSchema(select.table());
+        List<SelectItem> items = new ArrayList<>();
+        for (String name : view.sources()) {
+            Column column = base.column(name);
+            items.add(new SelectItem(new ColumnRef(null, column.name), null, column.name));
+        }
+        return new Select(select.distinct(), false, items, select.table(), select.alias(),
+                select.where(), select.orderBy(), select.limit(), select.offset());
     }
 
     private Select boundView(StoredView view) {
@@ -4955,9 +5018,19 @@ final class Engine implements AutoCloseable {
     private StoredView readView(TableStore table, StoredRow row) {
         String packed = text(table, row, "NEX$COLUMNS");
         List<String> columns = new ArrayList<>();
+        List<String> sources = List.of();
         if (packed != null && !packed.isBlank()) {
-            for (String part : packed.split(VIEW_COLUMN_SEPARATOR, -1)) {
-                columns.add(part);
+            String outputs = packed;
+            int bound = packed.indexOf(VIEW_BINDING_SEPARATOR);
+            if (bound >= 0) {
+                outputs = packed.substring(0, bound);
+                String rest = packed.substring(bound + VIEW_BINDING_SEPARATOR.length());
+                if (!rest.isEmpty()) {
+                    sources = List.copyOf(Arrays.asList(rest.split(VIEW_COLUMN_SEPARATOR, -1)));
+                }
+            }
+            if (!outputs.isEmpty()) {
+                columns.addAll(Arrays.asList(outputs.split(VIEW_COLUMN_SEPARATOR, -1)));
             }
         }
         String storedName = text(table, row, "NEX$VIEW_NAME");
@@ -4970,6 +5043,7 @@ final class Engine implements AutoCloseable {
                 text(table, row, "NEX$VIEW_SOURCE"),
                 text(table, row, "NEX$RELATION_NAME"),
                 columns,
+                sources,
                 text(table, row, "NEX$OWNER_NAME"));
     }
 
@@ -4991,7 +5065,8 @@ final class Engine implements AutoCloseable {
         }
     }
 
-    private record StoredView(String schema, String name, String source, String relation, List<String> columns, String owner) {
+    private record StoredView(String schema, String name, String source, String relation, List<String> columns,
+                              List<String> sources, String owner) {
         String storedKey() {
             return Relation.catalogName(schema, name);
         }

@@ -345,6 +345,44 @@ final class Schema {
         return copy(columns, primaryKey, uniques, copy, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
     }
 
+    /**
+     * Moves the column at {@code from} so it occupies {@code to}. Both indexes start at 0.
+     * Primary keys, unique keys, indexes, and foreign keys keep the same columns.
+     */
+    Schema move(int from, int to) {
+        if (from == to) {
+            return this;
+        }
+        List<Column> copy = new ArrayList<>(columns);
+        Column moved = copy.remove(from);
+        copy.add(to, moved);
+        List<UniqueKey> unique = new ArrayList<>();
+        for (UniqueKey key : uniques) {
+            unique.add(key.withColumns(remapMove(key.columns, from, to)));
+        }
+        List<IndexDef> kept = new ArrayList<>();
+        for (IndexDef definition : indexes) {
+            kept.add(new IndexDef(definition.name, remapMove(definition.columns, from, to),
+                    definition.unique, definition.descending));
+        }
+        List<ForeignKey> keys = new ArrayList<>();
+        for (ForeignKey key : foreignKeys) {
+            keys.add(key.withColumns(remapMove(key.columns, from, to)));
+        }
+        return copy(copy, remapMove(primaryKey, from, to), unique, kept,
+                primaryConstraint, primaryIndex, primaryDescending, keys);
+    }
+
+    static int movedIndex(int index, int from, int to) {
+        if (index == from) {
+            return to;
+        }
+        if (from < to) {
+            return index > from && index <= to ? index - 1 : index;
+        }
+        return index >= to && index < from ? index + 1 : index;
+    }
+
     Schema drop(int index) {
         List<Column> copy = new ArrayList<>();
         for (int i = 0; i < columns.size(); i++) {
@@ -400,6 +438,14 @@ final class Schema {
     private Schema copy(List<Column> columns, int[] primaryKey, List<UniqueKey> uniques, List<IndexDef> indexes,
                         String primaryConstraint, String primaryIndex, boolean primaryDescending, List<ForeignKey> foreignKeys) {
         return new Schema(name, columns, primaryKey, uniques, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
+    }
+
+    private static int[] remapMove(int[] indexes, int from, int to) {
+        int[] mapped = new int[indexes.length];
+        for (int i = 0; i < indexes.length; i++) {
+            mapped[i] = movedIndex(indexes[i], from, to);
+        }
+        return mapped;
     }
 
     private static int[] remap(int[] indexes, int removed) {

@@ -5,7 +5,7 @@ import java.util.List;
 record ParsedSql(List<Stmt> statements, int parameters) {
 }
 
-sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AddPrimaryKey, AddForeignKey,
+sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AlterColumnPosition, AddPrimaryKey, AddForeignKey,
         AddUnique, DropConstraint, DropPrimaryKey, DropForeignKey, DropUnique, Insert, Update, Delete, Select,
         SelectProcedure, Grant, Revoke, BeginTx, CommitTx, RollbackTx, CreateGenerator, DropGenerator, SetGenerator,
         CreateProcedure, DropProcedure, ExecuteProcedure, CreateTrigger, DropTrigger, AlterTrigger, CreateView, DropView,
@@ -66,6 +66,10 @@ record AddColumn(String table, ColDef column) implements Stmt {
 }
 
 record DropColumn(String table, String column) implements Stmt {
+}
+
+/** Moves a column. {@code position} starts at 1, as in Firebird. */
+record AlterColumnPosition(String table, String column, int position) implements Stmt {
 }
 
 record AddPrimaryKey(String table, List<String> columns, String constraint, String index, boolean descending) implements Stmt {

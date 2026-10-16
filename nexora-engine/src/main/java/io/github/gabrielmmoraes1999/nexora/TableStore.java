@@ -466,6 +466,41 @@ final class TableStore implements AutoCloseable {
         dirty = true;
     }
 
+    void moveColumn(String name, int position, Runnable beforeMove) {
+        int from = schema.indexOf(name);
+        if (from < 0) {
+            throw new NexException("column not found: " + name);
+        }
+        int count = schema.columns.size();
+        if (position < 1 || position > count) {
+            throw new NexException("column position must be between 1 and " + count);
+        }
+        int to = position - 1;
+        if (from == to) {
+            return;
+        }
+        if (beforeMove != null) {
+            beforeMove.run();
+        }
+        Schema nextSchema = schema.move(from, to);
+        validate(nextSchema);
+        TreeMap<Long, StoredRow> next = new TreeMap<>();
+        List<Extent> freed = new ArrayList<>();
+        for (StoredRow current : rows.values()) {
+            Cell[] cells = new Cell[current.cells.length];
+            for (int i = 0; i < current.cells.length; i++) {
+                cells[Schema.movedIndex(i, from, to)] = current.cells[i];
+            }
+            freed.addAll(freedExtents(current, cells));
+            next.put(current.id, new StoredRow(current.id, cells, -1, 0, true));
+        }
+        indexes = adapt(schema, nextSchema, next.values());
+        schema = nextSchema;
+        rows = next;
+        pendingFree.addAll(freed);
+        dirty = true;
+    }
+
     void dropColumn(String name) {
         int index = schema.indexOf(name);
         if (index < 0) {
