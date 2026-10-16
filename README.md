@@ -370,7 +370,7 @@ SELECT * FROM item WHERE order_id = 10 AND number = 2;
 
 `LIKE`, `OR`, a range, and an expression stay out of that lookup, and the table is scanned.
 
-`CREATE`, `DROP`, and `ALTER` do not run while a transaction is open.
+`CREATE`, `DROP`, and `ALTER` belong to the open transaction. `COMMIT` keeps them. `ROLLBACK` undoes them, so a dropped index comes back.
 
 ### Rows
 
@@ -451,7 +451,7 @@ try (ResultSet rows = statement.executeQuery(
 
 ## Transaction
 
-With auto-commit on, each command is committed on its own. Turning auto-commit off opens a transaction on the next `INSERT`, `UPDATE`, `DELETE`, or `SELECT`. `commit()` and `rollback()` end it. Turning auto-commit back to `true` commits this connection's transaction. Closing the connection with an open transaction rolls it back.
+With auto-commit on, each command is committed on its own. Turning auto-commit off opens a transaction on the next statement, including `CREATE`, `DROP`, and `ALTER`. `commit()` keeps that work. `rollback()` undoes it. Turning auto-commit back to `true` commits this connection's transaction. Closing the connection with an open transaction rolls it back.
 
 ```java
 connection.setAutoCommit(false);
@@ -477,7 +477,7 @@ UPDATE customer SET name = 'Ana Silva' WHERE id = 1;
 COMMIT;
 ```
 
-`ROLLBACK` in place of `COMMIT` discards the work. `START TRANSACTION` also opens a transaction. `BEGIN` and `COMMIT` accept `WORK` or `TRANSACTION` after them.
+`ROLLBACK` in place of `COMMIT` discards the work, including `CREATE`, `DROP`, and `ALTER`. `START TRANSACTION` also opens a transaction. `BEGIN` and `COMMIT` accept `WORK` or `TRANSACTION` after them.
 
 `setReadOnly(true)` allows `SELECT` and the transaction commands. Everything else fails with SQLSTATE `25006`.
 

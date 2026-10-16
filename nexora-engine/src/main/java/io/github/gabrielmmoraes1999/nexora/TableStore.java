@@ -607,6 +607,16 @@ final class TableStore implements AutoCloseable {
         if (base == null || committed == null) {
             throw new NexException("failed internally to commit " + schema.name);
         }
+        if (!schema.sameStructure(committed.schema)) {
+            if (!base.schema.sameStructure(committed.schema)) {
+                throw new NexException("another transaction changed the structure of " + schema.name);
+            }
+            if (rowsChanged(base, committed)) {
+                throw new NexException("another transaction changed the same row of " + schema.name);
+            }
+            dirty = true;
+            return;
+        }
         if (!sameShape(schema, committed.schema)) {
             throw new NexException("another transaction changed the structure of " + schema.name);
         }
@@ -690,6 +700,22 @@ final class TableStore implements AutoCloseable {
                 throw exception;
             }
         }
+    }
+
+    private boolean rowsChanged(Snapshot base, Snapshot committed) {
+        if (base.rows.size() != committed.rows.size()) {
+            return true;
+        }
+        for (StoredRow row : base.rows.values()) {
+            StoredRow other = committed.rows.get(row.id);
+            if (other == null) {
+                return true;
+            }
+            if (!Arrays.deepEquals(valuesOf(base.schema, row), valuesOf(committed.schema, other))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean sameShape(Schema left, Schema right) {

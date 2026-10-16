@@ -77,7 +77,7 @@ final class LocalAccess implements DatabaseAccess {
     @Override
     public List<String> schemas() throws SQLException {
         try {
-            return shared.database().schemas();
+            return shared.database().schemas(session);
         } catch (NexException exception) {
             throw Jdbc.wrap(exception);
         }
@@ -86,7 +86,7 @@ final class LocalAccess implements DatabaseAccess {
     @Override
     public List<TableDescription> describeAllTables() throws SQLException {
         try {
-            return shared.database().describeAllTables();
+            return shared.database().describeAllTables(session);
         } catch (NexException exception) {
             throw Jdbc.wrap(exception);
         }
@@ -95,7 +95,7 @@ final class LocalAccess implements DatabaseAccess {
     @Override
     public List<TableDescription> describeViews() throws SQLException {
         try {
-            return shared.database().describeViews();
+            return shared.database().describeViews(session);
         } catch (NexException exception) {
             throw Jdbc.wrap(exception);
         }

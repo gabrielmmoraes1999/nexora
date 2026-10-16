@@ -267,14 +267,13 @@ class DatabaseTest {
     }
 
     @Test
-    void ddlForaDaTransacaoExplicita() {
+    void ddlAcompanhaATransacao() {
         try (Database db = open()) {
             db.execute("BEGIN");
             db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");
             assertTrue(db.transactionActive());
             db.execute("ROLLBACK");
-            assertTrue(db.tables().stream().anyMatch(name -> name.equalsIgnoreCase("t")));
-            db.execute("DROP TABLE t");
+            assertTrue(db.tables().isEmpty());
             db.execute("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)");
             db.execute("CREATE TABLE IF NOT EXISTS t (id INTEGER)");
             db.execute("DROP TABLE IF EXISTS ausente");
@@ -291,19 +290,15 @@ class DatabaseTest {
             db.execute("BEGIN");
             db.execute("INSERT INTO pedido VALUES (2, 'bia')");
             db.execute("CREATE TABLE nota (id INTEGER PRIMARY KEY, texto VARCHAR(20))");
-            NexException conflito = assertThrows(NexException.class,
-                    () -> db.execute("CREATE INDEX ix_pedido ON pedido (nome)"));
-            assertTrue(conflito.getMessage().contains("pedido"));
-            assertTrue(conflito.getMessage().contains("COMMIT or ROLLBACK"));
-            assertTrue(db.transactionActive());
+            db.execute("CREATE INDEX ix_pedido ON pedido (nome)");
             db.execute("CREATE UNIQUE INDEX ix_nota ON nota (id)");
+            assertTrue(db.transactionActive());
             db.execute("ROLLBACK");
             assertFalse(db.transactionActive());
             assertEquals(1, db.query("SELECT id FROM pedido").size());
             assertEquals("ana", db.query("SELECT nome FROM pedido").rows().get(0).getString("nome"));
-            assertEquals(0, db.query("SELECT id FROM nota").size());
-            db.execute("INSERT INTO nota VALUES (1, 'ok')");
-            assertThrows(NexException.class, () -> db.execute("INSERT INTO nota VALUES (1, 'dup')"));
+            assertFalse(indexNames(db, "public", "pedido").contains("ix_pedido"));
+            assertThrows(NexException.class, () -> db.query("SELECT id FROM nota"));
 
             db.execute("BEGIN");
             db.execute("INSERT INTO pedido VALUES (2, 'bia')");
@@ -314,9 +309,8 @@ class DatabaseTest {
         }
         try (Database db = open()) {
             assertEquals(2, db.query("SELECT id FROM pedido").size());
-            assertEquals(1, db.query("SELECT id FROM nota").size());
+            assertThrows(NexException.class, () -> db.query("SELECT id FROM nota"));
             assertEquals(0, db.query("SELECT id FROM item").size());
-            assertThrows(NexException.class, () -> db.execute("INSERT INTO nota VALUES (1, 'dup')"));
         }
     }
 
@@ -441,10 +435,11 @@ class DatabaseTest {
             db.execute("CREATE TABLE aberto (id INTEGER)");
             db.execute("BEGIN");
             db.execute("INSERT INTO aberto VALUES (1)");
-            NexException transacao = assertThrows(NexException.class,
-                    () -> db.execute("ALTER TABLE aberto ADD PRIMARY KEY (id)"));
-            assertTrue(transacao.getMessage().contains("transaction"));
+            db.execute("ALTER TABLE aberto ADD PRIMARY KEY (id)");
+            assertEquals("PK_aberto", table(db, "aberto").primaryConstraint());
             db.execute("ROLLBACK");
+            assertEquals("", table(db, "aberto").primaryConstraint());
+            assertEquals(0, db.query("SELECT id FROM aberto").size());
             db.execute("ALTER TABLE aberto ADD PRIMARY KEY (id)");
         }
         try (Database db = open()) {
@@ -671,11 +666,11 @@ class DatabaseTest {
 
             db.execute("BEGIN");
             db.execute("UPDATE item SET extra = 10 WHERE id = 1");
-            NexException transacao = assertThrows(NexException.class,
-                    () -> db.execute("ALTER TABLE item DROP CONSTRAINT PK_item"));
-            assertTrue(transacao.getMessage().contains("transaction"));
+            db.execute("ALTER TABLE item DROP CONSTRAINT PK_item");
+            assertEquals("", table(db, "item").primaryConstraint());
             db.execute("ROLLBACK");
             assertEquals("PK_item", table(db, "item").primaryConstraint());
+            assertEquals(10, db.query("SELECT extra FROM item WHERE id = 1").rows().get(0).getInt("extra"));
 
             db.execute("CREATE TABLE par (a INTEGER NOT NULL, b INTEGER NOT NULL, PRIMARY KEY (a, b))");
             db.execute("INSERT INTO par VALUES (1, 1)");
@@ -903,8 +898,11 @@ class DatabaseTest {
             assertThrows(NexException.class, () -> db.execute("CREATE INDEX idx_blob ON pessoa (foto)"));
             db.execute("BEGIN");
             db.execute("UPDATE pessoa SET nome = 'Ana' WHERE id = 1");
-            assertThrows(NexException.class, () -> db.execute("CREATE INDEX idx_id ON pessoa (id)"));
+            db.execute("CREATE INDEX idx_id ON pessoa (id)");
+            db.execute("DROP INDEX idx_nome");
             db.execute("ROLLBACK");
+            assertTrue(indexNames(db, "public", "pessoa").contains("idx_nome"));
+            assertFalse(indexNames(db, "public", "pessoa").contains("idx_id"));
         }
         try (Database db = open()) {
             assertEquals(3, db.query("SELECT id FROM pessoa WHERE nome = 'Bia' OR nome = 'Ana'").size());
@@ -2084,10 +2082,12 @@ class DatabaseTest {
 
             db.execute("BEGIN");
             db.execute("UPDATE agencia SET nome = 'centro' WHERE id = 1");
-            NexException transacao = assertThrows(NexException.class,
-                    () -> db.execute("ALTER TABLE agencia ALTER nome POSITION 1"));
-            assertTrue(transacao.getMessage().contains("transaction"));
+            db.execute("ALTER TABLE agencia ALTER nome POSITION 1");
+            assertEquals(List.of("nome", "id_empresa", "id"),
+                    db.query("SELECT * FROM agencia").columns().stream().map(ColumnMeta::name).toList());
             db.execute("ROLLBACK");
+            assertEquals(List.of("id_empresa", "id", "nome"),
+                    db.query("SELECT * FROM agencia").columns().stream().map(ColumnMeta::name).toList());
 
             db.execute("CREATE SCHEMA vendas");
             db.execute("CREATE TABLE vendas.agencia (id INTEGER, nome VARCHAR(10))");

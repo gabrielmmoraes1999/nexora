@@ -432,6 +432,68 @@ final class Schema {
         }
         return false;
     }
+
+    /** Columns, keys, and indexes. Identity counters may differ. */
+    boolean sameStructure(Schema other) {
+        if (other == this) {
+            return true;
+        }
+        if (other == null || columns.size() != other.columns.size()) {
+            return false;
+        }
+        for (int i = 0; i < columns.size(); i++) {
+            Column one = columns.get(i);
+            Column two = other.columns.get(i);
+            if (!Names.same(one.name, two.name) || one.type != two.type || one.length != two.length
+                    || one.scale != two.scale || one.notNull != two.notNull || one.autoIncrement != two.autoIncrement
+                    || one.hasDefault != two.hasDefault || !sameDefault(one.defaultValue, two.defaultValue)) {
+                return false;
+            }
+        }
+        if (!Arrays.equals(primaryKey, other.primaryKey) || primaryDescending != other.primaryDescending
+                || !Names.same(primaryConstraint, other.primaryConstraint) || !Names.same(primaryIndex, other.primaryIndex)) {
+            return false;
+        }
+        if (uniques.size() != other.uniques.size() || indexes.size() != other.indexes.size()
+                || foreignKeys.size() != other.foreignKeys.size()) {
+            return false;
+        }
+        for (int i = 0; i < uniques.size(); i++) {
+            UniqueKey one = uniques.get(i);
+            UniqueKey two = other.uniques.get(i);
+            if (!Names.same(one.name, two.name) || !Arrays.equals(one.columns, two.columns)) {
+                return false;
+            }
+        }
+        for (int i = 0; i < indexes.size(); i++) {
+            IndexDef one = indexes.get(i);
+            IndexDef two = other.indexes.get(i);
+            if (!Names.same(one.name, two.name) || one.unique != two.unique || one.descending != two.descending
+                    || !Arrays.equals(one.columns, two.columns)) {
+                return false;
+            }
+        }
+        for (int i = 0; i < foreignKeys.size(); i++) {
+            ForeignKey one = foreignKeys.get(i);
+            ForeignKey two = other.foreignKeys.get(i);
+            if (!Names.same(one.name, two.name) || !Names.same(one.indexName, two.indexName)
+                    || !Names.same(one.referencedSchema, two.referencedSchema)
+                    || !Names.same(one.referencedTable, two.referencedTable)
+                    || one.descending != two.descending || one.onUpdate != two.onUpdate || one.onDelete != two.onDelete
+                    || !Arrays.equals(one.columns, two.columns)
+                    || !Arrays.equals(one.referencedColumns, two.referencedColumns)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameDefault(Object left, Object right) {
+        if (left instanceof byte[] one && right instanceof byte[] two) {
+            return Arrays.equals(one, two);
+        }
+        return java.util.Objects.equals(left, right);
+    }
 }
 
 final class IndexKey {

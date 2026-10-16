@@ -407,11 +407,17 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Schemas in the file, in name order. Every database has {@code public}.
+     * Schemas visible to this connection, in name order. Every database has {@code public}.
      */
     public List<String> schemas() {
         synchronized (engine) {
-            return engine.schemaNames();
+            return engine.schemaNames(owner);
+        }
+    }
+
+    public List<String> schemas(Session session) {
+        synchronized (engine) {
+            return engine.schemaNames(session);
         }
     }
 
@@ -431,22 +437,41 @@ public final class Database implements AutoCloseable {
      */
     public List<TableDescription> describeTables() {
         synchronized (engine) {
-            return engine.describeTables();
+            return engine.describeTables(owner);
+        }
+    }
+
+    public List<TableDescription> describeTables(Session session) {
+        synchronized (engine) {
+            return engine.describeTables(session);
         }
     }
 
     public List<TableDescription> describeAllTables() {
         synchronized (engine) {
-            return engine.describeAllTables();
+            return engine.describeAllTables(owner);
+        }
+    }
+
+    public List<TableDescription> describeAllTables(Session session) {
+        synchronized (engine) {
+            return engine.describeAllTables(session);
         }
     }
 
     /**
-     * Describes the views, in name order. Each one is read-only and has no index.
+     * Describes the views visible to this connection, in name order.
+     * Each one is read-only and has no index.
      */
     public List<TableDescription> describeViews() {
         synchronized (engine) {
-            return engine.describeViews();
+            return engine.describeViews(owner);
+        }
+    }
+
+    public List<TableDescription> describeViews(Session session) {
+        synchronized (engine) {
+            return engine.describeViews(session);
         }
     }
 

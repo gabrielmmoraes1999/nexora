@@ -83,7 +83,7 @@ final class Jdbc {
 
     static boolean skipsTransaction(String sql) {
         return switch (firstKeyword(sql)) {
-            case "BEGIN", "START", "COMMIT", "ROLLBACK", "CREATE", "DROP", "ALTER", "GRANT", "REVOKE" -> true;
+            case "BEGIN", "START", "COMMIT", "ROLLBACK" -> true;
             default -> false;
         };
     }

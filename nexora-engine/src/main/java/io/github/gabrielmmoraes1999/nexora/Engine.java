@@ -28,8 +28,6 @@ final class Engine implements AutoCloseable {
     private final Map<String, TableStore> tables = new LinkedHashMap<>();
     private final Map<Long, Session> attachments = new HashMap<>();
     private boolean inTransaction;
-    /** DDL of this command commits on its own and stays out of the open transaction. */
-    private boolean ddlAside;
     private Session transactionSession;
     private long nextTransaction = 1;
     private Long transactionId;
@@ -234,10 +232,8 @@ final class Engine implements AutoCloseable {
         }
         this.params = bound;
         SqlResult last = SqlResult.update(0);
-        List<Stmt> statements = parsed.statements();
-        boolean pureDdl = inTransaction && !statements.isEmpty() && statements.stream().allMatch(Engine::isDdl);
-        for (int i = 0; i < statements.size(); i++) {
-            last = executeOne(statements.get(i), pureDdl && i == statements.size() - 1);
+        for (Stmt statement : parsed.statements()) {
+            last = executeOne(statement);
         }
         return last;
     }
@@ -258,6 +254,14 @@ final class Engine implements AutoCloseable {
     }
 
     List<String> schemaNames() {
+        return schemaNames(null);
+    }
+
+    List<String> schemaNames(Session session) {
+        return seeing(session, this::readSchemaNames);
+    }
+
+    private List<String> readSchemaNames() {
         checkOpen();
         TableStore table = systemTable(SystemTables.SCHEMAS);
         List<String> names = new ArrayList<>();
@@ -284,11 +288,25 @@ final class Engine implements AutoCloseable {
     }
 
     List<TableDescription> describeAllTables() {
-        checkOpen();
-        return describeStores(true);
+        return describeAllTables(null);
+    }
+
+    List<TableDescription> describeAllTables(Session session) {
+        return seeing(session, () -> {
+            checkOpen();
+            return describeStores(true);
+        });
     }
 
     List<TableDescription> describeViews() {
+        return describeViews(null);
+    }
+
+    List<TableDescription> describeViews(Session session) {
+        return seeing(session, this::readViews);
+    }
+
+    private List<TableDescription> readViews() {
         checkOpen();
         List<TableDescription> descriptions = new ArrayList<>();
         for (StoredView view : allViews()) {
@@ -312,7 +330,11 @@ final class Engine implements AutoCloseable {
     }
 
     List<TableDescription> describeTables() {
-        return describeStores(false);
+        return describeTables(null);
+    }
+
+    List<TableDescription> describeTables(Session session) {
+        return seeing(session, () -> describeStores(false));
     }
 
     private List<TableDescription> describeStores(boolean includeSystem) {
@@ -437,24 +459,7 @@ final class Engine implements AutoCloseable {
     }
 
     private SqlResult executeOne(Stmt statement) {
-        return executeOne(statement, false);
-    }
-
-    private SqlResult executeOne(Stmt statement, boolean logScript) {
-        boolean aside = inTransaction && isDdl(statement);
-        if (!aside) {
-            return dispatch(statement);
-        }
-        rejectDdlConflict(statement);
-        boolean previousAside = ddlAside;
-        ddlAside = true;
-        try {
-            SqlResult result = dispatch(statement);
-            flushAside(logScript);
-            return result;
-        } finally {
-            ddlAside = previousAside;
-        }
+        return dispatch(statement);
     }
 
     private SqlResult dispatch(Stmt statement) {
@@ -786,6 +791,10 @@ final class Engine implements AutoCloseable {
         }
         ensureIndexesFree(rel.schema(), schema);
         createStored(schema, rel.schema());
+        OpenTxn txn = currentTxn();
+        if (txn != null) {
+            txn.created.put(require(statement.name()), Boolean.TRUE);
+        }
         recordOwner(Relation.catalogName(rel.schema(), schema.name));
     }
 
@@ -807,6 +816,14 @@ final class Engine implements AutoCloseable {
         guardReferenced(table);
         rejectBorrowed(table);
         String key = rel.key();
+        OpenTxn txn = currentTxn();
+        if (txn != null) {
+            tables.remove(key);
+            txn.dropped.put(key, table);
+            forgetPrivileges(storedName);
+            forgetTriggers(storedName);
+            return;
+        }
         tables.remove(key);
         try {
             publishLayout(table.base(), table.capacity());
@@ -2331,30 +2348,6 @@ final class Engine implements AutoCloseable {
         pending.clear();
     }
 
-    /**
-     * Writes DDL that does not belong to the open transaction.
-     * Tables the transaction already changed stay dirty until COMMIT or ROLLBACK.
-     */
-    private void flushAside(boolean logScript) {
-        Session owner = transactionSession != null ? transactionSession : actor;
-        OpenTxn txn = owner == null ? null : transactions.get(owner);
-        Predicate<TableStore> include = table -> txn == null || !txn.tables.containsKey(table);
-        List<TransactionLog.Applied> logged = List.of();
-        int script = -1;
-        if (logScript && !pending.isEmpty()) {
-            for (TableStore table : tables.values()) {
-                if (table.isDirty() && include.test(table)) {
-                    script = pending.size() - 1;
-                    logged = List.of(pending.get(script));
-                    break;
-                }
-            }
-        }
-        if (flushMatching(include, logged) && script >= 0) {
-            pending.remove(script);
-        }
-    }
-
     private boolean flushMatching(Predicate<TableStore> include) {
         return flushMatching(include, List.of());
     }
@@ -2712,99 +2705,6 @@ final class Engine implements AutoCloseable {
             return new ColumnMeta(item.label(), type, namespace, tableName);
         }
         return new ColumnMeta(item.label(), type);
-    }
-
-    private void rejectDdlConflict(Stmt statement) {
-        for (TableStore table : ddlTargets(statement)) {
-            if (!transactionUses(table)) {
-                continue;
-            }
-            String name = Relation.catalogName(table.namespace(), table.schema().name);
-            throw new NexException("DDL cannot change " + name
-                    + " while the transaction is using it. COMMIT or ROLLBACK first.");
-        }
-    }
-
-    private boolean transactionUses(TableStore table) {
-        if (table == null) {
-            return false;
-        }
-        Session owner = transactionSession != null ? transactionSession : actor;
-        if (owner == null) {
-            return false;
-        }
-        OpenTxn txn = transactions.get(owner);
-        return txn != null && txn.tables.containsKey(table);
-    }
-
-    private List<TableStore> ddlTargets(Stmt statement) {
-        return switch (statement) {
-            case DropTable drop -> one(findTable(drop.name()));
-            case CreateIndex index -> one(findTable(index.table()));
-            case DropIndex index -> one(locateIndex(index));
-            case AddColumn add -> one(findTable(add.table()));
-            case DropColumn drop -> one(findTable(drop.table()));
-            case AlterColumnPosition alter -> one(findTable(alter.table()));
-            case AddPrimaryKey add -> one(findTable(add.table()));
-            case AddForeignKey add -> one(findTable(add.table()));
-            case DropConstraint drop -> one(findTable(drop.table()));
-            case DropPrimaryKey drop -> one(findTable(drop.table()));
-            case DropForeignKey drop -> one(findTable(drop.table()));
-            case AddUnique add -> one(findTable(add.table()));
-            case DropUnique drop -> one(findTable(drop.table()));
-            case CreateTrigger trigger -> one(findTable(trigger.table()));
-            case DropTrigger trigger -> one(triggerTable(trigger.name()));
-            case AlterTrigger trigger -> one(triggerTable(trigger.name()));
-            case DropSchema drop -> tablesInSchema(drop.name());
-            default -> List.of();
-        };
-    }
-
-    private static List<TableStore> one(TableStore table) {
-        return table == null ? List.of() : List.of(table);
-    }
-
-    private TableStore triggerTable(String name) {
-        StoredRow row = findRow(SystemTables.TRIGGERS, "NEX$TRIGGER_NAME", name);
-        if (row == null) {
-            return null;
-        }
-        String relation = text(require(SystemTables.TRIGGERS), row, "NEX$RELATION_NAME");
-        return relation == null ? null : findTable(relation);
-    }
-
-    private List<TableStore> tablesInSchema(String name) {
-        if (!schemaExists(name)) {
-            return List.of();
-        }
-        String schema = canonicalSchema(name);
-        List<TableStore> found = new ArrayList<>();
-        for (TableStore table : tables.values()) {
-            if (Names.same(table.namespace(), schema) && !SystemTables.isSystem(table.schema().name)) {
-                found.add(table);
-            }
-        }
-        return found;
-    }
-
-    private static boolean isDdl(Stmt statement) {
-        return statement instanceof CreateTable || statement instanceof DropTable
-                || statement instanceof CreateIndex || statement instanceof DropIndex
-                || statement instanceof AddColumn || statement instanceof DropColumn
-                || statement instanceof AlterColumnPosition
-                || statement instanceof AddPrimaryKey || statement instanceof AddForeignKey
-                || statement instanceof AddUnique
-                || statement instanceof DropConstraint || statement instanceof DropPrimaryKey
-                || statement instanceof DropForeignKey || statement instanceof DropUnique
-                || statement instanceof Grant || statement instanceof Revoke
-                || statement instanceof CreateGenerator || statement instanceof DropGenerator
-                || statement instanceof CreateProcedure || statement instanceof DropProcedure
-                || statement instanceof CreateTrigger || statement instanceof DropTrigger
-                || statement instanceof AlterTrigger
-                || statement instanceof CreateView || statement instanceof DropView
-                || statement instanceof CreateRole || statement instanceof DropRole
-                || statement instanceof GrantRole || statement instanceof RevokeRole
-                || statement instanceof CreateSchema || statement instanceof DropSchema;
     }
 
     private static Object[] bind(Object[] parameters, int expected) {
@@ -5184,9 +5084,6 @@ final class Engine implements AutoCloseable {
     }
 
     private void track(TableStore table) {
-        if (ddlAside) {
-            return;
-        }
         Session owner = transactionSession != null ? transactionSession : actor;
         if (owner == null) {
             return;
@@ -5210,6 +5107,23 @@ final class Engine implements AutoCloseable {
         for (Map.Entry<Session, OpenTxn> entry : transactions.entrySet()) {
             if (entry.getKey() != actor && entry.getValue().tables.containsKey(table)) {
                 throw new NexException("another transaction is using the table " + table.schema().name);
+            }
+        }
+    }
+
+    private <T> T seeing(Session session, java.util.function.Supplier<T> action) {
+        boolean lifted = session != null && transactions.containsKey(session) && installed != session;
+        if (lifted) {
+            activate(session);
+        }
+        try {
+            return action.get();
+        } finally {
+            if (lifted) {
+                park(session);
+                inTransaction = false;
+                transactionSession = null;
+                transactionId = null;
             }
         }
     }
@@ -5273,6 +5187,7 @@ final class Engine implements AutoCloseable {
                 }
             }
         }
+        undoCatalog(txn);
         if (installed == session || transactionSession == session) {
             installed = null;
             inTransaction = false;
@@ -5296,6 +5211,9 @@ final class Engine implements AutoCloseable {
         }
         try {
             for (TableStore table : txn.tables.keySet()) {
+                if (txn.dropped.containsValue(table)) {
+                    continue;
+                }
                 TableStore.Snapshot onto = txn.held.get(table);
                 if (onto == null) {
                     onto = txn.layout.get(table);
@@ -5310,6 +5228,9 @@ final class Engine implements AutoCloseable {
         }
         try {
             flush();
+            for (TableStore table : txn.dropped.values()) {
+                discardTable(table);
+            }
         } catch (RuntimeException exception) {
             transactions.clear();
             installed = null;
@@ -5330,12 +5251,48 @@ final class Engine implements AutoCloseable {
         transactionId = null;
     }
 
+    private OpenTxn currentTxn() {
+        Session owner = transactionSession != null ? transactionSession : actor;
+        if (owner == null || !inTransaction) {
+            return null;
+        }
+        return transactions.get(owner);
+    }
+
+    private void undoCatalog(OpenTxn txn) {
+        for (Map.Entry<String, TableStore> entry : txn.dropped.entrySet()) {
+            if (!txn.created.containsKey(entry.getValue())) {
+                tables.put(entry.getKey(), entry.getValue());
+            }
+        }
+        for (TableStore table : List.copyOf(txn.created.keySet())) {
+            discardTable(table);
+        }
+    }
+
+    private void discardTable(TableStore table) {
+        String key = Relation.key(table.namespace(), table.schema().name);
+        boolean present = tables.containsKey(key);
+        tables.remove(key);
+        try {
+            publishLayout(table.base(), table.capacity());
+        } catch (RuntimeException exception) {
+            if (present) {
+                tables.put(key, table);
+            }
+            throw exception;
+        }
+        table.close();
+    }
+
     private static final class OpenTxn {
         private final long id;
         private final IdentityHashMap<TableStore, TableStore.Snapshot> layout = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, TableStore.Snapshot> held = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, TableStore.Snapshot> workspace = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, Boolean> tables = new IdentityHashMap<>();
+        private final IdentityHashMap<TableStore, Boolean> created = new IdentityHashMap<>();
+        private final LinkedHashMap<String, TableStore> dropped = new LinkedHashMap<>();
 
         private OpenTxn(long id) {
             this.id = id;

@@ -311,21 +311,21 @@ public final class MotorServer implements AutoCloseable {
         private List<String> schemas(Session session) {
             synchronized (database) {
                 ensure(session);
-                return database.schemas();
+                return database.schemas(session);
             }
         }
 
         private List<TableDescription> describeTables(Session session) {
             synchronized (database) {
                 ensure(session);
-                return database.describeAllTables();
+                return database.describeAllTables(session);
             }
         }
 
         private List<TableDescription> describeViews(Session session) {
             synchronized (database) {
                 ensure(session);
-                return database.describeViews();
+                return database.describeViews(session);
             }
         }
 
