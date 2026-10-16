@@ -116,7 +116,7 @@ final class ObjectPane extends JPanel {
         JTable grants = Tables.create();
         JTextArea ddl = scriptArea();
         data = new DataPane(hub, node.databaseId(), node.schema(), node.name(), editableShape);
-        tabs.addTab("Columns", wrap(columns, buttons(
+        tabs.addTab("Columns", wrap(Look.scroll(columns), buttons(
                 button("New column", () -> {
                     Connection connection = requireQuiet();
                     if (connection != null && Dialogs.column(hub.owner(), connection, node.schema(), node.name())) {
@@ -134,7 +134,7 @@ final class ObjectPane extends JPanel {
                 button("Move up", () -> moveColumn(columns, ddl, -1), editableShape),
                 button("Move down", () -> moveColumn(columns, ddl, 1), editableShape))));
         tabs.addTab("Data", data);
-        tabs.addTab("Indexes", wrap(indexes, buttons(
+        tabs.addTab("Indexes", wrap(Look.scroll(indexes), buttons(
                 button("New index", () -> newIndex(indexes, ddl), editableShape),
                 button("Delete index", () -> dropIndex(indexes, ddl), editableShape))));
         JTabbedPane constraints = new JTabbedPane();
@@ -729,7 +729,7 @@ final class ObjectPane extends JPanel {
         if (columns.getSelectedRow() < 0) {
             return;
         }
-        String name = String.valueOf(Tables.row(columns, columns.getSelectedRow()).get(0));
+        String name = String.valueOf(Tables.row(columns, columns.getSelectedRow()).get(1));
         if (!Dialogs.confirm(hub.owner(), "Delete column " + name + "?")) {
             return;
         }
@@ -758,7 +758,7 @@ final class ObjectPane extends JPanel {
         if (target < 0 || target >= columns.getRowCount()) {
             return;
         }
-        String name = String.valueOf(Tables.row(columns, row).get(0));
+        String name = String.valueOf(Tables.row(columns, row).get(1));
         Connection connection = requireQuiet();
         if (connection == null) {
             return;
@@ -913,13 +913,13 @@ final class ObjectPane extends JPanel {
         List<List<Object>> rows = new ArrayList<>();
         for (int i = 0; i < columns.size(); i++) {
             Ddl.ColumnInfo column = columns.get(i);
-            rows.add(List.of(column.name(), i + 1, Ddl.typeSql(column.typeName(), column.size(), column.scale()),
+            rows.add(List.of(i + 1, column.name(), Ddl.typeSql(column.typeName(), column.size(), column.scale()),
                     column.nullable() ? "yes" : "no",
                     column.primaryKeyPosition() == 0 ? "" : Integer.toString(column.primaryKeyPosition()),
                     column.autoIncrement() ? "yes" : "",
                     column.defaultSql() == null ? "" : column.defaultSql()));
         }
-        Tables.show(table, List.of("Name", "Position", "Type", "Null", "PK", "Auto", "Default"), rows);
+        Tables.show(table, List.of("Position", "Name", "Type", "Null", "PK", "Auto", "Default"), rows);
     }
 
     private static void fillIndexes(JTable table, List<Ddl.IndexInfo> indexes) {
