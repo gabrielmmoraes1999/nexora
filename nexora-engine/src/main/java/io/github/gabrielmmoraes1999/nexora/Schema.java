@@ -194,7 +194,7 @@ final class Schema {
         return copy(copy, key, uniques, indexes, constraint, index, descending, foreignKeys);
     }
 
-    Schema add(Column column, boolean primary, boolean unique) {
+    Schema add(Column column, boolean primary, String uniqueName) {
         if (primary && primaryKey.length > 0) {
             throw new NexException("table " + name + " already has a primary key");
         }
@@ -203,8 +203,8 @@ final class Schema {
         int index = copy.size() - 1;
         int[] pk = primary ? new int[]{index} : primaryKey;
         List<UniqueKey> groups = new ArrayList<>(uniques);
-        if (unique && !primary) {
-            groups.add(new UniqueKey(freshUniqueName(), new int[]{index}));
+        if (uniqueName != null && !primary) {
+            groups.add(new UniqueKey(uniqueName, new int[]{index}));
         }
         String constraint = primaryConstraint;
         String indexName = primaryIndex;
@@ -250,42 +250,6 @@ final class Schema {
             throw new NexException("unique key not found: " + constraint);
         }
         return copy(columns, primaryKey, copy, indexes, primaryConstraint, primaryIndex, primaryDescending, foreignKeys);
-    }
-
-    String freshUniqueName() {
-        for (int sequence = 1; sequence < 1000; sequence++) {
-            String candidate = "UNQ" + sequence + "_" + name;
-            if (candidate.length() > Format.MAX_NAME) {
-                break;
-            }
-            if (!nameTaken(candidate)) {
-                return candidate;
-            }
-        }
-        throw new NexException("could not name the unique key");
-    }
-
-    boolean nameTaken(String candidate) {
-        if (primaryKey.length > 0
-                && (Names.same(primaryConstraint, candidate) || Names.same(primaryIndex, candidate))) {
-            return true;
-        }
-        for (UniqueKey key : uniques) {
-            if (Names.same(key.name, candidate)) {
-                return true;
-            }
-        }
-        for (ForeignKey key : foreignKeys) {
-            if (Names.same(key.name, candidate) || Names.same(key.indexName, candidate)) {
-                return true;
-            }
-        }
-        for (IndexDef definition : indexes) {
-            if (Names.same(definition.name, candidate)) {
-                return true;
-            }
-        }
-        return Names.same(candidate, "PRIMARY");
     }
 
     Schema withForeignKey(ForeignKey key) {

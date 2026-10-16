@@ -689,7 +689,7 @@ final class ObjectPane extends JPanel {
             return;
         }
         try {
-            Commands.run(connection, Ddl.dropIndex(node.schema(), node.name(), name));
+            Commands.run(connection, Ddl.dropIndex(node.schema(), name));
             fillIndexes(indexes, Outline.indexes(connection, node.schema(), node.name()));
             refreshConstraints(connection);
             reloadDdl(ddl);

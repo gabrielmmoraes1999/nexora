@@ -292,8 +292,8 @@ public final class Ddl {
         return "ALTER TABLE " + SqlNames.qualify(schema, table) + " DROP CONSTRAINT " + SqlNames.quote(constraint);
     }
 
-    public static String dropIndex(String schema, String table, String index) {
-        return "DROP INDEX " + SqlNames.quote(index) + " ON " + SqlNames.qualify(schema, table);
+    public static String dropIndex(String schema, String index) {
+        return "DROP INDEX " + SqlNames.qualify(schema, index);
     }
 
     public static String dropObject(Node.Kind kind, String schema, String name) {

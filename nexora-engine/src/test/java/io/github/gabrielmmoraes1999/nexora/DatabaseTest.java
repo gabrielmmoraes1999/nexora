@@ -922,6 +922,127 @@ class DatabaseTest {
     }
 
     @Test
+    void nomeDeIndiceUnicoNoEsquema() {
+        try (Database db = open()) {
+            db.execute("CREATE SCHEMA vendas");
+            db.execute("CREATE TABLE pessoa (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("CREATE TABLE vendas.pessoa (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("CREATE INDEX idx_nome ON pessoa (nome)");
+
+            NexException duplicado = assertThrows(NexException.class,
+                    () -> db.execute("CREATE INDEX idx_nome ON pedido (nome)"));
+            assertTrue(duplicado.getMessage().contains("idx_nome"));
+            db.execute("CREATE INDEX IF NOT EXISTS idx_nome ON pedido (nome)");
+            assertFalse(indexNames(db, "public", "pedido").contains("idx_nome"));
+            NexException caixa = assertThrows(NexException.class,
+                    () -> db.execute("CREATE INDEX IDX_NOME ON pedido (nome)"));
+            assertTrue(caixa.getMessage().contains("IDX_NOME"));
+            db.execute("CREATE INDEX idx_nome ON vendas.pessoa (nome)");
+            assertTrue(indexNames(db, "vendas", "pessoa").contains("idx_nome"));
+
+            NexException chave = assertThrows(NexException.class,
+                    () -> db.execute("CREATE INDEX PK_pessoa ON pedido (id)"));
+            assertTrue(chave.getMessage().contains("PK_pessoa"));
+            NexException unico = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE pedido ADD CONSTRAINT idx_nome UNIQUE (nome)"));
+            assertTrue(unico.getMessage().contains("idx_nome"));
+            db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY, pessoa_id INTEGER)");
+            NexException estrangeira = assertThrows(NexException.class, () -> db.execute("""
+                    ALTER TABLE item ADD CONSTRAINT FK_item FOREIGN KEY (pessoa_id) REFERENCES pessoa (id)
+                    USING INDEX idx_nome
+                    """));
+            assertTrue(estrangeira.getMessage().contains("idx_nome"));
+
+            db.execute("CREATE INDEX FK_filho ON pessoa (nome)");
+            db.execute("""
+                    CREATE TABLE filho (
+                        id INTEGER PRIMARY KEY,
+                        pessoa_id INTEGER,
+                        FOREIGN KEY (pessoa_id) REFERENCES pessoa (id)
+                    )
+                    """);
+            assertTrue(indexNames(db, "public", "filho").contains("FK_filho_pessoa_id"));
+
+            db.execute("""
+                    CREATE TABLE reserva (
+                        id INTEGER PRIMARY KEY,
+                        nome VARCHAR(20),
+                        CONSTRAINT UNQ1_conta UNIQUE (nome)
+                    )
+                    """);
+            db.execute("CREATE TABLE conta (id INTEGER PRIMARY KEY, email VARCHAR(40) UNIQUE)");
+            assertTrue(indexNames(db, "public", "conta").contains("UNQ2_conta"));
+
+            db.execute("CREATE TABLE extra (nome VARCHAR(20))");
+            db.execute("CREATE INDEX PK_extra ON pessoa (nome)");
+            NexException coluna = assertThrows(NexException.class,
+                    () -> db.execute("ALTER TABLE extra ADD COLUMN id INTEGER PRIMARY KEY"));
+            assertTrue(coluna.getMessage().contains("PK_extra"));
+            NexException usando = assertThrows(NexException.class, () -> db.execute("""
+                    CREATE TABLE copia (
+                        id INTEGER,
+                        CONSTRAINT pk_copia PRIMARY KEY (id) USING INDEX idx_nome
+                    )
+                    """));
+            assertTrue(usando.getMessage().contains("idx_nome"));
+        }
+        try (Database db = open()) {
+            NexException duplicado = assertThrows(NexException.class,
+                    () -> db.execute("CREATE INDEX idx_nome ON pedido (nome)"));
+            assertTrue(duplicado.getMessage().contains("idx_nome"));
+            assertTrue(indexNames(db, "vendas", "pessoa").contains("idx_nome"));
+        }
+    }
+
+    @Test
+    void removeIndicePeloNomeNoEsquema() {
+        try (Database db = open()) {
+            db.execute("CREATE SCHEMA vendas");
+            db.execute("CREATE TABLE pessoa (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("CREATE TABLE vendas.pessoa (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("CREATE INDEX idx_nome ON pessoa (nome)");
+            db.execute("CREATE INDEX idx_nome ON vendas.pessoa (nome)");
+            db.execute("CREATE INDEX idx_pedido ON pedido (nome)");
+
+            db.execute("DROP INDEX idx_nome");
+            assertFalse(indexNames(db, "public", "pessoa").contains("idx_nome"));
+            assertTrue(indexNames(db, "vendas", "pessoa").contains("idx_nome"));
+            db.execute("DROP INDEX IF EXISTS idx_nome");
+            NexException ausente = assertThrows(NexException.class, () -> db.execute("DROP INDEX idx_nome"));
+            assertTrue(ausente.getMessage().contains("idx_nome"));
+
+            db.execute("DROP INDEX vendas.idx_nome");
+            assertFalse(indexNames(db, "vendas", "pessoa").contains("idx_nome"));
+            db.execute("SET SCHEMA vendas");
+            db.execute("CREATE INDEX idx_nome ON pessoa (nome)");
+            db.execute("DROP INDEX idx_nome");
+            assertFalse(indexNames(db, "vendas", "pessoa").contains("idx_nome"));
+            db.execute("SET SCHEMA public");
+
+            db.execute("DROP INDEX idx_pedido ON pedido");
+            assertFalse(indexNames(db, "public", "pedido").contains("idx_pedido"));
+            db.execute("CREATE INDEX idx_pedido ON pedido (nome)");
+            db.execute("DROP INDEX IF EXISTS idx_pedido ON pessoa");
+            NexException outra = assertThrows(NexException.class,
+                    () -> db.execute("DROP INDEX idx_pedido ON pessoa"));
+            assertTrue(outra.getMessage().contains("idx_pedido"));
+            assertTrue(indexNames(db, "public", "pedido").contains("idx_pedido"));
+
+            NexException chave = assertThrows(NexException.class, () -> db.execute("DROP INDEX PK_pessoa"));
+            assertTrue(chave.getMessage().contains("PRIMARY KEY"));
+            assertTrue(indexNames(db, "public", "pessoa").contains("PK_pessoa"));
+        }
+        try (Database db = open()) {
+            assertTrue(indexNames(db, "public", "pedido").contains("idx_pedido"));
+            assertFalse(indexNames(db, "public", "pessoa").contains("idx_nome"));
+            db.execute("DROP INDEX idx_pedido");
+            assertFalse(indexNames(db, "public", "pedido").contains("idx_pedido"));
+        }
+    }
+
+    @Test
     void indiceEmPaginasSobreviveReabertura() throws Exception {
         try (Database db = open()) {
             db.execute("CREATE TABLE item (id INTEGER, nome VARCHAR(40), grupo INTEGER)");
@@ -2026,6 +2147,13 @@ class DatabaseTest {
             }
         }
         return false;
+    }
+
+    private static List<String> indexNames(Database db, String schema, String table) {
+        return db.describeTables().stream()
+                .filter(item -> item.schema().equalsIgnoreCase(schema) && item.name().equalsIgnoreCase(table))
+                .findFirst().orElseThrow()
+                .indexes().stream().map(TableDescription.TableIndex::name).toList();
     }
 
     private static TableDescription table(Database db, String name) {

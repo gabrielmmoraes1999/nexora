@@ -598,7 +598,15 @@ final class Engine implements AutoCloseable {
                 guardDdl(add.table());
                 rejectBorrowed(require(add.table()));
                 mutating(add.table(), () -> {
-                    require(add.table()).addColumn(column(add.column()), add.column().primaryKey(), add.column().unique());
+                    TableStore table = require(add.table());
+                    String uniqueName = null;
+                    if (add.column().unique() && !add.column().primaryKey()) {
+                        uniqueName = freshUnique(table.schema(), table.namespace());
+                    }
+                    if (add.column().primaryKey()) {
+                        ensureIndexFree(table.namespace(), "PK_" + table.schema().name);
+                    }
+                    table.addColumn(column(add.column()), add.column().primaryKey(), uniqueName);
                     return 0;
                 });
                 yield SqlResult.update(0);
@@ -632,7 +640,7 @@ final class Engine implements AutoCloseable {
                     String constraint = add.constraint() == null || add.constraint().isBlank()
                             ? "PK_" + table.schema().name : add.constraint();
                     String index = add.index() == null || add.index().isBlank() ? constraint : add.index();
-                    claim(table.schema(), constraint, index, true);
+                    claim(table.namespace(), table.schema(), constraint, index, true);
                     table.addPrimaryKey(resolve(table.schema().columns, add.columns(), "primary key"),
                             constraint, index, add.descending());
                     return 0;
@@ -709,7 +717,7 @@ final class Engine implements AutoCloseable {
                 rejectBorrowed(require(add.table()));
                 mutating(add.table(), () -> {
                     TableStore table = require(add.table());
-                    table.addUnique(buildUnique(table.schema(), add.constraint(), add.columns()));
+                    table.addUnique(buildUnique(table.schema(), table.namespace(), add.constraint(), add.columns()));
                     return 0;
                 });
                 yield SqlResult.update(0);
@@ -759,14 +767,14 @@ final class Engine implements AutoCloseable {
             }
             throw new NexException("table already exists: " + shown(statement.name()));
         }
-        Schema schema = compile(rel.name(), statement.columns(), statement.primaryKey(), statement.uniques());
+        Schema schema = compile(rel.schema(), rel.name(), statement.columns(), statement.primaryKey(), statement.uniques());
         if (statement.primaryConstraint() != null || statement.primaryIndex() != null || statement.primaryDescending()) {
             if (schema.primaryKey.length == 0) {
                 throw new NexException("USING INDEX requires a primary key");
             }
             String constraint = statement.primaryConstraint() == null ? schema.primaryConstraint : statement.primaryConstraint();
             String index = statement.primaryIndex() == null ? constraint : statement.primaryIndex();
-            claim(schema, constraint, index, true);
+            claim(rel.schema(), schema, constraint, index, true);
             schema = schema.namePrimary(constraint, index, statement.primaryDescending());
         }
         for (ForeignClause clause : statement.foreignKeys()) {
@@ -776,6 +784,7 @@ final class Engine implements AutoCloseable {
             schema = schema.withIndex(new IndexDef(foreign.indexName, foreign.columns, false, foreign.descending))
                     .withForeignKey(foreign);
         }
+        ensureIndexesFree(rel.schema(), schema);
         createStored(schema, rel.schema());
         recordOwner(Relation.catalogName(rel.schema(), schema.name));
     }
@@ -818,7 +827,7 @@ final class Engine implements AutoCloseable {
         if (reservedIndexName(statement.name())) {
             throw new NexException("reserved index name: " + statement.name());
         }
-        if (table.hasIndex(statement.name())) {
+        if (indexUsed(table.namespace(), statement.name())) {
             if (statement.ifNotExists()) {
                 return;
             }
@@ -832,29 +841,59 @@ final class Engine implements AutoCloseable {
     }
 
     private void dropIndex(DropIndex statement) {
-        guardDdl(statement.table());
-        TableStore table = require(statement.table());
-        rejectBorrowed(table);
-        if (table.schema().ownsIndex(statement.name()) || reservedIndexName(statement.name())) {
-            throw new NexException("DROP INDEX does not remove a PRIMARY KEY, FOREIGN KEY, or UNIQUE declared on the table");
+        if (statement.table() != null) {
+            require(statement.table());
         }
-        if (!table.hasIndex(statement.name())) {
+        TableStore table = locateIndex(statement);
+        if (table == null) {
             if (statement.ifExists()) {
                 return;
             }
-            throw new NexException("index not found: " + statement.name());
+            throw new NexException("index not found: " + shown(statement.name()));
         }
-        mutating(statement.table(), () -> {
-            require(statement.table()).dropIndex(statement.name());
+        String indexName = Relation.parse(statement.name()).name();
+        String stored = Relation.catalogName(table.namespace(), table.schema().name);
+        guardDdl(stored);
+        rejectBorrowed(table);
+        if (table.schema().ownsIndex(indexName) || reservedIndexName(indexName)) {
+            throw new NexException("DROP INDEX does not remove a PRIMARY KEY, FOREIGN KEY, or UNIQUE declared on the table");
+        }
+        mutating(stored, () -> {
+            require(stored).dropIndex(indexName);
             return 0;
         });
+    }
+
+    /**
+     * The index name is unique in the schema, so {@code DROP INDEX name} finds it there.
+     * {@code ON table} still limits the search to that table.
+     */
+    private TableStore locateIndex(DropIndex statement) {
+        Relation parsed = Relation.parse(statement.name());
+        if (statement.table() != null) {
+            TableStore table = findTable(statement.table());
+            if (table == null) {
+                return null;
+            }
+            if (parsed.schema() != null && !Names.same(canonicalSchema(parsed.schema()), table.namespace())) {
+                return null;
+            }
+            return table.hasIndex(parsed.name()) ? table : null;
+        }
+        Relation named = relation(statement.name());
+        for (TableStore table : tables.values()) {
+            if (Names.same(table.namespace(), named.schema()) && table.hasIndex(named.name())) {
+                return table;
+            }
+        }
+        return null;
     }
 
     private static boolean reservedIndexName(String name) {
         return Names.same(name, "PRIMARY") || Names.generatedUnique(name);
     }
 
-    private void claim(Schema schema, String constraint, String index, boolean replacingPrimary) {
+    private void claim(String namespace, Schema schema, String constraint, String index, boolean replacingPrimary) {
         Names.checkName(constraint, "constraint");
         Names.checkName(index, "index");
         if (nameUsed(schema, constraint, replacingPrimary)) {
@@ -863,6 +902,7 @@ final class Engine implements AutoCloseable {
         if (!Names.same(constraint, index) && nameUsed(schema, index, replacingPrimary)) {
             throw new NexException("index already exists: " + index);
         }
+        ensureIndexFree(namespace, index);
     }
 
     private boolean nameUsed(Schema schema, String name, boolean ignorePrimary) {
@@ -888,25 +928,69 @@ final class Engine implements AutoCloseable {
         return Names.same(name, "PRIMARY");
     }
 
-    private String freshForeignName(Schema schema, int[] columns) {
+    private String freshForeignName(Schema schema, String namespace, int[] columns) {
         String base = "FK_" + schema.name;
-        if (!nameUsed(schema, base, false)) {
+        if (!nameTakenInSchema(schema, namespace, base)) {
             return base;
         }
         StringBuilder detailed = new StringBuilder(base);
         for (int column : columns) {
             detailed.append('_').append(schema.columns.get(column).name);
         }
-        if (!nameUsed(schema, detailed.toString(), false)) {
+        if (!nameTakenInSchema(schema, namespace, detailed.toString())) {
             return detailed.toString();
         }
         for (int sequence = 2; sequence < 1000; sequence++) {
             String candidate = base + "_" + sequence;
-            if (!nameUsed(schema, candidate, false)) {
+            if (!nameTakenInSchema(schema, namespace, candidate)) {
                 return candidate;
             }
         }
         throw new NexException("could not name the foreign key");
+    }
+
+    private boolean nameTakenInSchema(Schema schema, String namespace, String name) {
+        return nameUsed(schema, name, false) || indexUsed(namespace, name);
+    }
+
+    private boolean indexUsed(String namespace, String name) {
+        for (TableStore table : tables.values()) {
+            if (Names.same(table.namespace(), namespace) && table.hasIndex(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void ensureIndexFree(String namespace, String name) {
+        if (indexUsed(namespace, name)) {
+            throw new NexException("index already exists: " + name);
+        }
+    }
+
+    private void ensureIndexesFree(String namespace, Schema schema) {
+        if (schema.primaryKey.length > 0) {
+            ensureIndexFree(namespace, schema.primaryIndex);
+        }
+        for (UniqueKey key : schema.uniques) {
+            ensureIndexFree(namespace, key.name);
+        }
+        for (IndexDef index : schema.indexes) {
+            ensureIndexFree(namespace, index.name);
+        }
+    }
+
+    private String freshUnique(Schema schema, String namespace) {
+        for (int sequence = 1; sequence < 1000; sequence++) {
+            String candidate = "UNQ" + sequence + "_" + schema.name;
+            if (candidate.length() > Format.MAX_NAME) {
+                break;
+            }
+            if (!nameTakenInSchema(schema, namespace, candidate)) {
+                return candidate;
+            }
+        }
+        throw new NexException("could not name the unique key");
     }
 
     private ForeignKey buildForeignKey(Schema child, String childNamespace, String constraint, List<String> columnNames,
@@ -964,9 +1048,10 @@ final class Engine implements AutoCloseable {
                 throw new NexException("incompatible type in foreign key: " + child.columns.get(columns[i]).name);
             }
         }
-        String constraintName = constraint == null || constraint.isBlank() ? freshForeignName(child, columns) : constraint;
+        String constraintName = constraint == null || constraint.isBlank()
+                ? freshForeignName(child, childNamespace, columns) : constraint;
         String indexName = index == null || index.isBlank() ? constraintName : index;
-        claim(child, constraintName, indexName, false);
+        claim(childNamespace, child, constraintName, indexName, false);
         ReferentialAction updateAction = onUpdate == null ? ReferentialAction.NO_ACTION : onUpdate;
         ReferentialAction deleteAction = onDelete == null ? ReferentialAction.NO_ACTION : onDelete;
         checkAction(child, columns, updateAction, "ON UPDATE");
@@ -1399,15 +1484,15 @@ final class Engine implements AutoCloseable {
         return null;
     }
 
-    private UniqueKey buildUnique(Schema schema, String constraint, List<String> columnNames) {
+    private UniqueKey buildUnique(Schema schema, String namespace, String constraint, List<String> columnNames) {
         int[] columns = resolve(schema.columns, columnNames, "unique key");
         for (int column : columns) {
             if (schema.columns.get(column).type == DataType.BLOB) {
                 throw new NexException("BLOB cannot be a key");
             }
         }
-        String name = constraint == null || constraint.isBlank() ? schema.freshUniqueName() : constraint;
-        claim(schema, name, name, false);
+        String name = constraint == null || constraint.isBlank() ? freshUnique(schema, namespace) : constraint;
+        claim(namespace, schema, name, name, false);
         return new UniqueKey(name, columns);
     }
 
@@ -2476,7 +2561,7 @@ final class Engine implements AutoCloseable {
         }
     }
 
-    private Schema compile(String name, List<ColDef> definitions, List<String> primary, List<UniqueClause> uniques) {
+    private Schema compile(String namespace, String name, List<ColDef> definitions, List<String> primary, List<UniqueClause> uniques) {
         List<Column> columns = new ArrayList<>();
         List<String> columnPrimary = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -2510,11 +2595,11 @@ final class Engine implements AutoCloseable {
                 if (columns.get(i).type == DataType.BLOB) {
                     throw new NexException("BLOB cannot be a key");
                 }
-                schema = schema.withUnique(new UniqueKey(schema.freshUniqueName(), new int[]{i}));
+                schema = schema.withUnique(new UniqueKey(freshUnique(schema, namespace), new int[]{i}));
             }
         }
         for (UniqueClause clause : uniques) {
-            schema = schema.withUnique(buildUnique(schema, clause.constraint(), clause.columns()));
+            schema = schema.withUnique(buildUnique(schema, namespace, clause.constraint(), clause.columns()));
         }
         return schema;
     }
@@ -2656,7 +2741,7 @@ final class Engine implements AutoCloseable {
         return switch (statement) {
             case DropTable drop -> one(findTable(drop.name()));
             case CreateIndex index -> one(findTable(index.table()));
-            case DropIndex index -> one(findTable(index.table()));
+            case DropIndex index -> one(locateIndex(index));
             case AddColumn add -> one(findTable(add.table()));
             case DropColumn drop -> one(findTable(drop.table()));
             case AlterColumnPosition alter -> one(findTable(alter.table()));

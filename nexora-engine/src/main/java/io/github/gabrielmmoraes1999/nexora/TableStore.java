@@ -390,11 +390,11 @@ final class TableStore implements AutoCloseable {
         return count;
     }
 
-    void addColumn(Column column, boolean primary, boolean unique) {
+    void addColumn(Column column, boolean primary, String uniqueName) {
         if (schema.indexOf(column.name) >= 0) {
             throw new NexException("column already exists: " + column.name);
         }
-        if ((primary || unique) && column.type == DataType.BLOB) {
+        if ((primary || uniqueName != null) && column.type == DataType.BLOB) {
             throw new NexException("BLOB cannot be a key");
         }
         if (!rows.isEmpty() && column.notNull && !column.hasDefault && !column.autoIncrement) {
@@ -423,7 +423,7 @@ final class TableStore implements AutoCloseable {
         if (stored.autoIncrement) {
             stored = stored.withIdentity(identity);
         }
-        Schema nextSchema = schema.add(stored, primary, unique);
+        Schema nextSchema = schema.add(stored, primary, uniqueName);
         validate(nextSchema);
         indexes = indexesAfterAdd(nextSchema, next, primary);
         schema = nextSchema;

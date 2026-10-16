@@ -347,11 +347,17 @@ DROP SCHEMA IF EXISTS sales CASCADE;
 CREATE INDEX idx_customer ON orders (customer_id);
 CREATE UNIQUE INDEX idx_email ON customer (email);
 CREATE INDEX IF NOT EXISTS idx_item ON item (order_id, number);
+DROP INDEX idx_customer;
+DROP INDEX IF EXISTS idx_customer;
+DROP INDEX sales.idx_customer;
 DROP INDEX idx_customer ON orders;
-DROP INDEX IF EXISTS idx_customer ON orders;
 ```
 
 `CREATE UNIQUE INDEX` rejects a duplicate, including in rows that already exist. A `BLOB` cannot be part of an index or a key. The names `PRIMARY` and `UNQ1_table`, `UNQ2_table`, … are reserved for the index of the `UNIQUE` declared on the table. The primary key index, each foreign key index, and each `UNIQUE` index are not removed by `DROP INDEX`. Dropping a column removes the indexes that use it.
+
+An index name is unique within its schema. The primary key index, each `UNIQUE` index, each foreign key index, and each index from `CREATE INDEX` share that namespace. `CREATE INDEX idx ON public.customer` and `CREATE INDEX idx ON sales.customer` are both valid; a second `idx` in `public` fails. `CREATE INDEX IF NOT EXISTS` does nothing when that name is already an index in the schema, even when the index belongs to another table. A generated `UNQ` or `FK_` name that is already an index in the schema is skipped for the next free candidate. The default primary key index stays `PK_` plus the table name, and creation fails when that name is already an index in the schema.
+
+`DROP INDEX` finds the index by that name in the schema. Without a schema, it uses the session schema. `sales.idx_customer` selects the schema. `ON table` is optional and limits the search to that table.
 
 The entries live in 4096-byte pages in the table region. The file grows with the keys. An equality lookup reads only the pages on the path, from the root to the leaf, and the full key list does not stay in memory. The table rows are still loaded on open.
 

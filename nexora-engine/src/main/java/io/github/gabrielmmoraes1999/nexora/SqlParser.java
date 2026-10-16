@@ -491,9 +491,12 @@ final class SqlParser {
                 expectKeyword("EXISTS");
                 ifExists = true;
             }
-            String name = expectIdent();
-            expectKeyword("ON");
-            return new DropIndex(ifExists, name, expectRelation());
+            String name = expectRelation();
+            String table = null;
+            if (consumeKeyword("ON")) {
+                table = expectRelation();
+            }
+            return new DropIndex(ifExists, name, table);
         }
         if (!peekKeyword("TABLE")) {
             throw error("DROP supports TABLE, INDEX, SCHEMA, GENERATOR, SEQUENCE, PROCEDURE, TRIGGER, VIEW, ROLE, and CONNECTION");
