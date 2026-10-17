@@ -1287,12 +1287,34 @@ final class DatabaseFile implements AutoCloseable {
         }
 
         void apply(FileChannel channel) {
+            long runAt = -1;
+            byte[] run = null;
+            int runLength = 0;
             for (TransactionLog.Span span : spans.values()) {
+                if (span.data != null && run != null && runAt + runLength == span.offset
+                        && (long) runLength + span.data.length <= Integer.MAX_VALUE) {
+                    int needed = runLength + span.data.length;
+                    if (needed > run.length) {
+                        run = Arrays.copyOf(run, Math.max(needed, run.length * 2));
+                    }
+                    System.arraycopy(span.data, 0, run, runLength, span.data.length);
+                    runLength = needed;
+                    continue;
+                }
+                if (run != null) {
+                    Format.writeFully(channel, runAt, runLength == run.length ? run : Arrays.copyOf(run, runLength));
+                    run = null;
+                }
                 if (span.data == null) {
                     Format.zero(channel, span.offset, span.length);
-                } else {
-                    Format.writeFully(channel, span.offset, span.data);
+                    continue;
                 }
+                runAt = span.offset;
+                run = span.data;
+                runLength = span.data.length;
+            }
+            if (run != null) {
+                Format.writeFully(channel, runAt, runLength == run.length ? run : Arrays.copyOf(run, runLength));
             }
         }
 

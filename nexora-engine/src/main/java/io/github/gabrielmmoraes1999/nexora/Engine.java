@@ -26,6 +26,12 @@ final class Engine implements AutoCloseable {
     final Path file;
     private final DatabaseFile storage;
     private final Map<String, TableStore> tables = new LinkedHashMap<>();
+    private final Map<String, ParsedSql> parsedSql = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, ParsedSql> eldest) {
+            return size() > 32;
+        }
+    };
     private final Map<Long, Session> attachments = new HashMap<>();
     private boolean inTransaction;
     private Session transactionSession;
@@ -222,7 +228,7 @@ final class Engine implements AutoCloseable {
     }
 
     private SqlResult executeBody(String sql, Object[] parameters) {
-        ParsedSql parsed = SqlParser.parse(sql);
+        ParsedSql parsed = parsed(sql);
         Object[] bound = bind(parameters, parsed.parameters());
         for (int i = 0; i < parsed.statements().size() - 1; i++) {
             if (parsed.statements().get(i) instanceof Select || parsed.statements().get(i) instanceof SelectProcedure
@@ -236,6 +242,20 @@ final class Engine implements AutoCloseable {
             last = executeOne(statement);
         }
         return last;
+    }
+
+    /**
+     * JDBC repeats the same text for every execution of a prepared statement.
+     * The tree is only read after parsing.
+     */
+    private ParsedSql parsed(String sql) {
+        ParsedSql cached = parsedSql.get(sql);
+        if (cached != null) {
+            return cached;
+        }
+        ParsedSql parsed = SqlParser.parse(sql);
+        parsedSql.put(sql, parsed);
+        return parsed;
     }
 
     boolean transactionActive() {

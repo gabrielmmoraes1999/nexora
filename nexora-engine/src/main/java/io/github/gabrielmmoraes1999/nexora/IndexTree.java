@@ -528,7 +528,10 @@ final class IndexTree {
         }
 
         void put(Schema schema, int[] columns, byte[] key, long rowId) {
-            alignOverflow();
+            boolean overflow = keyOverflowOffset.length != 0 || idsOverflowOffset.length != 0;
+            if (overflow) {
+                alignOverflow();
+            }
             int at = exact(schema, columns, key);
             if (at >= 0) {
                 ids[at] = append(ids[at], rowId);
@@ -546,10 +549,12 @@ final class IndexTree {
             }
             keys = insertKey(keys, lo, key);
             ids = insertIds(ids, lo, new long[]{rowId});
-            keyOverflowOffset = insertLong(keyOverflowOffset, lo, 0);
-            keyOverflowLength = insertInt(keyOverflowLength, lo, 0);
-            idsOverflowOffset = insertLong(idsOverflowOffset, lo, 0);
-            idsOverflowLength = insertInt(idsOverflowLength, lo, 0);
+            if (overflow) {
+                keyOverflowOffset = insertLong(keyOverflowOffset, lo, 0);
+                keyOverflowLength = insertInt(keyOverflowLength, lo, 0);
+                idsOverflowOffset = insertLong(idsOverflowOffset, lo, 0);
+                idsOverflowLength = insertInt(idsOverflowLength, lo, 0);
+            }
         }
 
         boolean remove(Schema schema, int[] columns, byte[] key, long rowId) {
@@ -874,6 +879,15 @@ final class IndexTree {
         }
 
         static byte[] encode(Schema schema, int[] columns, Object[] values) {
+            int width = fixedWidth(schema, columns);
+            if (width > 0) {
+                byte[] raw = new byte[width];
+                int at = 0;
+                for (int i = 0; i < columns.length; i++) {
+                    at = writeFixed(raw, at, schema.columns.get(columns[i]), values[i]);
+                }
+                return raw;
+            }
             try {
                 ByteArrayOutputStream raw = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(raw);
@@ -885,6 +899,66 @@ final class IndexTree {
             } catch (IOException exception) {
                 throw new NexException("corrupt index in table " + schema.name);
             }
+        }
+
+        private static int fixedWidth(Schema schema, int[] columns) {
+            int total = 0;
+            for (int column : columns) {
+                int size = width(schema.columns.get(column).type);
+                if (size == 0) {
+                    return 0;
+                }
+                total += size;
+            }
+            return total;
+        }
+
+        private static int writeFixed(byte[] raw, int at, Column column, Object value) {
+            switch (column.type) {
+                case BOOLEAN -> raw[at] = (byte) ((Boolean) value ? 1 : 0);
+                case SMALLINT -> {
+                    int number = ((Number) value).shortValue();
+                    raw[at] = (byte) (number >> 8);
+                    raw[at + 1] = (byte) number;
+                }
+                case INTEGER, DATE -> {
+                    int number = column.type == DataType.DATE
+                            ? (int) ((LocalDate) value).toEpochDay()
+                            : ((Number) value).intValue();
+                    raw[at] = (byte) (number >> 24);
+                    raw[at + 1] = (byte) (number >> 16);
+                    raw[at + 2] = (byte) (number >> 8);
+                    raw[at + 3] = (byte) number;
+                }
+                case BIGINT, TIME -> {
+                    long number = column.type == DataType.TIME
+                            ? ((LocalTime) value).toNanoOfDay()
+                            : ((Number) value).longValue();
+                    writeLong(raw, at, number);
+                }
+                case TIMESTAMP -> {
+                    LocalDateTime timestamp = (LocalDateTime) value;
+                    writeLong(raw, at, timestamp.toEpochSecond(ZoneOffset.UTC));
+                    int nano = timestamp.getNano();
+                    raw[at + 8] = (byte) (nano >> 24);
+                    raw[at + 9] = (byte) (nano >> 16);
+                    raw[at + 10] = (byte) (nano >> 8);
+                    raw[at + 11] = (byte) nano;
+                }
+                default -> throw new NexException("corrupt index");
+            }
+            return at + width(column.type);
+        }
+
+        private static void writeLong(byte[] raw, int at, long number) {
+            raw[at] = (byte) (number >> 56);
+            raw[at + 1] = (byte) (number >> 48);
+            raw[at + 2] = (byte) (number >> 40);
+            raw[at + 3] = (byte) (number >> 32);
+            raw[at + 4] = (byte) (number >> 24);
+            raw[at + 5] = (byte) (number >> 16);
+            raw[at + 6] = (byte) (number >> 8);
+            raw[at + 7] = (byte) number;
         }
 
         static int compare(Schema schema, int[] columns, byte[] left, byte[] right) {

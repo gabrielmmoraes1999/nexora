@@ -495,8 +495,12 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
+    /**
+     * Fast compression. Maximum effort spent more time on a bulk commit than writing
+     * the pages, and the redo did not come out smaller.
+     */
     private static byte[] deflate(byte[] input) {
-        Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION);
+        Deflater deflater = new Deflater(Deflater.BEST_SPEED);
         try {
             deflater.setInput(input);
             deflater.finish();
