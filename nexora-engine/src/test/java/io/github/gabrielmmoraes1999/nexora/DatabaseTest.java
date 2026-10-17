@@ -1,8 +1,10 @@
 package io.github.gabrielmmoraes1999.nexora;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -37,6 +40,23 @@ class DatabaseTest {
             Database.create(file, DatabaseOptions.defaults());
         }
         return Database.open(file, "dba", "dba");
+    }
+
+    @Test
+    void arquivoAbertoNaoPodeSerApagado() throws Exception {
+        Assumptions.assumeTrue(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows"));
+        Path file = dir.resolve("preso.db");
+        Database.create(file, DatabaseOptions.defaults());
+        Path log = dir.resolve("preso.log");
+        try (Database db = Database.open(file, "dba", "dba")) {
+            assertThrows(IOException.class, () -> Files.delete(file));
+            assertThrows(IOException.class, () -> Files.delete(log));
+            assertTrue(Files.exists(file));
+            assertTrue(Files.exists(log));
+            db.execute("CREATE TABLE t (id INTEGER)");
+        }
+        assertTrue(Files.deleteIfExists(file));
+        assertTrue(Files.deleteIfExists(log));
     }
 
     @Test

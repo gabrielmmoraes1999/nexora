@@ -102,8 +102,8 @@ final class DatabaseFile implements AutoCloseable {
             }
             boolean created = !existing && !Files.exists(path);
             FileChannel channel = existing
-                    ? FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
-                    : FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+                    ? Format.openHeld(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                    : Format.openHeld(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             DatabaseFile database = new DatabaseFile(path, channel);
             try {
                 database.lock();

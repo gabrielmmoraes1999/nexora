@@ -1,9 +1,12 @@
 package io.github.gabrielmmoraes1999.nexora;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.OpenOption;
+import java.nio.file.Path;
 import java.util.zip.CRC32;
 
 final class Format {
@@ -134,6 +137,22 @@ final class Format {
             writeFully(channel, at, count == chunk.length ? chunk : new byte[count]);
             at += count;
             left -= count;
+        }
+    }
+
+    /**
+     * Opens a file that stays for the life of the database. On Windows a byte-range
+     * lock still allows deletion; this open does not share delete access. Other
+     * systems have no such flag and keep the ordinary open.
+     */
+    static FileChannel openHeld(Path path, OpenOption... options) throws IOException {
+        OpenOption[] held = new OpenOption[options.length + 1];
+        System.arraycopy(options, 0, held, 0, options.length);
+        held[options.length] = com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE;
+        try {
+            return FileChannel.open(path, held);
+        } catch (UnsupportedOperationException unsupported) {
+            return FileChannel.open(path, options);
         }
     }
 

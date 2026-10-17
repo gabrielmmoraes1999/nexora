@@ -77,7 +77,7 @@ final class TransactionLog implements AutoCloseable {
             if (Files.exists(path)) {
                 Files.delete(path);
             }
-            FileChannel channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            FileChannel channel = Format.openHeld(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             TransactionLog log = new TransactionLog(path, channel);
             try {
                 log.lock();
@@ -147,7 +147,7 @@ final class TransactionLog implements AutoCloseable {
             if (!Files.isRegularFile(path) || Files.size(path) == 0) {
                 throw new NexException("transaction log is missing");
             }
-            FileChannel channel = FileChannel.open(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
+            FileChannel channel = Format.openHeld(path, StandardOpenOption.READ, StandardOpenOption.WRITE);
             TransactionLog log = new TransactionLog(path, channel);
             try {
                 log.lock();
