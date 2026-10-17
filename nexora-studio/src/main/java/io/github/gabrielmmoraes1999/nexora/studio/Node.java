@@ -9,6 +9,7 @@ public record Node(Kind kind, String databaseId, String title, String schema, St
 
     public static final String TABLES = "tables";
     public static final String VIEWS = "views";
+    public static final String INDEXES = "indexes";
     public static final String PROCEDURES = "procedures";
     public static final String TRIGGERS = "triggers";
     public static final String GENERATORS = "generators";
@@ -51,6 +52,7 @@ public record Node(Kind kind, String databaseId, String title, String schema, St
         TABLE,
         SYSTEM_TABLE,
         VIEW,
+        INDEX,
         PROCEDURE,
         TRIGGER,
         GENERATOR,

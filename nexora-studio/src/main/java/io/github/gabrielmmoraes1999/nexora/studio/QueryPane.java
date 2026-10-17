@@ -42,6 +42,7 @@ final class QueryPane extends JPanel {
         editor.setText(sql == null ? "" : sql);
         editor.setCaretPosition(editor.getDocument().getLength());
         Highlighter.watch(editor);
+        SqlComplete.attach(editor, hub, databaseId);
         JScrollPane editorScroll = Look.scroll(editor);
         editorScroll.setBorder(javax.swing.BorderFactory.createEmptyBorder());
 
@@ -65,7 +66,7 @@ final class QueryPane extends JPanel {
         split.setBorder(javax.swing.BorderFactory.createEmptyBorder());
         add(toolbar(), BorderLayout.NORTH);
         add(split, BorderLayout.CENTER);
-        message(false, "F9 runs the script. The SELECT, when present, must be the last command.");
+        message(false, "F9 runs the script. Ctrl+Space completes. The SELECT, when present, must be the last command.");
     }
 
     String databaseId() {

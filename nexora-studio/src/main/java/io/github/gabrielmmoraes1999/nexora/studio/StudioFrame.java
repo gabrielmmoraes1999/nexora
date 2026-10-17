@@ -412,6 +412,10 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
                     Outline.ViewInfo view = Outline.view(connection, node.schema(), node.name());
                     yield Ddl.view(node.schema(), node.name(), view.columns(), view.source());
                 }
+                case INDEX -> {
+                    Outline.IndexRef index = Outline.index(connection, node.schema(), node.name());
+                    yield Ddl.createIndex(index.unique(), index.name(), node.schema(), index.table(), index.columns());
+                }
                 case PROCEDURE -> {
                     Outline.Routine routine = Outline.procedure(connection, node.schema(), node.name());
                     yield Ddl.procedure(node.schema(), routine.name(), routine.parameters(), routine.source());

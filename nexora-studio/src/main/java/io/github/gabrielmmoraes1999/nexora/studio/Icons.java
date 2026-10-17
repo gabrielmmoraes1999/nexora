@@ -71,6 +71,7 @@ final class Icons {
             case TABLE -> table(ACCENT);
             case SYSTEM_TABLE -> table(GRAY);
             case VIEW -> layers(TEAL);
+            case INDEX -> index();
             case PROCEDURE -> scroll(VIOLET);
             case TRIGGER -> bolt();
             case GENERATOR -> gauge();
@@ -174,6 +175,18 @@ final class Icons {
             g.draw(new Line2D.Float(6, 6, 10, 6));
             g.draw(new Line2D.Float(6, 8, 10, 8));
             g.draw(new Line2D.Float(6, 10, 9, 10));
+        });
+    }
+
+    private static Icon index() {
+        return paint(g -> {
+            g.setColor(new Color(0x175CD3));
+            g.fill(new Rectangle2D.Float(3, 3, 2, 2));
+            g.fill(new Rectangle2D.Float(3, 7, 2, 2));
+            g.fill(new Rectangle2D.Float(3, 11, 2, 2));
+            g.draw(new Line2D.Float(7, 4, 13, 4));
+            g.draw(new Line2D.Float(7, 8, 13, 8));
+            g.draw(new Line2D.Float(7, 12, 11, 12));
         });
     }
 

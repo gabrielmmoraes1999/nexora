@@ -24,6 +24,7 @@ public record Outline(
         List<RelationName> procedures,
         List<TriggerRef> triggers,
         List<GeneratorRef> generators,
+        List<IndexRef> indexes,
         List<String> schemas,
         List<String> roles,
         List<String> users,
@@ -37,6 +38,7 @@ public record Outline(
         procedures = List.copyOf(procedures);
         triggers = List.copyOf(triggers);
         generators = List.copyOf(generators);
+        indexes = List.copyOf(indexes);
         schemas = List.copyOf(schemas);
         roles = List.copyOf(roles);
         users = List.copyOf(users);
@@ -50,6 +52,13 @@ public record Outline(
     }
 
     public record GeneratorRef(String schema, String name, long current) {
+    }
+
+    public record IndexRef(String schema, String table, String name, boolean unique, boolean descending,
+                           List<String> columns) {
+        public IndexRef {
+            columns = List.copyOf(columns);
+        }
     }
 
     public record TriggerInfo(String name, String relation, int position, String type, String source,
@@ -164,11 +173,53 @@ public record Outline(
         }
         generators.sort(Comparator.comparing(GeneratorRef::schema, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(GeneratorRef::name, String.CASE_INSENSITIVE_ORDER));
+        List<IndexRef> indexes = loadIndexes(connection, tables, warnings);
         List<String> roles = names(tryQuery(connection, warnings, "roles",
                 "SELECT NEX$ROLE_NAME FROM NEX$ROLES"), "NEX$ROLE_NAME");
         List<String> users = names(tryQuery(connection, warnings, "users",
                 "SELECT NEX$USER_NAME FROM NEX$USERS"), "NEX$USER_NAME");
-        return new Outline(tables, systemTables, views, procedures, triggers, generators, schemas, roles, users, warnings);
+        return new Outline(tables, systemTables, views, procedures, triggers, generators, indexes, schemas, roles, users, warnings);
+    }
+
+    private static List<IndexRef> loadIndexes(Connection connection, List<RelationName> tables, List<String> warnings) {
+        List<IndexRef> indexes = new ArrayList<>();
+        for (RelationName table : tables) {
+            try {
+                for (Ddl.IndexInfo index : indexes(connection, table.schema(), table.name())) {
+                    indexes.add(new IndexRef(table.schema(), table.name(), index.name(),
+                            index.unique(), index.descending(), index.columns()));
+                }
+            } catch (SQLException exception) {
+                warnings.add("indexes " + table.schema() + "." + table.name() + ": " + exception.getMessage());
+            }
+        }
+        indexes.sort(Comparator.comparing(IndexRef::schema, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(IndexRef::name, String.CASE_INSENSITIVE_ORDER));
+        return indexes;
+    }
+
+    public static IndexRef index(Connection connection, String schema, String name) throws SQLException {
+        DatabaseMetaData meta = connection.getMetaData();
+        List<String> tables = new ArrayList<>();
+        try (ResultSet result = meta.getTables(null, SqlNames.likeExact(schema), "%", new String[]{"TABLE"})) {
+            while (result.next()) {
+                if (!SqlNames.same(schema, result.getString("TABLE_SCHEM"))) {
+                    continue;
+                }
+                String table = result.getString("TABLE_NAME");
+                if (table != null && !table.isBlank()) {
+                    tables.add(table);
+                }
+            }
+        }
+        for (String table : tables) {
+            for (Ddl.IndexInfo index : indexes(connection, schema, table)) {
+                if (SqlNames.same(index.name(), name)) {
+                    return new IndexRef(schema, table, index.name(), index.unique(), index.descending(), index.columns());
+                }
+            }
+        }
+        throw new SQLException("index not found: " + name);
     }
 
     public static List<Ddl.ColumnInfo> columns(Connection connection, String schema, String table) throws SQLException {

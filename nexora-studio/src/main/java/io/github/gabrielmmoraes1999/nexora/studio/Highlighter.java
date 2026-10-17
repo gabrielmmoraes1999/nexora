@@ -37,6 +37,10 @@ final class Highlighter {
     private Highlighter() {
     }
 
+    static boolean keyword(String word) {
+        return word != null && KEYWORDS.contains(word.toUpperCase(Locale.ROOT));
+    }
+
     static void watch(JTextPane pane) {
         pane.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             private boolean scheduled;

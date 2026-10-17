@@ -301,6 +301,7 @@ public final class Ddl {
             case TABLE -> "DROP TABLE " + SqlNames.qualify(schema, name);
             case VIEW -> "DROP VIEW " + SqlNames.qualify(schema, name);
             case PROCEDURE -> "DROP PROCEDURE " + SqlNames.quote(name);
+            case INDEX -> dropIndex(schema, name);
             case TRIGGER -> "DROP TRIGGER " + SqlNames.quote(name);
             case GENERATOR -> "DROP GENERATOR " + SqlNames.qualify(schema, name);
             case ROLE -> "DROP ROLE " + SqlNames.quote(name);

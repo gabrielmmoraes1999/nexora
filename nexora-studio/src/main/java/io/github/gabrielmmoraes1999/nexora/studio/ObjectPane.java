@@ -76,6 +76,7 @@ final class ObjectPane extends JPanel {
             case TABLE -> "Table";
             case SYSTEM_TABLE -> "System table";
             case VIEW -> "View";
+            case INDEX -> "Index";
             case PROCEDURE -> "Procedure";
             case TRIGGER -> "Trigger";
             case GENERATOR -> "Generator";
@@ -95,6 +96,7 @@ final class ObjectPane extends JPanel {
         return switch (node.kind()) {
             case TABLE, SYSTEM_TABLE -> relation(node.kind() == Node.Kind.TABLE, dataFirst);
             case VIEW -> view(dataFirst);
+            case INDEX -> index();
             case PROCEDURE -> procedure();
             case TRIGGER -> trigger();
             case GENERATOR -> generator();
@@ -258,6 +260,33 @@ final class ObjectPane extends JPanel {
                 button("Copy", () -> copy(source.getText()), true))));
         pages.addTab("Parameters", Look.scroll(parameters));
         return pages;
+    }
+
+    private java.awt.Component index() {
+        JTextArea source = scriptArea();
+        JLabel facts = new JLabel(" ");
+        facts.setBorder(new EmptyBorder(8, 10, 4, 10));
+        Connection connection = hub.connection(node.databaseId());
+        if (connection != null) {
+            try {
+                Outline.IndexRef index = Outline.index(connection, node.schema(), node.name());
+                source.setText(Ddl.createIndex(index.unique(), index.name(), node.schema(), index.table(), index.columns()));
+                source.setCaretPosition(0);
+                facts.setText("Table " + index.table()
+                        + "    " + (index.unique() ? "unique" : "non-unique")
+                        + "    " + (index.descending() ? "descending" : "ascending")
+                        + "    " + String.join(", ", index.columns()));
+            } catch (SQLException exception) {
+                Dialogs.error(hub.owner(), Dialogs.message(exception));
+            }
+        }
+        JPanel page = new JPanel(new BorderLayout());
+        page.setOpaque(false);
+        page.add(facts, BorderLayout.NORTH);
+        page.add(wrap(scriptScroll(source), buttons(
+                button("Open in editor", () -> hub.openSql(node.databaseId(), node.name(), source.getText()), true),
+                button("Copy", () -> copy(source.getText()), true))), BorderLayout.CENTER);
+        return page;
     }
 
     private java.awt.Component trigger() {

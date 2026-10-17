@@ -256,6 +256,7 @@ final class ExplorerPane extends JPanel {
                     relationsIn(outline.tables(), schema), Node.Kind.TABLE, query);
             addGroup(schemaNode, databaseId, schema, Node.VIEWS, "Views",
                     relationsIn(outline.views(), schema), Node.Kind.VIEW, query);
+            addIndexes(schemaNode, databaseId, schema, outline, query);
             addGroup(schemaNode, databaseId, schema, Node.PROCEDURES, "Procedures",
                     relationsIn(outline.procedures(), schema), Node.Kind.PROCEDURE, query);
             addGenerators(schemaNode, databaseId, schema, outline, query);
@@ -305,6 +306,29 @@ final class ExplorerPane extends JPanel {
             }
         }
         if (query.isBlank() || group.getChildCount() > 0 || title.toLowerCase(java.util.Locale.ROOT).contains(query)) {
+            parent.add(group);
+        }
+    }
+
+    private void addIndexes(DefaultMutableTreeNode parent, String databaseId, String schema, Outline outline, String query) {
+        List<Outline.IndexRef> indexes = new ArrayList<>();
+        for (Outline.IndexRef index : outline.indexes()) {
+            if (index.schema().equalsIgnoreCase(schema)) {
+                indexes.add(index);
+            }
+        }
+        DefaultMutableTreeNode group = new DefaultMutableTreeNode(
+                Node.folder(databaseId, schema, Node.INDEXES, counted("Indexes", indexes.size())));
+        for (Outline.IndexRef index : indexes) {
+            String label = index.name() + " (" + index.table() + ")";
+            if (query.isBlank()
+                    || index.name().toLowerCase(java.util.Locale.ROOT).contains(query)
+                    || index.table().toLowerCase(java.util.Locale.ROOT).contains(query)) {
+                group.add(new DefaultMutableTreeNode(
+                        new Node(Node.Kind.INDEX, databaseId, label, schema, index.name())));
+            }
+        }
+        if (query.isBlank() || group.getChildCount() > 0 || "indexes".contains(query)) {
             parent.add(group);
         }
     }
@@ -455,7 +479,7 @@ final class ExplorerPane extends JPanel {
             }
             case SCHEMA -> listener.useSchema(node);
             case TABLE, VIEW -> listener.open(node, false);
-            case SYSTEM_TABLE, PROCEDURE, TRIGGER, GENERATOR, USER, ROLE, CONNECTIONS, PRIVILEGES, CONFIG, INFO ->
+            case SYSTEM_TABLE, INDEX, PROCEDURE, TRIGGER, GENERATOR, USER, ROLE, CONNECTIONS, PRIVILEGES, CONFIG, INFO ->
                     listener.open(node, false);
             default -> {
             }
@@ -513,7 +537,7 @@ final class ExplorerPane extends JPanel {
                 }
                 item(menu, "Delete", () -> listener.drop(node));
             }
-            case PROCEDURE, TRIGGER, GENERATOR, ROLE -> {
+            case INDEX, PROCEDURE, TRIGGER, GENERATOR, ROLE -> {
                 item(menu, "Open", () -> listener.open(node, false));
                 item(menu, "DDL", () -> listener.extract(node));
                 item(menu, "Delete", () -> listener.drop(node));
