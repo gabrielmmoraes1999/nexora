@@ -4,17 +4,17 @@ Nexora JDBC driver. The database is a pair of files: the `.db` holds the tables,
 
 Java 21. The driver declares JDBC 4.2 and is not a certified driver (`jdbcCompliant()` returns `false`).
 
-There are seven Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `nexora-dbeng` is the personal server window and uses that same listener on this machine. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. `nexora-backup` is the backup window. The driver, the network server, the CLI, the studio, and the backup window depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The CLI, the studio, and the backup window depend on the driver.
+There are eight Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `nexora-dbeng` is the personal server window and uses that same listener on this machine. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. `nexora-backup` is the backup window. `nexora-dbtran` is the log translation window. The driver, the network server, the CLI, the studio, the backup window, and the log translation window depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The CLI, the studio, and the backup window depend on the driver. The log translation window depends only on the engine.
 
 ## Installation
 
-From the root, Maven builds the engine and then the driver, the network server, the personal server, the CLI, the studio, and the backup window.
+From the root, Maven builds the engine and then the driver, the network server, the personal server, the CLI, the studio, the backup window, and the log translation window.
 
 ```bash
 mvn package
 ```
 
-The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `nexora-backup/target/nexora-backup-1.0.jar`, with the driver and the engine inside. It opens the full and incremental backup window, as in [Backup window](#backup-window).
+The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `nexora-backup/target/nexora-backup-1.0.jar`, with the driver and the engine inside. It opens the full and incremental backup window, as in [Backup window](#backup-window). The log translation window is the JAR `nexora-dbtran/target/nexora-dbtran-1.0.jar`, with the engine inside. It writes the SQL from the log, as in [Log translation](#log-translation).
 
 `mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
@@ -100,6 +100,16 @@ The last fields are stored in `~/.nexora/backup.properties`. The password is wri
 
 ```bash
 java -jar nexora-backup/target/nexora-backup-1.0.jar
+```
+
+## Log translation
+
+`nexora-dbtran` writes the SQL from the transaction log. With no arguments, a window opens. With a log and a SQL file, the command writes the script and prints the percentage while it reads the file. The source is a `.log` or the `.db` beside it. Parameters are written into the text in place of each `?`. The same translation is the CLI `export` command. The window stores the last fields in `~/.nexora/dbtran.properties`. `--help` shows the usage.
+
+```bash
+java -jar nexora-dbtran/target/nexora-dbtran-1.0.jar
+java -jar nexora-dbtran/target/nexora-dbtran-1.0.jar C:/data/store.log C:/data/store.sql
+java -jar nexora-dbtran/target/nexora-dbtran-1.0.jar C:/data/store.db C:/data/store.sql
 ```
 
 ## Network
