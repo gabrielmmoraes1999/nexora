@@ -1,4 +1,4 @@
-package io.github.gabrielmmoraes1999.nexora.server.console;
+package io.github.gabrielmmoraes1999.nexora.dbsrv.console;
 
 import io.github.gabrielmmoraes1999.nexora.NexException;
 

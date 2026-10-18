@@ -775,7 +775,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
 
                 Administrative interface for Nexora, in the spirit of IBExpert.
                 The database is a .db file with the .log beside it. The embedded connection opens the file
-                in this process. The network connection talks to nexora-server.
+                in this process. The network connection talks to the personal or the network server.
                 """, "About", javax.swing.JOptionPane.PLAIN_MESSAGE, Look.imageIcon(64))));
         bar.add(file);
         bar.add(database);

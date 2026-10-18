@@ -1,11 +1,10 @@
-package io.github.gabrielmmoraes1999.nexora.server.console;
+package io.github.gabrielmmoraes1999.nexora.dbsrv.console;
 
 import io.github.gabrielmmoraes1999.nexora.NexException;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import java.util.List;
@@ -78,26 +77,6 @@ class ArgumentsTest {
                 () -> Arguments.parse(Kind.PERSONAL, new String[]{"-c", "grande", "a.db"})).getMessage().contains("cache"));
         assertTrue(assertThrows(NexException.class,
                 () -> Arguments.parse(Kind.PERSONAL, new String[]{"-a", "banco.log"})).getMessage().contains("one database"));
-    }
-
-    @Test
-    void serveLeOJson() throws Exception {
-        Path file = dir.resolve("motor.json");
-        Files.writeString(file, """
-                {"host":"0.0.0.0","port":4588,"databases":[{"name":"loja","path":"dados/loja.db"}]}
-                """);
-        Arguments network = Arguments.parse(Kind.NETWORK, new String[]{"serve", file.toString()});
-        assertEquals("0.0.0.0", network.host());
-        assertEquals(4588, network.port());
-        assertEquals("loja", network.databases().get(0).name());
-        assertEquals(dir.resolve("dados").resolve("loja.db").toAbsolutePath().normalize(), network.databases().get(0).path());
-
-        Arguments personal = Arguments.parse(Kind.PERSONAL, new String[]{"-p", "4599", "serve", file.toString()});
-        assertEquals("127.0.0.1", personal.host());
-        assertEquals(4599, personal.port());
-        assertEquals("loja", personal.databases().get(0).name());
-        assertTrue(assertThrows(NexException.class,
-                () -> Arguments.parse(Kind.NETWORK, new String[]{"serve", file.toString(), "-n", "caixa"})).getMessage().contains("follows"));
     }
 
     @Test

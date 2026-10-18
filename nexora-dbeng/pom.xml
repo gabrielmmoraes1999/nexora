@@ -12,12 +12,12 @@
 
     <artifactId>nexora-dbeng</artifactId>
     <name>Nexora Personal Server</name>
-    <description>Personal database server. The window listens on this machine and shows the message console. The JAR bundles the server and the engine.</description>
+    <description>Personal database server. The window listens on this machine and shows the message console. The JAR bundles the network server and the engine.</description>
 
     <dependencies>
         <dependency>
             <groupId>io.github.gabrielmmoraes1999</groupId>
-            <artifactId>nexora-server</artifactId>
+            <artifactId>nexora-dbsrv</artifactId>
             <version>${project.version}</version>
         </dependency>
     </dependencies>

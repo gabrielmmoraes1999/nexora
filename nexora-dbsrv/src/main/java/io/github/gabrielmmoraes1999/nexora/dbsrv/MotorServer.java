@@ -1,4 +1,4 @@
-package io.github.gabrielmmoraes1999.nexora.server;
+package io.github.gabrielmmoraes1999.nexora.dbsrv;
 
 import io.github.gabrielmmoraes1999.nexora.Cache;
 import io.github.gabrielmmoraes1999.nexora.Database;

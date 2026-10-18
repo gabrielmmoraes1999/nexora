@@ -1,4 +1,4 @@
-package io.github.gabrielmmoraes1999.nexora.server.console;
+package io.github.gabrielmmoraes1999.nexora.dbsrv.console;
 
 /**
  * The two server windows. The personal server is dbeng: it listens on this machine.

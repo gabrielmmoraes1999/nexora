@@ -1,7 +1,7 @@
 package io.github.gabrielmmoraes1999.nexora.dbeng;
 
-import io.github.gabrielmmoraes1999.nexora.server.console.Kind;
-import io.github.gabrielmmoraes1999.nexora.server.console.Launcher;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.console.Kind;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.console.Launcher;
 
 /**
  * Personal database server.

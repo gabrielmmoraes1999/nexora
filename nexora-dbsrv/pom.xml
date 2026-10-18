@@ -12,13 +12,24 @@
 
     <artifactId>nexora-dbsrv</artifactId>
     <name>Nexora Network Server</name>
-    <description>Network database server. The window listens on the network and shows the message console. The JAR bundles the server and the engine.</description>
+    <description>Network database server. The window listens on the network and shows the message console. The personal server uses this same listener. The JAR bundles the engine.</description>
 
     <dependencies>
         <dependency>
             <groupId>io.github.gabrielmmoraes1999</groupId>
-            <artifactId>nexora-server</artifactId>
+            <artifactId>nexora-engine</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.gabrielmmoraes1999</groupId>
+            <artifactId>nexora-jdbc</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -44,6 +55,10 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <executions>
                     <execution>
@@ -52,12 +67,7 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <artifactSet>
-                                <excludes>
-                                    <exclude>io.github.gabrielmmoraes1999:nexora-engine</exclude>
-                                </excludes>
-                            </artifactSet>
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -69,6 +79,7 @@
                                 </filter>
                             </filters>
                             <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>io.github.gabrielmmoraes1999.nexora.dbsrv.Dbsrv</mainClass>
                                 </transformer>

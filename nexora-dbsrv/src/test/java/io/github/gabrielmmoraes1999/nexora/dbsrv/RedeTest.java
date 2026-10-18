@@ -1,10 +1,10 @@
-package io.github.gabrielmmoraes1999.nexora.jdbc;
+package io.github.gabrielmmoraes1999.nexora.dbsrv;
 
 import io.github.gabrielmmoraes1999.nexora.Database;
 import io.github.gabrielmmoraes1999.nexora.DatabaseOptions;
 import io.github.gabrielmmoraes1999.nexora.NexException;
-import io.github.gabrielmmoraes1999.nexora.server.MotorConfig;
-import io.github.gabrielmmoraes1999.nexora.server.MotorServer;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.MotorConfig;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.MotorServer;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

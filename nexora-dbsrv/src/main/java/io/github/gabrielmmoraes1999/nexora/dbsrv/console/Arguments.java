@@ -1,8 +1,8 @@
-package io.github.gabrielmmoraes1999.nexora.server.console;
+package io.github.gabrielmmoraes1999.nexora.dbsrv.console;
 
 import io.github.gabrielmmoraes1999.nexora.Cache;
 import io.github.gabrielmmoraes1999.nexora.NexException;
-import io.github.gabrielmmoraes1999.nexora.server.MotorConfig;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.MotorConfig;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,11 +42,8 @@ public record Arguments(
         }
         String host = null;
         Integer port = null;
-        boolean hostSet = false;
-        boolean portSet = false;
         String cache = null;
         String applyText = null;
-        Path json = null;
         List<MotorConfig.DatabaseSpec> databases = new ArrayList<>();
         boolean named = false;
         for (int i = 0; i < args.length; i++) {
@@ -57,39 +54,19 @@ public record Arguments(
             if (help(arg)) {
                 return new Arguments(kind, kind.defaultHost(), DEFAULT_PORT, DEFAULT_CACHE, null, List.of(), true);
             }
-            if (arg.equalsIgnoreCase("serve")) {
-                if (json != null) {
-                    throw new NexException("serve accepts one json file\n\n" + usage(kind));
-                }
-                if (!databases.isEmpty()) {
-                    throw new NexException("serve does not take database files\n\n" + usage(kind));
-                }
-                if (i + 1 >= args.length || args[i + 1] == null || args[i + 1].isBlank()) {
-                    throw new NexException("provide the server json file\n\n" + usage(kind));
-                }
-                json = Path.of(args[++i]);
-                named = true;
-                continue;
-            }
             if (arg.startsWith("-")) {
                 switch (arg) {
                     case "-n", "--name" -> {
                         String value = value(args, ++i, "name", kind);
-                        if (json != null || databases.isEmpty() || named) {
+                        if (databases.isEmpty() || named) {
                             throw new NexException("the name follows the database file\n\n" + usage(kind));
                         }
                         MotorConfig.DatabaseSpec current = databases.get(databases.size() - 1);
                         databases.set(databases.size() - 1, new MotorConfig.DatabaseSpec(value, current.path()));
                         named = true;
                     }
-                    case "-p", "--port" -> {
-                        port = port(value(args, ++i, "port", kind), kind);
-                        portSet = true;
-                    }
-                    case "--host" -> {
-                        host = value(args, ++i, "host", kind);
-                        hostSet = true;
-                    }
+                    case "-p", "--port" -> port = port(value(args, ++i, "port", kind), kind);
+                    case "--host" -> host = value(args, ++i, "host", kind);
                     case "-c", "--cache" -> cache = cache(value(args, ++i, "cache size", kind), kind);
                     case "-a" -> {
                         if (applyText != null) {
@@ -101,40 +78,24 @@ public record Arguments(
                         Link link = link(value(args, ++i, "link", kind), kind);
                         if (link.host != null) {
                             host = link.host;
-                            hostSet = true;
                         }
                         if (link.port != null) {
                             port = link.port;
-                            portSet = true;
                         }
                     }
                     default -> throw new NexException("unknown option: " + arg + "\n\n" + usage(kind));
                 }
                 continue;
             }
-            if (json != null) {
-                throw new NexException("serve does not take database files\n\n" + usage(kind));
-            }
             databases.add(database(arg, kind));
             named = explicitName(arg);
         }
-        if (json != null) {
-            MotorConfig config = MotorConfig.read(json);
-            if (!hostSet) {
-                host = kind == Kind.PERSONAL ? kind.defaultHost() : config.host();
-            }
-            if (!portSet) {
-                port = config.port();
-            }
-            databases = new ArrayList<>(config.databases());
-        } else {
-            if (host == null || host.isBlank()) {
-                host = kind.defaultHost();
-            }
-            host = host.trim();
-            if (port == null) {
-                port = DEFAULT_PORT;
-            }
+        if (host == null || host.isBlank()) {
+            host = kind.defaultHost();
+        }
+        host = host.trim();
+        if (port == null) {
+            port = DEFAULT_PORT;
         }
         if (kind == Kind.PERSONAL && !local(host)) {
             throw new NexException("""
@@ -148,9 +109,6 @@ public record Arguments(
         }
         Path applyLog = null;
         if (applyText != null) {
-            if (json != null) {
-                throw new NexException("serve does not apply a log\n\n" + usage(kind));
-            }
             if (databases.size() != 1) {
                 throw new NexException("apply log needs one database\n\n" + usage(kind));
             }
@@ -182,7 +140,6 @@ public record Arguments(
         return """
                 Usage:
                   java -jar %s [options] [database.db ...]
-                  java -jar %s serve <server.json>
 
                 %s
                 Options:
@@ -192,12 +149,11 @@ public record Arguments(
                   -p, --port <port>       TCP port. The default is 4580.
                   -x tcpip(port=<port>)   TCP port, written as tcpip(port=<port>).
                   --host <address>        %s
-                  serve <server.json>     Databases listed in the json file.
                   --help                  Show this text.
 
                 file.db=name publishes that file under name.
                 With no database, the first window asks for the file, the cache size, and the options.
-                """.formatted(jar, jar, where.strip(), host);
+                """.formatted(jar, where.strip(), host);
     }
 
     public static String stem(Path file) {

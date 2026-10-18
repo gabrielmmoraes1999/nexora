@@ -1,11 +1,11 @@
-package io.github.gabrielmmoraes1999.nexora.server.console;
+package io.github.gabrielmmoraes1999.nexora.dbsrv.console;
 
 import io.github.gabrielmmoraes1999.nexora.Cache;
 import io.github.gabrielmmoraes1999.nexora.Database;
 import io.github.gabrielmmoraes1999.nexora.NexException;
-import io.github.gabrielmmoraes1999.nexora.server.MotorConfig;
-import io.github.gabrielmmoraes1999.nexora.server.MotorLog;
-import io.github.gabrielmmoraes1999.nexora.server.MotorServer;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.MotorConfig;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.MotorLog;
+import io.github.gabrielmmoraes1999.nexora.dbsrv.MotorServer;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;

@@ -4,17 +4,17 @@ Nexora JDBC driver. The database is a pair of files: the `.db` holds the tables,
 
 Java 21. The driver declares JDBC 4.2 and is not a certified driver (`jdbcCompliant()` returns `false`).
 
-There are seven Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-server` serves the files on the network. `nexora-dbeng` is the personal server window. `nexora-dbsrv` is the network server window. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. The driver, the server, the CLI, and the studio depend on the engine. The personal server and the network server depend on the server. The driver and the server do not depend on each other. The studio depends on the driver.
+There are six Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `nexora-dbeng` is the personal server window and uses that same listener on this machine. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. The driver, the network server, the CLI, and the studio depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The studio depends on the driver.
 
 ## Installation
 
-From the root, Maven builds the engine and then the driver, the server, the personal server, the network server, and the CLI.
+From the root, Maven builds the engine and then the driver, the network server, the personal server, and the CLI.
 
 ```bash
 mvn package
 ```
 
-The server is the JAR `nexora-server/target/nexora-server-1.0.jar`, with the engine inside. It starts with `java -jar`, as in [Network](#network). The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`, and the network server window is `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`. Both bundle the server and the engine, and both open the message console, as in [Server windows](#server-windows). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio).
+The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio).
 
 `mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
@@ -90,22 +90,17 @@ In the API, `Database.backup(file, folder)` performs the full backup, `Database.
 
 ## Network
 
-The `.db` file stays open in a single process, together with the `.log`. The `nexora-server` project is that process: it reads a JSON file with the name and path of each database, listens on a port, and serves JDBC. The driver, in the `nexora-jdbc` project, talks to it through `jdbc:nexora://host:port/name` and also opens the file directly with `jdbc:nexora:embedded:`. The password travels in the clear on TCP, intended for the local network.
+The `.db` file stays open in a single process, together with the `.log`. That process is `nexora-dbeng` on this machine, or `nexora-dbsrv` for other machines. Each one listens on a port and serves JDBC. The driver, in the `nexora-jdbc` project, talks to it through `jdbc:nexora://host:port/name` and also opens the file directly with `jdbc:nexora:embedded:`. The password travels in the clear on TCP, intended for the local network.
 
-```json
-{
-  "host": "0.0.0.0",
-  "port": 4580,
-  "databases": [
-    { "name": "store", "path": "C:/data/store.db" }
-  ]
-}
-```
+`nexora-dbeng` is the personal server. `nexora-dbsrv` is the network server. With no database on the command line, the first window asks for the database file, the cache size, and the options. An empty options field starts the database. `-a banco.log` applies that log and the process exits when the apply finishes. `-x tcpip(port=4580)` changes the port. OK opens the message console, with a Shutdown button.
 
-If `host` is omitted, the server listens on all interfaces. The port and at least one database are required. A relative path resolves from the JSON file's folder. Each file listed in the JSON already exists, created by the CLI.
+After the database is started, the process stays in the background and an icon sits in the Windows notification area. Closing or minimizing the console hides it there. Double-click the icon, or Open, brings the console back. Shutdown stops the server and releases the files. Server, then Log SQL, writes each statement on the console.
+
+The personal server listens on `127.0.0.1` only. The network server listens on all interfaces unless `--host` says otherwise. The default port is `4580`. The default cache size is `8M`. That size is the maximum memory for database pages. It is rounded up to a whole number of pages. When the cache is full, the oldest pages are dropped and read again from the file. A `-n` after the database file, or `file.db=name`, is the name in the JDBC URL. A database file on the command line skips the first window and opens the console directly. Each file already exists, created by the CLI.
 
 ```bash
-java -jar nexora-server/target/nexora-server-1.0.jar serve server.json
+java -jar nexora-dbeng/target/nexora-dbeng-1.0.jar -p 4580 C:/data/store.db
+java -jar nexora-dbsrv/target/nexora-dbsrv-1.0.jar -x tcpip(port=4580) C:/data/store.db C:/data/other.db
 ```
 
 On the client:
@@ -117,23 +112,7 @@ try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
 }
 ```
 
-The name after the port is the name in the JSON, with no case distinction. Several connections on the server follow the rule of one transaction per file. While the server holds the `.db`, another process that tries to open the same file receives database already open. Ctrl+C releases the files.
-
-## Server windows
-
-`nexora-dbeng` is the personal server. `nexora-dbsrv` is the network server. With no database on the command line, the first window asks for the database file, the cache size, and the options. An empty options field starts the database. `-a banco.log` applies that log and the process exits when the apply finishes. `-x tcpip(port=4580)` changes the port. OK opens the message console, with a Shutdown button.
-
-After the database is started, the process stays in the background and an icon sits in the Windows notification area. Closing or minimizing the console hides it there. Double-click the icon, or Open, brings the console back. Shutdown stops the server and releases the files. Server, then Log SQL, writes each statement on the console.
-
-The personal server listens on `127.0.0.1` only. The network server listens on all interfaces unless `--host` says otherwise. The default port is `4580`. The default cache size is `8M`. That size is the maximum memory for database pages. It is rounded up to a whole number of pages. When the cache is full, the oldest pages are dropped and read again from the file. A `-n` after the database file, or `file.db=name`, is the name in the JDBC URL. A database file on the command line skips the first window and opens the console directly.
-
-```bash
-java -jar nexora-dbeng/target/nexora-dbeng-1.0.jar -p 4580 C:/data/store.db
-java -jar nexora-dbsrv/target/nexora-dbsrv-1.0.jar -x tcpip(port=4580) C:/data/store.db
-java -jar nexora-dbsrv/target/nexora-dbsrv-1.0.jar serve server.json
-```
-
-On this machine the personal server is `jdbc:nexora://127.0.0.1:4580/store`. The network server is `jdbc:nexora://<host>:4580/store`. `serve` reads the same JSON as the headless server. On the personal server that file's host is ignored, and the window binds to `127.0.0.1`. A `-p` next to `serve` replaces the port from the file.
+On this machine the personal server is `jdbc:nexora://127.0.0.1:4580/store`. The name after the port is the name from `-n` or from the file name, with no case distinction. Several connections on the server follow the rule of one transaction per file. While the server holds the `.db`, another process that tries to open the same file receives database already open. Shutdown releases the files.
 
 ## Studio
 
@@ -145,7 +124,7 @@ java -jar nexora-studio/target/nexora-studio-1.0.jar
 
 F9 runs the script in the editor. Ctrl+Enter does the same. A `SELECT` has to be the last command, as in JDBC. The grid writes to tables that have a primary key. An empty cell becomes `NULL`; for `CHAR` and `VARCHAR`, `''` stores empty text. On the Columns tab of a table, Move up and Move down run `ALTER COLUMN ... POSITION` and the data grid follows that order.
 
-The embedded connection opens the `.db` in this process. If the server already holds the file, it fails: register the database over the network, with the `host`, the port, and the name from the JSON file. The registration is stored in `~/.nexora/studio.json`. The password is written to that file only when "remember password" is checked.
+The embedded connection opens the `.db` in this process. If the server already holds the file, it fails: register the database over the network, with the host, the port, and the name the server is publishing. The registration is stored in `~/.nexora/studio.json`. The password is written to that file only when "remember password" is checked.
 
 ## DBeaver
 
@@ -153,7 +132,7 @@ The embedded connection opens the `.db` in this process. If the server already h
 2. Class: `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver`.
 3. URL: `jdbc:nexora:C:/data/store.db`.
 4. User `dba`, password `dba`.
-5. Libraries: the driver JAR (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). The engine is inside that JAR. In DBeaver, replace the old JAR with this one. The server JAR is not added to DBeaver.
+5. Libraries: the driver JAR (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). The engine is inside that JAR. In DBeaver, replace the old JAR with this one. The personal server and the network server are not added to DBeaver.
 
 
 
