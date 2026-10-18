@@ -12,24 +12,13 @@
 
     <artifactId>nexora-cli</artifactId>
     <name>Nexora CLI</name>
-    <description>Nexora command line. Creates the .db, backs up, and applies the log. The JAR bundles the engine.</description>
+    <description>Nexora command line. Creates the .db. The JAR bundles the engine.</description>
 
     <dependencies>
         <dependency>
             <groupId>io.github.gabrielmmoraes1999</groupId>
             <artifactId>nexora-engine</artifactId>
             <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.gabrielmmoraes1999</groupId>
-            <artifactId>nexora-jdbc</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.gabrielmmoraes1999</groupId>
-            <artifactId>nexora-dbsrv</artifactId>
-            <version>${project.version}</version>
-            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
