@@ -53,10 +53,12 @@ final class DatabaseFile implements AutoCloseable {
     private List<StoredTable> tables = List.of();
     private final List<Extent> retire = new ArrayList<>();
     private List<Extent> wipeAfter = List.of();
+    private final Cache cache;
 
-    private DatabaseFile(Path path, FileChannel channel) {
+    private DatabaseFile(Path path, FileChannel channel, Cache cache) {
         this.path = path;
         this.channel = channel;
+        this.cache = cache == null ? Cache.of(Cache.DEFAULT_BYTES) : cache;
     }
 
     static long capacityFor(long logical, int pageSize) {
@@ -66,14 +68,18 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     static DatabaseFile open(Path file) {
-        return open(file, Format.DEFAULT_PAGE_SIZE, true);
+        return open(file, null);
+    }
+
+    static DatabaseFile open(Path file, Cache cache) {
+        return open(file, Format.DEFAULT_PAGE_SIZE, true, cache);
     }
 
     static DatabaseFile create(Path file, int pageSize) {
-        return open(file, Format.checkPageSize(pageSize), false);
+        return open(file, Format.checkPageSize(pageSize), false, null);
     }
 
-    private static DatabaseFile open(Path file, int pageSize, boolean existing) {
+    private static DatabaseFile open(Path file, int pageSize, boolean existing, Cache cache) {
         if (file == null) {
             throw new NexException("database file is required");
         }
@@ -104,11 +110,12 @@ final class DatabaseFile implements AutoCloseable {
             FileChannel channel = existing
                     ? Format.openHeld(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
                     : Format.openHeld(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
-            DatabaseFile database = new DatabaseFile(path, channel);
+            DatabaseFile database = new DatabaseFile(path, channel, cache);
             try {
                 database.lock();
                 if (created || channel.size() == 0) {
                     database.pageSize = pageSize;
+                    database.cache.accept(pageSize);
                     database.createEmpty();
                 } else {
                     database.recover();
@@ -234,7 +241,7 @@ final class DatabaseFile implements AutoCloseable {
             commit.zero(offset, length);
             return;
         }
-        Format.zero(channel, offset, length);
+        diskZero(offset, length);
     }
 
     void writeBytes(long offset, byte[] data) {
@@ -245,14 +252,39 @@ final class DatabaseFile implements AutoCloseable {
             commit.write(offset, data);
             return;
         }
-        Format.writeFully(channel, offset, data);
+        diskWrite(offset, data);
     }
 
     byte[] readBytes(long offset, int length) {
         if (commit != null) {
-            return commit.read(offset, length, channel);
+            return commit.read(offset, length, this);
+        }
+        return readPhysical(offset, length);
+    }
+
+    private void diskWrite(long offset, byte[] data) {
+        Format.writeFully(channel, offset, data);
+        if (pageSize > 0) {
+            cache.forget(path, pageSize, offset, data.length);
+        }
+    }
+
+    private void diskZero(long offset, long length) {
+        Format.zero(channel, offset, length);
+        if (pageSize > 0) {
+            cache.forget(path, pageSize, offset, length);
+        }
+    }
+
+    private byte[] readPhysical(long offset, int length) {
+        if (pageSize > 0) {
+            return cache.read(path, channel, pageSize, offset, length);
         }
         return Format.readFully(channel, offset, length);
+    }
+
+    long cacheMaximum() {
+        return cache.maximum();
     }
 
     void ensureScrubbed() {
@@ -370,6 +402,7 @@ final class DatabaseFile implements AutoCloseable {
         } catch (RuntimeException ignored) {
             // the next open recovers from the log
         }
+        cache.release(path);
         if (log != null) {
             log.close();
             log = null;
@@ -452,6 +485,7 @@ final class DatabaseFile implements AutoCloseable {
             throw new NexException("unsupported database version: " + version);
         }
         pageSize = Format.checkPageSize(buffer.getInt(Format.PAGE_SIZE_OFFSET));
+        cache.accept(pageSize);
         logId = buffer.getLong(Format.LOG_ID_OFFSET);
         if (logId == 0L) {
             throw new NexException("database has no transaction log");
@@ -629,6 +663,7 @@ final class DatabaseFile implements AutoCloseable {
                     throw new NexException("failed to resize the database file");
                 }
             }
+            cache.release(path);
         } catch (NexException exception) {
             throw exception;
         } catch (IOException exception) {
@@ -669,7 +704,7 @@ final class DatabaseFile implements AutoCloseable {
             crashed = true;
             throw new NexException("simulated crash before the checkpoint");
         }
-        buffer.apply(channel);
+        buffer.apply(this);
         truncatePhysical(buffer.fileSize());
         fileSize = buffer.fileSize();
         appliedToDisk = true;
@@ -848,9 +883,9 @@ final class DatabaseFile implements AutoCloseable {
     private void applyRedo(long size, List<TransactionLog.Span> spans) {
         for (TransactionLog.Span span : spans) {
             if (span.data == null) {
-                Format.zero(channel, span.offset, span.length);
+                diskZero(span.offset, span.length);
             } else {
-                Format.writeFully(channel, span.offset, span.data);
+                diskWrite(span.offset, span.data);
             }
         }
         truncatePhysical(size);
@@ -860,14 +895,14 @@ final class DatabaseFile implements AutoCloseable {
     private void writeEpoch(long value) {
         ByteBuffer buffer = ByteBuffer.allocate(8).order(Format.ORDER);
         buffer.putLong(value);
-        Format.writeFully(channel, Format.LOG_EPOCH_OFFSET, buffer.array());
+        diskWrite(Format.LOG_EPOCH_OFFSET, buffer.array());
         epoch = value;
     }
 
     private void writeAppliedOffset(long value) {
         ByteBuffer buffer = ByteBuffer.allocate(8).order(Format.ORDER);
         buffer.putLong(value);
-        Format.writeFully(channel, Format.APPLIED_OFFSET, buffer.array());
+        diskWrite(Format.APPLIED_OFFSET, buffer.array());
         appliedOffset = value;
     }
 
@@ -919,12 +954,12 @@ final class DatabaseFile implements AutoCloseable {
     private void writeCheckpointLsn(long lsn) {
         ByteBuffer buffer = ByteBuffer.allocate(8).order(Format.ORDER);
         buffer.putLong(lsn);
-        Format.writeFully(channel, Format.CHECKPOINT_LSN_OFFSET, buffer.array());
+        diskWrite(Format.CHECKPOINT_LSN_OFFSET, buffer.array());
         checkpointLsn = lsn;
     }
 
     private void writeStable(boolean value) {
-        Format.writeFully(channel, Format.CHECKPOINT_STABLE_OFFSET, new byte[]{(byte) (value ? Format.CHECKPOINT_STABLE : 0)});
+        diskWrite(Format.CHECKPOINT_STABLE_OFFSET, new byte[]{(byte) (value ? Format.CHECKPOINT_STABLE : 0)});
         stable = value;
     }
 
@@ -1286,7 +1321,7 @@ final class DatabaseFile implements AutoCloseable {
             fileSize = size;
         }
 
-        void apply(FileChannel channel) {
+        void apply(DatabaseFile file) {
             long runAt = -1;
             byte[] run = null;
             int runLength = 0;
@@ -1302,11 +1337,11 @@ final class DatabaseFile implements AutoCloseable {
                     continue;
                 }
                 if (run != null) {
-                    Format.writeFully(channel, runAt, runLength == run.length ? run : Arrays.copyOf(run, runLength));
+                    file.diskWrite(runAt, runLength == run.length ? run : Arrays.copyOf(run, runLength));
                     run = null;
                 }
                 if (span.data == null) {
-                    Format.zero(channel, span.offset, span.length);
+                    file.diskZero(span.offset, span.length);
                     continue;
                 }
                 runAt = span.offset;
@@ -1314,11 +1349,11 @@ final class DatabaseFile implements AutoCloseable {
                 runLength = span.data.length;
             }
             if (run != null) {
-                Format.writeFully(channel, runAt, runLength == run.length ? run : Arrays.copyOf(run, runLength));
+                file.diskWrite(runAt, runLength == run.length ? run : Arrays.copyOf(run, runLength));
             }
         }
 
-        byte[] read(long offset, int length, FileChannel channel) {
+        byte[] read(long offset, int length, DatabaseFile file) {
             if (length == 0) {
                 return new byte[0];
             }
@@ -1340,7 +1375,7 @@ final class DatabaseFile implements AutoCloseable {
                     if (count <= 0) {
                         throw new NexException("invalid read in the database file");
                     }
-                    System.arraycopy(readDisk(channel, at, count), 0, out, filled, count);
+                    System.arraycopy(readDisk(file, at, count), 0, out, filled, count);
                     filled += count;
                 } else {
                     int count = (int) Math.min(span.end() - at, (long) length - filled);
@@ -1402,15 +1437,15 @@ final class DatabaseFile implements AutoCloseable {
             }
         }
 
-        private static byte[] readDisk(FileChannel channel, long offset, int length) {
+        private static byte[] readDisk(DatabaseFile file, long offset, int length) {
             try {
-                long size = channel.size();
+                long size = file.channel.size();
                 byte[] out = new byte[length];
                 if (offset >= size) {
                     return out;
                 }
                 int available = (int) Math.min(length, size - offset);
-                System.arraycopy(Format.readFully(channel, offset, available), 0, out, 0, available);
+                System.arraycopy(file.readPhysical(offset, available), 0, out, 0, available);
                 return out;
             } catch (IOException exception) {
                 throw new NexException("failed to read the database file: " + exception.getMessage(), exception);

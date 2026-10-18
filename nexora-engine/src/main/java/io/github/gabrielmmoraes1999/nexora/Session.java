@@ -2,7 +2,7 @@ package io.github.gabrielmmoraes1999.nexora;
 
 /**
  * An authenticated connection to the {@code .db} file.
- * The user name is stored in uppercase, as in Firebird.
+ * The user name is stored in uppercase.
  */
 public final class Session {
 

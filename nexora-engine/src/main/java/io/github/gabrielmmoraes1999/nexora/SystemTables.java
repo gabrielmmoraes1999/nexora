@@ -3,7 +3,7 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.util.List;
 
 /**
- * Internal tables of the file, in the role of Firebird's {@code RDB$} and {@code MON$}.
+ * Internal tables of the file.
  * {@code NEX$USERS} stores the login. {@code NEX$PRIVILEGES} stores what each user can
  * do on each table. {@code NEX$CONFIG} stores options.
  * {@code NEX$CONNECTIONS} records only open connections. {@code NEX$DATABASE} describes the file.

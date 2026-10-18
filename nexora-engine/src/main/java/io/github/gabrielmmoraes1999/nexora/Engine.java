@@ -87,7 +87,11 @@ final class Engine implements AutoCloseable {
     }
 
     static Engine open(Path file) {
-        DatabaseFile storage = DatabaseFile.open(file);
+        return open(file, null);
+    }
+
+    static Engine open(Path file, Cache cache) {
+        DatabaseFile storage = DatabaseFile.open(file, cache);
         Engine engine = new Engine(storage);
         try {
             engine.loadTables();
@@ -2775,6 +2779,10 @@ final class Engine implements AutoCloseable {
 
     int pageSize() {
         return storage.pageSize();
+    }
+
+    long cacheMaximum() {
+        return storage.cacheMaximum();
     }
 
     private void ensureSystem(DatabaseOptions options) {

@@ -4,17 +4,17 @@ Nexora JDBC driver. The database is a pair of files: the `.db` holds the tables,
 
 Java 21. The driver declares JDBC 4.2 and is not a certified driver (`jdbcCompliant()` returns `false`).
 
-There are five Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-server` serves the files on the network. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. The driver, the server, the CLI, and the studio depend on the engine. The driver and the server do not depend on each other. The studio depends on the driver.
+There are seven Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-server` serves the files on the network. `nexora-dbeng` is the personal server window. `nexora-dbsrv` is the network server window. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. The driver, the server, the CLI, and the studio depend on the engine. The personal server and the network server depend on the server. The driver and the server do not depend on each other. The studio depends on the driver.
 
 ## Installation
 
-From the root, Maven builds the engine and then the driver, the server, and the CLI.
+From the root, Maven builds the engine and then the driver, the server, the personal server, the network server, and the CLI.
 
 ```bash
 mvn package
 ```
 
-The server is the JAR `nexora-server/target/nexora-server-1.0.jar`, with the engine inside. It starts with `java -jar`, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio).
+The server is the JAR `nexora-server/target/nexora-server-1.0.jar`, with the engine inside. It starts with `java -jar`, as in [Network](#network). The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`, and the network server window is `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`. Both bundle the server and the engine, and both open the message console, as in [Server windows](#server-windows). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio).
 
 `mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
@@ -56,7 +56,7 @@ The password is not stored in plain text. Each write uses bcrypt (`$2a$`, cost 1
 
 ## Create the database
 
-The CLI `create` command generates the `.db`, the `.log` beside it, and the DBA user. The page size follows Firebird: `4096`, `8192`, `16384`, or `32768`. The default is `8192`. It does not change after creation. Page 0 is the header; the catalog and the tables occupy whole pages. Commit writes the `.log` before the pages. The checkpoint synchronizes the `.db` and leaves the history in the log. If the process crashes before that, opening reapplies what remained after the checkpoint. Every open and every close writes the checkpoint. If the `.log` is not beside the database, or is empty, opening creates a new log with only the header, advances the generation, and the database continues with the pages already written. A log from the previous generation does not open the database.
+The CLI `create` command generates the `.db`, the `.log` beside it, and the DBA user. The page size is `4096`, `8192`, `16384`, or `32768`. The default is `8192`. It does not change after creation. Page 0 is the header; the catalog and the tables occupy whole pages. Commit writes the `.log` before the pages. The checkpoint synchronizes the `.db` and leaves the history in the log. If the process crashes before that, opening reapplies what remained after the checkpoint. Every open and every close writes the checkpoint. If the `.log` is not beside the database, or is empty, opening creates a new log with only the header, advances the generation, and the database continues with the pages already written. A log from the previous generation does not open the database.
 
 ```bash
 java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/data/store.db --page-size 16384 --user DBA --password secret --name STORE --charset UTF8
@@ -118,6 +118,22 @@ try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
 ```
 
 The name after the port is the name in the JSON, with no case distinction. Several connections on the server follow the rule of one transaction per file. While the server holds the `.db`, another process that tries to open the same file receives database already open. Ctrl+C releases the files.
+
+## Server windows
+
+`nexora-dbeng` is the personal server. `nexora-dbsrv` is the network server. With no database on the command line, the first window asks for the database file, the cache size, and the options. An empty options field starts the database. `-a banco.log` applies that log and the process exits when the apply finishes. `-x tcpip(port=4580)` changes the port. OK opens the message console, with a Shutdown button.
+
+After the database is started, the process stays in the background and an icon sits in the Windows notification area. Closing or minimizing the console hides it there. Double-click the icon, or Open, brings the console back. Shutdown stops the server and releases the files. Server, then Log SQL, writes each statement on the console.
+
+The personal server listens on `127.0.0.1` only. The network server listens on all interfaces unless `--host` says otherwise. The default port is `4580`. The default cache size is `8M`. That size is the maximum memory for database pages. It is rounded up to a whole number of pages. When the cache is full, the oldest pages are dropped and read again from the file. A `-n` after the database file, or `file.db=name`, is the name in the JDBC URL. A database file on the command line skips the first window and opens the console directly.
+
+```bash
+java -jar nexora-dbeng/target/nexora-dbeng-1.0.jar -p 4580 C:/data/store.db
+java -jar nexora-dbsrv/target/nexora-dbsrv-1.0.jar -x tcpip(port=4580) C:/data/store.db
+java -jar nexora-dbsrv/target/nexora-dbsrv-1.0.jar serve server.json
+```
+
+On this machine the personal server is `jdbc:nexora://127.0.0.1:4580/store`. The network server is `jdbc:nexora://<host>:4580/store`. `serve` reads the same JSON as the headless server. On the personal server that file's host is ignored, and the window binds to `127.0.0.1`. A `-p` next to `serve` replaces the port from the file.
 
 ## Studio
 
@@ -320,7 +336,7 @@ ALTER TABLE customer ADD CONSTRAINT UQ_email UNIQUE (email);
 
 ### Schemas
 
-The default schema is `public`, as in PostgreSQL. A name without a schema uses the session schema. `schema.table` points at another schema. The same table name can exist in different schemas. `public` is created with the file and cannot be removed.
+The default schema is `public`. A name without a schema uses the session schema. `schema.table` points at another schema. The same table name can exist in different schemas. `public` is created with the file and cannot be removed.
 
 ```sql
 CREATE SCHEMA sales;
@@ -412,7 +428,7 @@ SELECT name FROM customer WHERE name LIKE '%\_%' ESCAPE '\';
 
 Operators: `||` concatenates text; `+`, `-`, `*`, `/`, and `%` calculate. Functions: `LOWER`, `UPPER`, `LENGTH`, `CHAR_LENGTH`, `COALESCE`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`. `COUNT` accepts `*` and `DISTINCT`.
 
-Context values, following Firebird: `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `CURRENT_USER`, `USER`, `CURRENT_ROLE`, `CURRENT_CONNECTION`, and `CURRENT_TRANSACTION`. There is no time zone, so `CURRENT_TIME` and `LOCALTIME` are the same `TIME`, and `CURRENT_TIMESTAMP` and `LOCALTIMESTAMP` are the same `TIMESTAMP`. Precision runs from 0 to 3; the default is 0 for the time and 3 for the timestamp. The value stays stable during the command and, inside a procedure or trigger, during the outermost routine. `CURRENT_USER` and `USER` are the connection user. `CURRENT_ROLE` is the role chosen at login, or `NONE`. `CURRENT_TRANSACTION` stays the same while the explicit transaction is open; without `BEGIN`, each command gets a new number. That number starts over when the file is opened again. A quoted name, such as `"USER"`, is still a column.
+Context values: `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`, `LOCALTIMESTAMP`, `CURRENT_USER`, `USER`, `CURRENT_ROLE`, `CURRENT_CONNECTION`, and `CURRENT_TRANSACTION`. There is no time zone, so `CURRENT_TIME` and `LOCALTIME` are the same `TIME`, and `CURRENT_TIMESTAMP` and `LOCALTIMESTAMP` are the same `TIMESTAMP`. Precision runs from 0 to 3; the default is 0 for the time and 3 for the timestamp. The value stays stable during the command and, inside a procedure or trigger, during the outermost routine. `CURRENT_USER` and `USER` are the connection user. `CURRENT_ROLE` is the role chosen at login, or `NONE`. `CURRENT_TRANSACTION` stays the same while the explicit transaction is open; without `BEGIN`, each command gets a new number. That number starts over when the file is opened again. A quoted name, such as `"USER"`, is still a column.
 
 ```sql
 SELECT CURRENT_DATE;
@@ -625,7 +641,7 @@ Session ana = db.login("ana", "ana", "sales");
 
 ## Generators, procedures, and triggers
 
-The value follows Firebird and is committed immediately: `ROLLBACK` undoes the row, but not the `GEN_ID`. `CREATE GENERATOR` starts at 0, so the first `GEN_ID(name, 1)` returns 1. `SET GENERATOR name TO 100` stores 100; the next step of 1 returns 101. `CREATE SEQUENCE name START WITH 10 INCREMENT BY 2` makes the first `NEXT VALUE FOR name` return 10. `ALTER SEQUENCE name RESTART WITH 20` makes the next value 20. `GEN_ID(name, 0)` only reads the current value. The user who creates the generator is its owner; the DBA can drop it as well.
+The value is committed immediately: `ROLLBACK` undoes the row, but not the `GEN_ID`. `CREATE GENERATOR` starts at 0, so the first `GEN_ID(name, 1)` returns 1. `SET GENERATOR name TO 100` stores 100; the next step of 1 returns 101. `CREATE SEQUENCE name START WITH 10 INCREMENT BY 2` makes the first `NEXT VALUE FOR name` return 10. `ALTER SEQUENCE name RESTART WITH 20` makes the next value 20. `GEN_ID(name, 0)` only reads the current value. The user who creates the generator is its owner; the DBA can drop it as well.
 
 A generator and a sequence live in the schema, like a table and a procedure. Without a prefix, the name uses the session schema. `CREATE SEQUENCE sales.seq_item` stores it in `sales`, and the same name can exist in another schema. `GEN_ID` and `NEXT VALUE FOR` without a schema use the session; inside a procedure or trigger, they use the routine's schema or the table's schema. `DROP SCHEMA ... CASCADE` drops the sequences of that schema. `NEX$SCHEMA_NAME` stores the schema, including `public`.
 

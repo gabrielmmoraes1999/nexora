@@ -68,7 +68,7 @@ record AddColumn(String table, ColDef column) implements Stmt {
 record DropColumn(String table, String column) implements Stmt {
 }
 
-/** Moves a column. {@code position} starts at 1, as in Firebird. */
+/** Moves a column. {@code position} starts at 1. */
 record AlterColumnPosition(String table, String column, int position) implements Stmt {
 }
 

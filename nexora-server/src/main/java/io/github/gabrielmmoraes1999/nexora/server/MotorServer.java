@@ -1,5 +1,6 @@
 package io.github.gabrielmmoraes1999.nexora.server;
 
+import io.github.gabrielmmoraes1999.nexora.Cache;
 import io.github.gabrielmmoraes1999.nexora.Database;
 import io.github.gabrielmmoraes1999.nexora.NexException;
 import io.github.gabrielmmoraes1999.nexora.RemoteClient;
@@ -19,10 +20,13 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Publishes the files from {@link MotorConfig} on a TCP port.
@@ -32,33 +36,65 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class MotorServer implements AutoCloseable {
 
+    private final String host;
     private final ServerSocket socket;
     private final List<Published> databases;
+    private final MotorLog log;
+    private final Cache cache;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<Session, Link> links = new ConcurrentHashMap<>();
+    private final AtomicLong nextConnection = new AtomicLong();
     private final Thread acceptor;
     private volatile boolean closed;
 
-    private MotorServer(ServerSocket socket, List<Published> databases) {
+    private MotorServer(String host, ServerSocket socket, List<Published> databases, MotorLog log, Cache cache) {
+        this.host = host;
         this.socket = socket;
         this.databases = databases;
+        this.log = log == null ? MotorLog.QUIET : log;
+        this.cache = cache;
         this.acceptor = new Thread(this::acceptLoop, "nex-motor");
     }
 
     public static MotorServer start(MotorConfig config) {
+        return start(config, null);
+    }
+
+    /**
+     * Opens every database in the configuration, then listens.
+     * {@code log} receives the databases, the connections, and the statements.
+     * A null log discards those events.
+     */
+    public static MotorServer start(MotorConfig config, MotorLog log) {
+        return start(config, log, Cache.DEFAULT_BYTES);
+    }
+
+    /**
+     * Opens every database with a shared page cache of {@code cacheBytes}.
+     * The size is rounded up to a whole number of pages when each file opens.
+     */
+    public static MotorServer start(MotorConfig config, MotorLog log, long cacheBytes) {
         if (config == null) {
             throw new NexException("the server configuration is required");
         }
+        Cache cache = Cache.of(cacheBytes);
         List<Published> opened = new ArrayList<>();
         ServerSocket socket = null;
         try {
             for (MotorConfig.DatabaseSpec spec : config.databases()) {
-                opened.add(new Published(spec.name(), Database.attach(spec.path())));
+                opened.add(new Published(spec.name(), Database.attach(spec.path(), cache)));
             }
-            socket = new ServerSocket();
-            socket.setReuseAddress(true);
-            socket.bind(new InetSocketAddress(config.host(), config.port()));
-            MotorServer server = new MotorServer(socket, List.copyOf(opened));
+            socket = bind(config.host(), config.port());
+            MotorServer server = new MotorServer(config.host(), socket, new CopyOnWriteArrayList<>(opened), log, cache);
             server.acceptor.start();
+            try {
+                for (Published published : opened) {
+                    server.log.databaseStarted(published.name, published.database.file(), published.database.pageSize());
+                }
+            } catch (RuntimeException exception) {
+                server.close();
+                throw exception;
+            }
             return server;
         } catch (RuntimeException | IOException exception) {
             for (Published published : opened) {
@@ -86,8 +122,95 @@ public final class MotorServer implements AutoCloseable {
         }
     }
 
+    /**
+     * Listens with no database open. {@link #publish} adds one later.
+     * Port {@code 0} asks the system for a free port.
+     */
+    public static MotorServer listen(String host, int port, MotorLog log) {
+        return listen(host, port, log, Cache.DEFAULT_BYTES);
+    }
+
+    public static MotorServer listen(String host, int port, MotorLog log, long cacheBytes) {
+        if (host == null || host.isBlank()) {
+            throw new NexException("server host is required");
+        }
+        if (port < 0 || port > 65535) {
+            throw new NexException("invalid port: " + port);
+        }
+        String trimmed = host.trim();
+        try {
+            ServerSocket socket = bind(trimmed, port);
+            MotorServer server = new MotorServer(trimmed, socket, new CopyOnWriteArrayList<>(), log, Cache.of(cacheBytes));
+            server.acceptor.start();
+            return server;
+        } catch (IOException exception) {
+            throw new NexException("could not listen on " + trimmed + ":" + port + ": " + exception.getMessage(), exception);
+        }
+    }
+
+    /**
+     * Opens another {@code .db} on a server that is already listening.
+     * The name is the one used in {@code jdbc:nexora://host:port/name}.
+     */
+    public void publish(String name, Path path) {
+        if (name == null || name.isBlank()) {
+            throw new NexException("database name is required");
+        }
+        String trimmed = name.trim();
+        synchronized (this) {
+            if (closed) {
+                throw new NexException("the server is shut down");
+            }
+            if (find(trimmed) != null) {
+                throw new NexException("duplicate database name: " + trimmed);
+            }
+            Published published = new Published(trimmed, Database.attach(path, cache));
+            databases.add(published);
+            log.databaseStarted(published.name, published.database.file(), published.database.pageSize());
+        }
+    }
+
+    public String host() {
+        return host;
+    }
+
     public int port() {
         return socket.getLocalPort();
+    }
+
+    /** Page-cache ceiling after rounding up to whole pages. */
+    public long cacheMaximum() {
+        return cache.maximum();
+    }
+
+    public int databaseCount() {
+        return databases.size();
+    }
+
+    public int connections() {
+        int count = 0;
+        for (Published published : databases) {
+            synchronized (published.database) {
+                count += published.sessions.size();
+            }
+        }
+        return count;
+    }
+
+    private static ServerSocket bind(String host, int port) throws IOException {
+        ServerSocket socket = new ServerSocket();
+        try {
+            socket.setReuseAddress(true);
+            socket.bind(new InetSocketAddress(host, port));
+            return socket;
+        } catch (IOException exception) {
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+                // the bind error is the one that matters
+            }
+            throw exception;
+        }
     }
 
     public void await() throws InterruptedException {
@@ -119,6 +242,9 @@ public final class MotorServer implements AutoCloseable {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
         }
+        for (Session session : List.copyOf(links.keySet())) {
+            forget(session);
+        }
         for (Published published : databases) {
             published.closeAll();
         }
@@ -145,6 +271,7 @@ public final class MotorServer implements AutoCloseable {
             socket.setTcpNoDelay(true);
             DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
             DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+            String address = addressOf(socket);
             while (!closed) {
                 Wire.Frame frame = Wire.readFrame(in);
                 try {
@@ -156,16 +283,27 @@ public final class MotorServer implements AutoCloseable {
                             Wire.Login login = Wire.decodeLogin(frame.body());
                             current = find(login.database());
                             if (current == null) {
+                                log.failed("Database not found: " + login.database() + " from " + address);
                                 throw new NexException("database not found: " + login.database());
                             }
-                            session = current.login(login.user(), login.password(), login.role(),
-                                    clientOf(socket, login));
+                            try {
+                                session = current.login(login.user(), login.password(), login.role(),
+                                        clientOf(socket, login));
+                            } catch (NexException exception) {
+                                log.failed("Login failed for \"" + login.user() + "\" on database \""
+                                        + login.database() + "\" from " + address + ": " + exception.getMessage());
+                                throw exception;
+                            }
+                            long id = nextConnection.incrementAndGet();
+                            links.put(session, new Link(id, current.name, session.user(), address));
+                            log.connected(id, current.name, session.user(), address);
                             Wire.writeFrame(out, Wire.OK, Wire.encodeLoginOk(
                                     session.user(), session.schema(), false, false));
                         }
                         case Wire.EXECUTE -> {
                             require(session);
                             Wire.ExecuteRequest request = Wire.decodeExecute(frame.body());
+                            log.statement(current.name, session.user(), request.sql());
                             Reply reply = current.execute(session, request.sql(), request.params());
                             boolean open = current.transactionOpen(session);
                             Wire.writeFrame(out, Wire.OK, Wire.encodeExecuteOk(
@@ -199,6 +337,7 @@ public final class MotorServer implements AutoCloseable {
                         }
                         case Wire.LOGOUT -> {
                             require(session);
+                            forget(session);
                             current.detach(session);
                             session = null;
                             Wire.writeFrame(out, Wire.OK, new byte[0]);
@@ -216,12 +355,15 @@ public final class MotorServer implements AutoCloseable {
             // the connection closed
         } catch (RuntimeException exception) {
             if (!closed) {
-                System.err.println("connection closed: " + exception.getMessage());
+                String message = "Connection closed: " + exception.getMessage();
+                System.err.println(message);
+                log.failed(message);
             }
         } finally {
             clients.remove(socket);
             if (session != null && current != null) {
                 try {
+                    forget(session);
                     current.detach(session);
                 } catch (RuntimeException ignored) {
                     // the database may already be closed
@@ -258,6 +400,21 @@ public final class MotorServer implements AutoCloseable {
         return null;
     }
 
+    private void forget(Session session) {
+        Link link = links.remove(session);
+        if (link != null) {
+            log.disconnected(link.id, link.database, link.user, link.address);
+        }
+    }
+
+    private static String addressOf(Socket socket) {
+        InetAddress address = socket.getInetAddress();
+        if (address == null || address.getHostAddress() == null || address.getHostAddress().isBlank()) {
+            return "unknown";
+        }
+        return address.getHostAddress();
+    }
+
     private static void require(Session session) {
         if (session == null || session.closed()) {
             throw new NexException("session closed");
@@ -265,6 +422,9 @@ public final class MotorServer implements AutoCloseable {
     }
 
     private record Reply(SqlResult result, String schema) {
+    }
+
+    private record Link(long id, String database, String user, String address) {
     }
 
     private static final class Published {

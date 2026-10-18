@@ -1339,7 +1339,7 @@ class DatabaseTest {
     }
 
     @Test
-    void cursorNoEstiloFirebird() {
+    void cursorDaProcedure() {
         try (Database db = open()) {
             db.execute("CREATE TABLE item (id INTEGER NOT NULL PRIMARY KEY, nome VARCHAR(20) NOT NULL)");
             db.execute("CREATE TABLE log (texto VARCHAR(20))");
@@ -1421,7 +1421,7 @@ class DatabaseTest {
     }
 
     @Test
-    void viewNoEstiloFirebird() {
+    void view() {
         try (Database db = open()) {
             db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY, nome VARCHAR(20), ativo BOOLEAN)");
             db.execute("INSERT INTO item VALUES (1, 'Ana', TRUE), (2, 'Bia', FALSE), (3, 'Caio', TRUE)");
@@ -1480,7 +1480,7 @@ class DatabaseTest {
     }
 
     @Test
-    void contextosNoEstiloFirebird() {
+    void contextos() {
         try (Database db = open()) {
             SqlResult mesmoInstante = db.query("""
                     SELECT CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, LOCALTIMESTAMP, CURRENT_TIME, LOCALTIME, CURRENT_DATE

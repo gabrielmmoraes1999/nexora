@@ -106,7 +106,17 @@ public final class Database implements AutoCloseable {
         if (log == null) {
             throw new NexException("transaction log is required");
         }
-        try (Engine engine = Engine.open(database)) {
+        applyLog(database, log, null);
+    }
+
+    public static void applyLog(Path database, Path log, Cache cache) {
+        if (database == null) {
+            throw new NexException("database file is required");
+        }
+        if (log == null) {
+            throw new NexException("transaction log is required");
+        }
+        try (Engine engine = Engine.open(database, cache)) {
             engine.applyExternalLog(log);
         }
     }
@@ -288,7 +298,7 @@ public final class Database implements AutoCloseable {
     }
 
     public static Database open(Path file, String user, String password) {
-        return open(file, user, password, null);
+        return open(file, user, password, (String) null, null);
     }
 
     /**
@@ -296,13 +306,21 @@ public final class Database implements AutoCloseable {
      * The user must have been granted the role, except the DBA.
      */
     public static Database open(Path file, String user, String password, String role) {
+        return open(file, user, password, role, null);
+    }
+
+    public static Database open(Path file, String user, String password, Cache cache) {
+        return open(file, user, password, null, cache);
+    }
+
+    public static Database open(Path file, String user, String password, String role, Cache cache) {
         if (user == null || user.isBlank() || password == null || password.isEmpty()) {
             throw new NexException("user and password are required");
         }
         if (file == null) {
             throw new NexException("database file is required");
         }
-        Engine engine = Engine.open(file);
+        Engine engine = Engine.open(file, cache);
         try {
             return new Database(engine, engine.login(user, password, role));
         } catch (RuntimeException exception) {
@@ -323,10 +341,14 @@ public final class Database implements AutoCloseable {
      * and calls {@link #login} for each client. The file must already exist.
      */
     public static Database attach(Path file) {
+        return attach(file, null);
+    }
+
+    public static Database attach(Path file, Cache cache) {
         if (file == null) {
             throw new NexException("database file is required");
         }
-        return new Database(Engine.open(file), null);
+        return new Database(Engine.open(file, cache), null);
     }
 
     /**
@@ -484,6 +506,11 @@ public final class Database implements AutoCloseable {
      */
     public int pageSize() {
         return engine.pageSize();
+    }
+
+    /** Bytes the page cache may occupy after it was rounded up to whole pages. */
+    public long cacheMaximum() {
+        return engine.cacheMaximum();
     }
 
     public boolean transactionActive() {

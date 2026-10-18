@@ -5,7 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,7 +41,6 @@ final class TableStore implements AutoCloseable {
      * The next change copies the map before modifying it.
      */
     private boolean shared;
-    private final Map<Long, byte[]> blobCache = new HashMap<>();
     /**
      * Savepoint that still points at the live map. Ids inserted in it
      * are undone if that savepoint is restored.
@@ -558,7 +556,6 @@ final class TableStore implements AutoCloseable {
         generation = snapshot.generation;
         activeSlot = snapshot.activeSlot;
         dirty = snapshot.dirty;
-        blobCache.clear();
     }
 
     /**
@@ -653,7 +650,6 @@ final class TableStore implements AutoCloseable {
                 deleted.add(id);
             }
         }
-        blobCache.clear();
         for (Long id : updated) {
             StoredRow current = committed.rows.get(id);
             StoredRow original = base.rows.get(id);
@@ -928,16 +924,13 @@ final class TableStore implements AutoCloseable {
         nextRowId = plan.nextRowId;
         dirty = false;
         shared = false;
-        blobCache.clear();
         indexes = IndexTree.attach(plan.schema, plan.indexRoots);
     }
 
     void truncateToCommitted() {
-        blobCache.clear();
     }
 
     void reload() {
-        blobCache.clear();
         byte[] headerBytes = readAt(0, Format.HEADER_SIZE);
         boolean scrub = headerBytes[Format.SCRUB_OFFSET] != Format.SCRUB_CLEAN;
         FileHeader header = FileHeader.parse(headerBytes);
@@ -982,7 +975,6 @@ final class TableStore implements AutoCloseable {
 
     @Override
     public void close() {
-        blobCache.clear();
     }
 
     private void initNew(Schema schema) {
@@ -1026,24 +1018,12 @@ final class TableStore implements AutoCloseable {
         byte[] payload = new byte[declared];
         buffer.get(payload);
         Cell[] cells = RecordCodec.decode(schema, payload);
-        for (int i = 0; i < cells.length; i++) {
-            Column column = schema.columns.get(i);
-            Cell cell = cells[i];
-            if (column.character() && cell.onDisk()) {
-                byte[] data = readBlob(cell.offset, cell.length);
-                cells[i] = new Cell(new String(data, StandardCharsets.UTF_8), cell.offset, cell.length);
-            }
-        }
         return new StoredRow(rowId, cells, slot.offset, slot.size, false);
     }
 
     private byte[] readBlob(long offset, long length) {
         if (length < 0 || length > Integer.MAX_VALUE) {
             throw new NexException("corrupt BLOB in table " + schema.name);
-        }
-        byte[] cached = blobCache.get(offset);
-        if (cached != null && cached.length == length) {
-            return cached;
         }
         long extent = Format.blobExtent(length);
         byte[] block = readAt(offset, (int) extent);
@@ -1057,7 +1037,6 @@ final class TableStore implements AutoCloseable {
         }
         byte[] data = new byte[(int) length];
         buffer.get(data);
-        blobCache.put(offset, data);
         return data;
     }
 

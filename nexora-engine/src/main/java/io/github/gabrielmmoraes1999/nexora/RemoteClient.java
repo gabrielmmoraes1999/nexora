@@ -3,7 +3,7 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.net.InetAddress;
 
 /**
- * Origin of a connection, in the role of Firebird's {@code MON$REMOTE_*}.
+ * Origin of a connection.
  * On an embedded connection the protocol is {@code local} and the address is empty.
  * On the server, protocol and address come from the socket; host, system user,
  * and process come from the client.

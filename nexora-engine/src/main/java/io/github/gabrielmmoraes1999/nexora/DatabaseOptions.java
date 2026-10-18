@@ -3,7 +3,7 @@ package io.github.gabrielmmoraes1999.nexora;
 import java.util.Locale;
 
 /**
- * Options for creating the file. The page size is fixed, as in Firebird:
+ * Options for creating the file. The page size is fixed at creation:
  * 4096, 8192, 16384, or 32768. The default is 8192.
  */
 public record DatabaseOptions(
