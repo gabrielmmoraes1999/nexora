@@ -20,6 +20,7 @@ import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -28,7 +29,8 @@ import java.util.List;
 /**
  * First window of dbeng and dbsrv. It asks for the database, the cache size, and the options.
  * An empty options field starts the database. {@code -a banco.log} applies the log.
- * {@code -x tcpip(port=4580)} changes the port.
+ * {@code -x tcpip(port=4580)} changes the port. OK stores the three fields, and the next
+ * opening with an empty command line shows them again.
  */
 public final class StartDialog extends JDialog {
 
@@ -52,12 +54,15 @@ public final class StartDialog extends JDialog {
         database.setFont(ui);
         cache.setFont(ui);
         options.setFont(ui);
-        cache.setText(preset.cache() == null || preset.cache().isBlank() ? Arguments.DEFAULT_CACHE : preset.cache());
-        options.setText(optionsOf(preset));
-        if (preset.databases().size() == 1) {
-            Path file = preset.databases().get(0).path();
-            database.setText(file.toString());
-            directory = file.getParent();
+        VisualConfig.Fields fields = VisualConfig.display(preset, VisualConfig.load(VisualConfig.file(kind)));
+        database.setText(fields.database());
+        cache.setText(fields.cache());
+        options.setText(fields.options());
+        if (!fields.database().isBlank()) {
+            Path parent = Path.of(fields.database()).getParent();
+            if (parent != null) {
+                directory = parent;
+            }
         }
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         getContentPane().add(header(ui), BorderLayout.NORTH);
@@ -171,8 +176,20 @@ public final class StartDialog extends JDialog {
             warn("Transaction log not found.");
             return;
         }
+        remember();
         chosen = parsed;
         dispose();
+    }
+
+    private void remember() {
+        try {
+            VisualConfig.save(VisualConfig.file(kind), new VisualConfig.Fields(
+                    database.getText().trim(),
+                    cache.getText().trim(),
+                    options.getText().trim()));
+        } catch (IOException exception) {
+            System.err.println("could not save the last configuration: " + exception.getMessage());
+        }
     }
 
     private void browse() {

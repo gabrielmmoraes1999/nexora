@@ -153,6 +153,7 @@ public record Arguments(
 
                 file.db=name publishes that file under name.
                 With no database, the first window asks for the file, the cache size, and the options.
+                That window remembers the last values when the command line sets none.
                 """.formatted(jar, where.strip(), host);
     }
 
