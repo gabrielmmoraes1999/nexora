@@ -1,6 +1,8 @@
 package io.github.gabrielmmoraes1999.nexora;
 
+import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.Writer;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -132,7 +134,8 @@ public final class Database implements AutoCloseable {
 
     /**
      * Reads the compressed transactions from the {@code .log} and writes the SQL to {@code destination}.
-     * {@code progress} receives 0 at the start and 100 when the file has been written.
+     * {@code progress} receives 0 at the start, advances as each statement is written, and receives 100
+     * when the file has been written.
      */
     public static void exportSql(Path source, Path destination, IntConsumer progress) {
         if (source == null) {
@@ -154,15 +157,31 @@ public final class Database implements AutoCloseable {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            String script;
-            try (TransactionLog transactionLog = TransactionLog.inspect(log)) {
+            int[] last = {-1};
+            IntConsumer mark = percent -> {
+                int shown = Math.max(0, Math.min(99, percent));
+                if (shown == last[0]) {
+                    return;
+                }
+                last[0] = shown;
+                report(progress, shown);
+            };
+            try (TransactionLog transactionLog = TransactionLog.inspect(log);
+                 BufferedWriter writer = Files.newBufferedWriter(target, StandardCharsets.UTF_8)) {
                 long total = Math.max(1L, transactionLog.size());
-                report(progress, 0);
-                List<TransactionLog.Batch> batches = transactionLog.readTransactions(Format.LOG_HEADER_SIZE, at ->
-                        report(progress, (int) Math.min(99L, at * 99L / total)));
-                script = scriptOf(batches);
+                mark.accept(0);
+                SqlScript script = new SqlScript(writer);
+                transactionLog.forEachTransaction(Format.LOG_HEADER_SIZE, at ->
+                        mark.accept((int) Math.min(99L, at * 99L / total)), (batch, start) -> {
+                    int count = batch.statements.size();
+                    script.write(batch, index -> {
+                        long span = batch.end - start;
+                        long pos = count == 0 ? batch.end : start + span * index / count;
+                        mark.accept((int) Math.min(99L, pos * 99L / total));
+                    });
+                });
+                script.finish();
             }
-            Files.writeString(target, script, StandardCharsets.UTF_8);
             report(progress, 100);
         } catch (IOException exception) {
             throw new NexException("could not write the SQL: " + exception.getMessage(), exception);
@@ -188,28 +207,45 @@ public final class Database implements AutoCloseable {
         throw new NexException("provide a .log file or the .db beside it");
     }
 
-    private static String scriptOf(List<TransactionLog.Batch> batches) {
-        StringBuilder script = new StringBuilder();
-        String schema = null;
-        for (TransactionLog.Batch batch : batches) {
-            if (script.length() > 0) {
-                script.append('\n');
+    /** Writes the SQL of each commit as it is read, instead of holding the whole script. */
+    private static final class SqlScript {
+        private final Writer out;
+        private String schema;
+        private boolean started;
+
+        private SqlScript(Writer out) {
+            this.out = out;
+        }
+
+        private void write(TransactionLog.Batch batch, IntConsumer written) throws IOException {
+            if (started) {
+                out.write('\n');
             }
+            int index = 0;
             for (TransactionLog.Applied statement : batch.statements) {
-                if (statement.sql == null || statement.sql.isBlank()) {
-                    continue;
+                index++;
+                if (statement.sql != null && !statement.sql.isBlank()) {
+                    if (schema == null || !schema.equalsIgnoreCase(statement.schema)) {
+                        schema = statement.schema;
+                        out.write("SET SCHEMA ");
+                        out.write(schemaName(schema));
+                        out.write(";\n");
+                    }
+                    out.write(bind(statement.sql, statement.params));
+                    out.write('\n');
+                    started = true;
                 }
-                if (schema == null || !schema.equalsIgnoreCase(statement.schema)) {
-                    schema = statement.schema;
-                    script.append("SET SCHEMA ").append(schemaName(schema)).append(";\n");
+                if (written != null) {
+                    written.accept(index);
                 }
-                script.append(bind(statement.sql, statement.params)).append('\n');
             }
         }
-        if (script.length() == 0 || script.charAt(script.length() - 1) != '\n') {
-            script.append('\n');
+
+        private void finish() throws IOException {
+            if (!started) {
+                out.write('\n');
+            }
         }
-        return script.toString();
     }
 
     private static String bind(String sql, Object[] params) {

@@ -70,7 +70,7 @@ public final class Dbtran {
 
                 With no arguments, the window opens.
                 <file.log> may be the .db; the .log beside it is read.
-                The command shows the percentage while it reads the file.
+                The command shows the percentage while it writes the SQL.
                 Parameters are written into the text in place of each ?.
 
                 Example:

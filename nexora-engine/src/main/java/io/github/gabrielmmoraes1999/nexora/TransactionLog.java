@@ -307,16 +307,27 @@ final class TransactionLog implements AutoCloseable {
      * {@code seen} receives the offset already read, so the export can show progress.
      */
     List<Batch> readTransactions(long from, LongConsumer seen) {
+        List<Batch> batches = new ArrayList<>();
+        try {
+            forEachTransaction(from, seen, (batch, start) -> batches.add(batch));
+        } catch (IOException exception) {
+            throw new NexException("could not read the transaction log: " + exception.getMessage(), exception);
+        }
+        return batches;
+    }
+
+    /**
+     * Same commits as {@link #readTransactions(long, LongConsumer)}, one at a time.
+     * {@code seen} receives the offset already read after each record.
+     * {@code consumer} receives the commit and the offset where its record starts.
+     */
+    void forEachTransaction(long from, LongConsumer seen, TransactionConsumer consumer) throws IOException {
         long size = size();
         if (size < Format.LOG_HEADER_SIZE) {
             throw new NexException("transaction log is corrupt");
         }
-        List<Batch> batches = new ArrayList<>();
         long at = Format.LOG_HEADER_SIZE;
         while (at + 4 <= size) {
-            if (seen != null) {
-                seen.accept(at);
-            }
             int recordLength = readInt(at);
             if (recordLength < 20 || at + recordLength > size) {
                 break;
@@ -336,16 +347,21 @@ final class TransactionLog implements AutoCloseable {
                 throw new NexException("transaction log is corrupt");
             }
             if (at >= from && type == Format.RECORD_TRANSACTION) {
-                batches.add(new Batch(at + recordLength, decodeTransaction(readable(record))));
+                Batch batch = new Batch(at + recordLength, decodeTransaction(readable(record)));
+                if (consumer != null) {
+                    consumer.accept(batch, at);
+                }
             } else if (type != Format.RECORD_REDO && type != Format.RECORD_CHECKPOINT && type != Format.RECORD_TRANSACTION) {
                 throw new NexException("transaction log is corrupt");
             }
             at += recordLength;
+            if (seen != null) {
+                seen.accept(at);
+            }
         }
         if (seen != null) {
             seen.accept(size);
         }
-        return batches;
     }
 
     /**
@@ -794,6 +810,12 @@ final class TransactionLog implements AutoCloseable {
             this.sql = sql;
             this.params = params == null ? new Object[0] : params;
         }
+    }
+
+    /** Receives one commit while the log is still being read. */
+    @FunctionalInterface
+    interface TransactionConsumer {
+        void accept(Batch batch, long start) throws IOException;
     }
 
     /** A log commit: the statements and the offset where the record ends. */
