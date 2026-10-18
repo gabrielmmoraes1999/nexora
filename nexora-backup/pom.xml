@@ -12,7 +12,7 @@
 
     <artifactId>nexora-backup</artifactId>
     <name>Nexora Backup</name>
-    <description>Backup window. Full backup and incremental backup, for a local file or a JDBC URL.</description>
+    <description>Backup window and command. Full backup and incremental backup, for a local file or a JDBC URL.</description>
 
     <dependencies>
         <dependency>

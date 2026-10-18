@@ -14,7 +14,7 @@ From the root, Maven builds the engine and then the driver, the network server, 
 mvn package
 ```
 
-The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `nexora-backup/target/nexora-backup-1.0.jar`, with the driver and the engine inside. It opens the full and incremental backup window, as in [Backup window](#backup-window). The log translation window is the JAR `nexora-dbtran/target/nexora-dbtran-1.0.jar`, with the engine inside. It writes the SQL from the log, as in [Log translation](#log-translation).
+The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `nexora-backup/target/nexora-backup-1.0.jar`, with the driver and the engine inside. It copies the database from the window or from the command line, as in [Backup window](#backup-window). The log translation window is the JAR `nexora-dbtran/target/nexora-dbtran-1.0.jar`, with the engine inside. It writes the SQL from the log, as in [Log translation](#log-translation).
 
 `mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
@@ -94,12 +94,13 @@ In the API, `Database.backup(file, folder)` performs the full backup, `Database.
 
 ## Backup window
 
-`nexora-backup` opens a window for the full and incremental backup. The source is a `.db` file or a JDBC URL. A JDBC URL needs a user and a password, and that user must be a DBA. `jdbc:nexora:embedded:<file.db>` opens the file in this process. `jdbc:nexora://host:port/name` asks the server that holds the file to send the copy; the directory is on the machine running the window. The window shows the percentage while those bytes arrive. A full backup resets the live log after the files have been written. An incremental backup copies only the `.log` and leaves the live log in place.
-
-The last fields are stored in `~/.nexora/backup.properties`. The password is written there only when Remember password is checked.
+`nexora-backup` copies the database. With no arguments, a window opens. With a source and a directory, the command writes the copy and prints the percentage while it runs. The source is a `.db` file or a JDBC URL. A JDBC URL needs `--user` and `--password`, and that user must be a DBA. `--role` is optional. `jdbc:nexora:embedded:<file.db>` opens the file in this process. `jdbc:nexora://host:port/name` asks the server that holds the file to send the copy; the directory is on the machine running the command. A full backup resets the live log after the files have been written. An incremental backup copies only the `.log` and leaves the live log in place. With no kind, the copy is full. The same copy is the CLI `backup` command. The window stores the last fields in `~/.nexora/backup.properties`. The password is written there only when Remember password is checked. `--help` shows the usage.
 
 ```bash
 java -jar nexora-backup/target/nexora-backup-1.0.jar
+java -jar nexora-backup/target/nexora-backup-1.0.jar full C:/data/store.db C:/data/backup
+java -jar nexora-backup/target/nexora-backup-1.0.jar incremental C:/data/store.db C:/data/logs
+java -jar nexora-backup/target/nexora-backup-1.0.jar full jdbc:nexora://127.0.0.1:4580/store --user dba --password secret C:/data/backup
 ```
 
 ## Log translation
