@@ -1,5 +1,6 @@
 package io.github.gabrielmmoraes1999.nexora.net;
 
+import io.github.gabrielmmoraes1999.nexora.BackupPiece;
 import io.github.gabrielmmoraes1999.nexora.ColumnMeta;
 import io.github.gabrielmmoraes1999.nexora.DataType;
 import io.github.gabrielmmoraes1999.nexora.NexException;
@@ -45,6 +46,10 @@ public final class Wire {
     public static final byte DESCRIBE_TABLES = 6;
     public static final byte DESCRIBE_VIEWS = 7;
     public static final byte STATUS = 8;
+    public static final byte BACKUP = 9;
+    public static final byte BACKUP_READ = 10;
+    public static final byte BACKUP_FINISH = 11;
+    public static final byte BACKUP_ABORT = 12;
 
     private static final byte V_NULL = 0;
     private static final byte V_BOOLEAN = 1;
@@ -318,6 +323,80 @@ public final class Wire {
             tables.add(readTable(in));
         }
         return tables;
+    }
+
+    public record BackupFile(String name, long size) {
+    }
+
+    public record BackupOffer(String databaseDirectory, List<BackupFile> files) {
+    }
+
+    public record BackupRead(int index, long offset, int length) {
+    }
+
+    public static byte[] encodeBackupRequest(boolean incremental) {
+        return bytes(out -> out.writeByte(incremental ? 2 : 1));
+    }
+
+    public static boolean decodeBackupRequest(byte[] body) throws IOException {
+        int kind = input(body).readUnsignedByte();
+        if (kind == 1) {
+            return false;
+        }
+        if (kind == 2) {
+            return true;
+        }
+        throw new IOException("invalid frame");
+    }
+
+    public static byte[] encodeBackupOffer(String databaseDirectory, List<BackupFile> files) {
+        List<BackupFile> list = files == null ? List.of() : files;
+        return bytes(out -> {
+            writeUtf(out, databaseDirectory == null ? "" : databaseDirectory);
+            out.writeInt(list.size());
+            for (BackupFile file : list) {
+                writeUtf(out, file.name());
+                out.writeLong(file.size());
+            }
+        });
+    }
+
+    public static BackupOffer decodeBackupOffer(byte[] body) throws IOException {
+        DataInputStream in = input(body);
+        String directory = readUtf(in);
+        int count = in.readInt();
+        if (count < 1 || count > 2) {
+            throw new IOException("invalid frame");
+        }
+        List<BackupFile> files = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            String name = readUtf(in);
+            long size = in.readLong();
+            if (size < 0) {
+                throw new IOException("invalid frame");
+            }
+            files.add(new BackupFile(name, size));
+        }
+        return new BackupOffer(directory, files);
+    }
+
+    public static byte[] encodeBackupRead(int index, long offset, int length) {
+        return bytes(out -> {
+            out.writeInt(index);
+            out.writeLong(offset);
+            out.writeInt(length);
+        });
+    }
+
+    public static BackupRead decodeBackupRead(byte[] body) throws IOException {
+        DataInputStream in = input(body);
+        int index = in.readInt();
+        long offset = in.readLong();
+        int length = in.readInt();
+        if (index < 0 || offset < 0 || length < 0 || length > BackupPiece.CHUNK) {
+            throw new IOException("invalid frame");
+        }
+        return new BackupRead(index, offset, length);
     }
 
     public static byte[] encodeError(String message) {

@@ -54,6 +54,9 @@ final class DatabaseFile implements AutoCloseable {
     private final List<Extent> retire = new ArrayList<>();
     private List<Extent> wipeAfter = List.of();
     private final Cache cache;
+    private boolean backupActive;
+    private boolean backupFull;
+    private List<BackupSlice> backupSlices = List.of();
 
     private DatabaseFile(Path path, FileChannel channel, Cache cache) {
         this.path = path;
@@ -774,12 +777,115 @@ final class DatabaseFile implements AutoCloseable {
             deleteQuiet(logCopy);
             throw exception;
         }
+        rollLog();
+    }
+
+    /**
+     * Checkpoint and remember the files a remote backup will read.
+     * The live log moves to the next generation only in {@link #finishBackup},
+     * after those bytes have been copied.
+     */
+    List<BackupPiece> beginBackup(boolean incremental) {
+        if (backupActive) {
+            throw new NexException("a backup is already running");
+        }
+        if (!ready || log == null || crashed || recoveryPending) {
+            throw new NexException("the database is not ready for backup");
+        }
+        checkpoint();
+        long dbBytes;
+        try {
+            dbBytes = channel.size();
+        } catch (IOException exception) {
+            throw new NexException("failed to read the database file: " + exception.getMessage(), exception);
+        }
+        String dbName = fileName(path);
+        String logName = fileName(log.path);
+        backupFull = !incremental;
+        backupSlices = incremental
+                ? List.of(new BackupSlice(logName, log.size(), true))
+                : List.of(new BackupSlice(dbName, dbBytes, false), new BackupSlice(logName, log.size(), true));
+        backupActive = true;
+        List<BackupPiece> pieces = new ArrayList<>();
+        for (BackupSlice slice : backupSlices) {
+            pieces.add(new BackupPiece(slice.name, slice.size));
+        }
+        return List.copyOf(pieces);
+    }
+
+    /** Reads a slice captured by {@link #beginBackup}. The file is not copied again. */
+    byte[] readBackup(int index, long offset, int length) {
+        if (!backupActive) {
+            throw new NexException("there is no backup in progress");
+        }
+        if (index < 0 || index >= backupSlices.size()) {
+            throw new NexException("unknown backup file");
+        }
+        if (offset < 0 || length < 0 || length > BackupPiece.CHUNK) {
+            throw new NexException("invalid backup read");
+        }
+        BackupSlice slice = backupSlices.get(index);
+        if (offset > slice.size) {
+            throw new NexException("backup read is past the end of the file");
+        }
+        int want = (int) Math.min(length, slice.size - offset);
+        if (want == 0) {
+            return new byte[0];
+        }
+        if (slice.log) {
+            return log.readAt(offset, want);
+        }
+        return Format.readFully(channel, offset, want);
+    }
+
+    /** Full backup advances the live log. An incremental backup leaves it in place. */
+    void finishBackup() {
+        if (!backupActive) {
+            throw new NexException("there is no backup in progress");
+        }
+        if (backupFull) {
+            rollLog();
+        }
+        endBackup();
+    }
+
+    void abortBackup() {
+        endBackup();
+    }
+
+    private void rollLog() {
         long next = epoch + 1;
         log.restart(next);
         writeEpoch(next);
         writeAppliedOffset(0L);
         writeCheckpointLsn(Format.LOG_HEADER_SIZE);
         forceChannel();
+    }
+
+    private void endBackup() {
+        backupActive = false;
+        backupFull = false;
+        backupSlices = List.of();
+    }
+
+    private static String fileName(Path file) {
+        Path name = file.getFileName();
+        if (name == null || name.toString().isBlank()) {
+            throw new NexException("invalid backup file name");
+        }
+        return name.toString();
+    }
+
+    private static final class BackupSlice {
+        private final String name;
+        private final long size;
+        private final boolean log;
+
+        private BackupSlice(String name, long size, boolean log) {
+            this.name = name;
+            this.size = size;
+            this.log = log;
+        }
     }
 
     /**

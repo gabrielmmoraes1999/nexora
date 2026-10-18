@@ -457,6 +457,34 @@ final class Engine implements AutoCloseable {
         return String.valueOf(value);
     }
 
+    List<BackupPiece> beginBackup(boolean incremental) {
+        if (closed) {
+            throw new NexException("session closed");
+        }
+        return storage.beginBackup(incremental);
+    }
+
+    byte[] readBackup(int index, long offset, int length) {
+        if (closed) {
+            throw new NexException("session closed");
+        }
+        return storage.readBackup(index, offset, length);
+    }
+
+    void finishBackup() {
+        if (closed) {
+            throw new NexException("session closed");
+        }
+        storage.finishBackup();
+    }
+
+    void abortBackup() {
+        if (closed) {
+            return;
+        }
+        storage.abortBackup();
+    }
+
     @Override
     public void close() {
         if (closed) {

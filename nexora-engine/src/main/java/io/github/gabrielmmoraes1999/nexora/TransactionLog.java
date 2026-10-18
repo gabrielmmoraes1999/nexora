@@ -235,6 +235,10 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
+    byte[] readAt(long offset, int length) {
+        return Format.readFully(channel, offset, length);
+    }
+
     long consistentEnd() {
         return consistentEnd;
     }

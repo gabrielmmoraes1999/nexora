@@ -9,7 +9,7 @@
     <version>1.0</version>
     <packaging>pom</packaging>
     <name>Nexora</name>
-    <description>Nexora engine, JDBC driver, personal and network servers, CLI, and administrative interface.</description>
+    <description>Nexora engine, JDBC driver, personal and network servers, CLI, backup window, and administrative interface.</description>
 
     <modules>
         <module>nexora-engine</module>
@@ -18,6 +18,7 @@
         <module>nexora-dbeng</module>
         <module>nexora-cli</module>
         <module>nexora-studio</module>
+        <module>nexora-backup</module>
     </modules>
 
     <properties>

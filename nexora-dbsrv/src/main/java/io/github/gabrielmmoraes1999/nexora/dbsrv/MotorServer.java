@@ -1,5 +1,6 @@
 package io.github.gabrielmmoraes1999.nexora.dbsrv;
 
+import io.github.gabrielmmoraes1999.nexora.BackupPiece;
 import io.github.gabrielmmoraes1999.nexora.Cache;
 import io.github.gabrielmmoraes1999.nexora.Database;
 import io.github.gabrielmmoraes1999.nexora.NexException;
@@ -335,6 +336,35 @@ public final class MotorServer implements AutoCloseable {
                             require(session);
                             Wire.writeFrame(out, Wire.OK, Wire.encodeTables(current.describeViews(session)));
                         }
+                        case Wire.BACKUP -> {
+                            require(session);
+                            boolean incremental = Wire.decodeBackupRequest(frame.body());
+                            log.statement(current.name, session.user(), incremental ? "BACKUP INCREMENTAL" : "BACKUP FULL");
+                            List<BackupPiece> pieces = current.beginBackup(session, incremental);
+                            Path parent = current.database.file().getParent();
+                            String directory = parent == null ? "" : parent.toAbsolutePath().normalize().toString();
+                            List<Wire.BackupFile> files = new ArrayList<>();
+                            for (BackupPiece piece : pieces) {
+                                files.add(new Wire.BackupFile(piece.name(), piece.size()));
+                            }
+                            Wire.writeFrame(out, Wire.OK, Wire.encodeBackupOffer(directory, files));
+                        }
+                        case Wire.BACKUP_READ -> {
+                            require(session);
+                            Wire.BackupRead read = Wire.decodeBackupRead(frame.body());
+                            byte[] data = current.readBackup(session, read.index(), read.offset(), read.length());
+                            Wire.writeFrame(out, Wire.OK, data);
+                        }
+                        case Wire.BACKUP_FINISH -> {
+                            require(session);
+                            current.finishBackup(session);
+                            Wire.writeFrame(out, Wire.OK, new byte[0]);
+                        }
+                        case Wire.BACKUP_ABORT -> {
+                            require(session);
+                            current.abortBackup(session);
+                            Wire.writeFrame(out, Wire.OK, new byte[0]);
+                        }
                         case Wire.LOGOUT -> {
                             require(session);
                             forget(session);
@@ -431,6 +461,7 @@ public final class MotorServer implements AutoCloseable {
         private final String name;
         private final Database database;
         private final List<Session> sessions = new ArrayList<>();
+        private Session backupSession;
 
         private Published(String name, Database database) {
             this.name = name;
@@ -439,6 +470,7 @@ public final class MotorServer implements AutoCloseable {
 
         private Session login(String user, String password, String role, RemoteClient remote) {
             synchronized (database) {
+                gate(null);
                 Session session = database.login(user, password, role, remote);
                 sessions.add(session);
                 return session;
@@ -447,14 +479,77 @@ public final class MotorServer implements AutoCloseable {
 
         private Reply execute(Session session, String sql, Object[] params) {
             synchronized (database) {
+                gate(session);
                 ensure(session);
+                if (backupSession == session) {
+                    throw new NexException("a backup is in progress on this connection");
+                }
                 SqlResult result = database.execute(session, sql, params == null ? new Object[0] : params);
                 return new Reply(result, session.schema());
             }
         }
 
+        private List<BackupPiece> beginBackup(Session session, boolean incremental) {
+            synchronized (database) {
+                ensure(session);
+                if (backupSession != null) {
+                    throw new NexException("a backup is already running");
+                }
+                List<BackupPiece> pieces = database.beginBackup(session, incremental);
+                backupSession = session;
+                return pieces;
+            }
+        }
+
+        private byte[] readBackup(Session session, int index, long offset, int length) {
+            synchronized (database) {
+                ensure(session);
+                if (backupSession != session) {
+                    throw new NexException("there is no backup in progress");
+                }
+                return database.readBackup(session, index, offset, length);
+            }
+        }
+
+        private void finishBackup(Session session) {
+            synchronized (database) {
+                ensure(session);
+                if (backupSession != session) {
+                    throw new NexException("there is no backup in progress");
+                }
+                try {
+                    database.finishBackup(session);
+                } catch (RuntimeException exception) {
+                    try {
+                        database.abortBackup(session);
+                    } catch (RuntimeException ignored) {
+                        // the original error explains the failed backup
+                    }
+                    throw exception;
+                } finally {
+                    backupSession = null;
+                    database.notifyAll();
+                }
+            }
+        }
+
+        private void abortBackup(Session session) {
+            synchronized (database) {
+                if (backupSession != session) {
+                    return;
+                }
+                try {
+                    database.abortBackup(session);
+                } finally {
+                    backupSession = null;
+                    database.notifyAll();
+                }
+            }
+        }
+
         private Wire.StateView setSchema(Session session, String schema) {
             synchronized (database) {
+                gate(session);
                 ensure(session);
                 database.setSchema(session, schema == null || schema.isBlank() ? "public" : schema);
                 return view(session);
@@ -463,6 +558,7 @@ public final class MotorServer implements AutoCloseable {
 
         private Wire.StateView state(Session session) {
             synchronized (database) {
+                gate(session);
                 ensure(session);
                 return view(session);
             }
@@ -470,6 +566,7 @@ public final class MotorServer implements AutoCloseable {
 
         private List<String> schemas(Session session) {
             synchronized (database) {
+                gate(session);
                 ensure(session);
                 return database.schemas(session);
             }
@@ -477,6 +574,7 @@ public final class MotorServer implements AutoCloseable {
 
         private List<TableDescription> describeTables(Session session) {
             synchronized (database) {
+                gate(session);
                 ensure(session);
                 return database.describeAllTables(session);
             }
@@ -484,6 +582,7 @@ public final class MotorServer implements AutoCloseable {
 
         private List<TableDescription> describeViews(Session session) {
             synchronized (database) {
+                gate(session);
                 ensure(session);
                 return database.describeViews(session);
             }
@@ -491,6 +590,17 @@ public final class MotorServer implements AutoCloseable {
 
         private void detach(Session session) {
             synchronized (database) {
+                if (backupSession == session) {
+                    try {
+                        database.abortBackup(session);
+                    } catch (RuntimeException ignored) {
+                        // logout still removes the connection
+                    }
+                    backupSession = null;
+                    database.notifyAll();
+                } else {
+                    gate(session);
+                }
                 try {
                     if (database.transactionActive(session) && !session.closed()) {
                         database.execute(session, "ROLLBACK");
@@ -510,6 +620,15 @@ public final class MotorServer implements AutoCloseable {
 
         private void closeAll() {
             synchronized (database) {
+                if (backupSession != null) {
+                    try {
+                        database.abortBackup(backupSession);
+                    } catch (RuntimeException ignored) {
+                        // shutdown still releases the file
+                    }
+                    backupSession = null;
+                    database.notifyAll();
+                }
                 for (Session session : List.copyOf(sessions)) {
                     try {
                         if (database.transactionActive(session) && !session.closed()) {
@@ -530,7 +649,22 @@ public final class MotorServer implements AutoCloseable {
         }
 
         private boolean transactionOpen(Session session) {
-            return database.transactionActive(session);
+            synchronized (database) {
+                gate(session);
+                return database.transactionActive(session);
+            }
+        }
+
+        /** Other sessions wait so the bytes captured at the checkpoint stay put. */
+        private void gate(Session session) {
+            while (backupSession != null && backupSession != session) {
+                try {
+                    database.wait();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new NexException("the backup was interrupted");
+                }
+            }
         }
 
         private Wire.StateView view(Session session) {

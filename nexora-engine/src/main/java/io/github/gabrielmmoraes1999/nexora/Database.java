@@ -497,6 +497,54 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /**
+     * Checkpoints the open database and returns the files a backup will copy.
+     * Only a DBA may call this. Writers must wait until {@link #finishBackup}
+     * or {@link #abortBackup}. A full backup passes {@code incremental} as false
+     * and advances the live log only when {@link #finishBackup} runs.
+     */
+    public List<BackupPiece> beginBackup(Session session, boolean incremental) {
+        synchronized (engine) {
+            requireDba(session);
+            return engine.beginBackup(incremental);
+        }
+    }
+
+    /** Reads one slice of a file returned by {@link #beginBackup}. */
+    public byte[] readBackup(Session session, int index, long offset, int length) {
+        synchronized (engine) {
+            requireDba(session);
+            return engine.readBackup(index, offset, length);
+        }
+    }
+
+    /**
+     * Ends a backup started by this session. A full backup then makes the live
+     * log record only what changes afterward.
+     */
+    public void finishBackup(Session session) {
+        synchronized (engine) {
+            requireDba(session);
+            engine.finishBackup();
+        }
+    }
+
+    /** Drops a backup that will not be kept. The live log stays as it is. */
+    public void abortBackup(Session session) {
+        synchronized (engine) {
+            engine.abortBackup();
+        }
+    }
+
+    private static void requireDba(Session session) {
+        if (session == null || session.closed()) {
+            throw new NexException("session closed");
+        }
+        if (!session.admin()) {
+            throw new NexException("only the DBA can backup the database");
+        }
+    }
+
     public Path file() {
         return engine.file;
     }

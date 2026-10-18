@@ -4,17 +4,17 @@ Nexora JDBC driver. The database is a pair of files: the `.db` holds the tables,
 
 Java 21. The driver declares JDBC 4.2 and is not a certified driver (`jdbcCompliant()` returns `false`).
 
-There are six Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `nexora-dbeng` is the personal server window and uses that same listener on this machine. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. The driver, the network server, the CLI, and the studio depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The studio depends on the driver.
+There are seven Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `nexora-dbeng` is the personal server window and uses that same listener on this machine. `nexora-cli` creates the database and bundles the command-line utilities. `nexora-studio` is the administrative interface. `nexora-backup` is the backup window. The driver, the network server, the CLI, the studio, and the backup window depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The CLI, the studio, and the backup window depend on the driver.
 
 ## Installation
 
-From the root, Maven builds the engine and then the driver, the network server, the personal server, and the CLI.
+From the root, Maven builds the engine and then the driver, the network server, the personal server, the CLI, the studio, and the backup window.
 
 ```bash
 mvn package
 ```
 
-The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio).
+The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `nexora-backup/target/nexora-backup-1.0.jar`, with the driver and the engine inside. It opens the full and incremental backup window, as in [Backup window](#backup-window).
 
 `mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
@@ -80,13 +80,27 @@ The log accumulates the committed transactions since the database was created or
 ```bash
 java -jar nexora-cli/target/nexora-cli-1.0.jar backup full C:/data/store.db C:/data/backup
 java -jar nexora-cli/target/nexora-cli-1.0.jar backup incremental C:/data/store.db C:/data/logs
+java -jar nexora-cli/target/nexora-cli-1.0.jar backup full jdbc:nexora://127.0.0.1:4580/store --user dba --password secret C:/data/backup
+java -jar nexora-cli/target/nexora-cli-1.0.jar backup incremental jdbc:nexora:embedded:C:/data/store.db --user dba --password secret C:/data/logs
 java -jar nexora-cli/target/nexora-cli-1.0.jar apply C:/data/backup/store.db C:/data/logs/store.log
 java -jar nexora-cli/target/nexora-cli-1.0.jar export C:/data/store.log C:/data/store.sql
 ```
 
+A JDBC URL replaces the file path. `--user` and `--password` are required, and that user must be a DBA. `--role` is optional. `jdbc:nexora:embedded:<file.db>` opens the file in this process. `jdbc:nexora://host:port/name` asks the server that already holds the file to send the copy; the directory is on the machine running the CLI, and the command prints the percentage while the bytes arrive. Other sessions on that database wait until the copy finishes. A full backup resets the live log after the files have been written. While a server holds the file, the embedded URL fails with database already open: use the network URL.
+
 In the API, `Database.backup(file, folder)` performs the full backup, `Database.backupLog(file, folder)` copies only the log, `Database.applyLog(file, log)` applies it, and `Database.exportSql(log, file.sql)` exports. `export` also accepts the `.db` and reads the `.log` beside it, and the command shows the percentage while it reads the file. `apply` accepts only the log of the same database, including the backup copy: the identifier stored in the log must belong to that `.db`. The backup folder stays outside the database folder.
 
 `NEX$PAGE_SIZE` stores the page size. `NEX$FORMAT` is `1`. `Default.CharacterSet` in `NEX$CONFIG` stores the character set supplied at creation.
+
+## Backup window
+
+`nexora-backup` opens a window for the full and incremental backup. The source is a `.db` file or a JDBC URL. A JDBC URL needs a user and a password, and that user must be a DBA. `jdbc:nexora:embedded:<file.db>` opens the file in this process. `jdbc:nexora://host:port/name` asks the server that holds the file to send the copy; the directory is on the machine running the window. The window shows the percentage while those bytes arrive. A full backup resets the live log after the files have been written. An incremental backup copies only the `.log` and leaves the live log in place.
+
+The last fields are stored in `~/.nexora/backup.properties`. The password is written there only when Remember password is checked.
+
+```bash
+java -jar nexora-backup/target/nexora-backup-1.0.jar
+```
 
 ## Network
 

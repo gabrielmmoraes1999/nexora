@@ -5,7 +5,7 @@ import io.github.gabrielmmoraes1999.nexora.NexException;
 /**
  * Target of a JDBC URL: a local file or a database published by the server.
  */
-final class NexTarget {
+public final class NexTarget {
 
     private final boolean embedded;
     private final String path;
@@ -21,7 +21,7 @@ final class NexTarget {
         this.database = database;
     }
 
-    static NexTarget parse(String url) {
+    public static NexTarget parse(String url) {
         if (url == null || !url.regionMatches(true, 0, NexDriver.URL_PREFIX, 0, NexDriver.URL_PREFIX.length())) {
             throw new NexException("invalid URL");
         }
@@ -39,23 +39,23 @@ final class NexTarget {
         return embedded(rest);
     }
 
-    boolean embedded() {
+    public boolean embedded() {
         return embedded;
     }
 
-    String path() {
+    public String path() {
         return path;
     }
 
-    String host() {
+    public String host() {
         return host;
     }
 
-    int port() {
+    public int port() {
         return port;
     }
 
-    String database() {
+    public String database() {
         return database;
     }
 
