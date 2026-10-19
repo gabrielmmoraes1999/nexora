@@ -957,11 +957,27 @@ final class TableStore implements AutoCloseable {
         pendingFree = new ArrayList<>();
         rows = new TreeMap<>();
         shared = false;
+        boolean droppedConnection = false;
         for (LiveSlot slot : image.rows) {
-            StoredRow row = readSlot(slot);
-            rows.put(row.id, row);
+            try {
+                StoredRow row = readSlot(slot);
+                rows.put(row.id, row);
+            } catch (NexException exception) {
+                if (!Names.same(schema.name, SystemTables.CONNECTIONS) || !exception.getMessage().startsWith("corrupt record")) {
+                    throw exception;
+                }
+                droppedConnection = true;
+                if (!blocked(slot.offset, slot.size)) {
+                    freeExtents.add(new Extent(slot.offset, slot.size));
+                }
+            }
         }
-        dirty = false;
+        if (droppedConnection) {
+            freeExtents = Extent.coalesce(freeExtents);
+            dirty = true;
+        } else {
+            dirty = false;
+        }
         indexes = IndexTree.attach(schema, image.indexRoots);
         if (scrub) {
             scrubExtents(freeExtents, metaOffset, metaLength, rows.values(), schema.name);
@@ -1329,6 +1345,27 @@ final class TableStore implements AutoCloseable {
         header[Format.SCRUB_OFFSET] = Format.SCRUB_CLEAN;
         writeAt(0, header);
         force();
+    }
+
+    /** A dropped connection slot must not be handed out over a live row, the metadata, or free space. */
+    private boolean blocked(long offset, long size) {
+        if (offset < Format.HEADER_SIZE || size <= Format.BLOCK_HEADER || offset + size < offset || offset + size > fileSize) {
+            return true;
+        }
+        if (overlaps(offset, size, metaOffset, Format.align8(metaLength))) {
+            return true;
+        }
+        for (Extent extent : freeExtents) {
+            if (overlaps(offset, size, extent.offset, extent.length)) {
+                return true;
+            }
+        }
+        for (StoredRow row : rows.values()) {
+            if (row.slotOffset >= 0 && overlaps(offset, size, row.slotOffset, row.slotSize)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean overlaps(long left, long leftLength, long right, long rightLength) {

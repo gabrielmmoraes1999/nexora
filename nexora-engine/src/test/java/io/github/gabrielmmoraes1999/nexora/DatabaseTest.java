@@ -1924,6 +1924,47 @@ class DatabaseTest {
     }
 
     @Test
+    void conexaoCorrompidaNaoImpedeAbrir() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        Database db = Database.open(arquivo, "dba", "dba");
+        try {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            TransactionLog.crashAfterRedo = true;
+            assertThrows(NexException.class, () -> db.execute("INSERT INTO t VALUES (1, 'Ana')"));
+        } finally {
+            TransactionLog.crashAfterRedo = false;
+            db.close();
+        }
+        assertTrue(zeroConnectionSlot(arquivo));
+        try (Database deNovo = Database.open(arquivo, "dba", "dba")) {
+            assertEquals("Ana", deNovo.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+            assertEquals(1, deNovo.query("SELECT COUNT(*) FROM NEX$CONNECTIONS").rows().get(0).getLong(0));
+        }
+    }
+
+    /** Zeros one live slot of {@code NEX$CONNECTIONS}. Returns false when the table has no row. */
+    private static boolean zeroConnectionSlot(Path database) {
+        try (DatabaseFile file = DatabaseFile.open(database)) {
+            for (DatabaseFile.StoredTable table : file.tables()) {
+                if (!table.name().equals("NEX$CONNECTIONS")) {
+                    continue;
+                }
+                byte[] header = file.readBytes(table.base(), Format.HEADER_SIZE);
+                FileHeader.Slot active = FileHeader.parse(header).active();
+                MetaImage image = MetaCodec.decode(file.readBytes(table.base() + active.metaOffset(), active.metaLength()));
+                if (image.rows.isEmpty()) {
+                    return false;
+                }
+                LiveSlot slot = image.rows.get(0);
+                file.writeBytes(table.base() + slot.offset, new byte[(int) slot.size]);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
     void backupGuardaOLogEApplyAvancaOBanco() throws Exception {
         Path arquivo = dir.resolve("loja.db");
         Database.create(arquivo, DatabaseOptions.defaults());
