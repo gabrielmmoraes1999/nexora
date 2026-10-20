@@ -91,18 +91,37 @@ final class Engine implements AutoCloseable {
     }
 
     static Engine open(Path file, Cache cache) {
-        DatabaseFile storage = DatabaseFile.open(file, cache);
+        return open(file, cache, true);
+    }
+
+    /** Opens for {@code -a}. No checkpoint is written until the log is accepted. */
+    static Engine openApplying(Path file, Cache cache) {
+        return open(file, cache, false);
+    }
+
+    private static Engine open(Path file, Cache cache, boolean session) {
+        DatabaseFile storage = session ? DatabaseFile.open(file, cache) : DatabaseFile.openApplying(file, cache);
         Engine engine = new Engine(storage);
         try {
             engine.loadTables();
             engine.ensureSystem(DatabaseOptions.defaults());
-            engine.closeStaleConnections();
-            engine.storage.saveCheckpoint();
+            if (session) {
+                engine.closeStaleConnections();
+                engine.storage.beginSession();
+            }
             return engine;
         } catch (RuntimeException exception) {
             engine.close();
             throw exception;
         }
+    }
+
+    long checkpointLsn() {
+        return storage.checkpointLsn();
+    }
+
+    long logLength() {
+        return storage.logLength();
     }
 
     void applyExternalLog(Path logFile) {

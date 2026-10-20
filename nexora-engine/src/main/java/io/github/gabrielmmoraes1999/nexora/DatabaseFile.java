@@ -24,7 +24,9 @@ import java.util.TreeMap;
  * marks how far they follow that log. Without the file, opening writes
  * a new log, with only the header, advances the generation, and continues from the
  * pages already stored. The log from the previous generation can no longer open the database.
- * Opening and closing write the checkpoint.
+ * Starting writes a checkpoint into the database and into the log. Stopping writes it again.
+ * Applying a log records only the checkpoint already stored in that file. A rejected log
+ * leaves the database checkpoint unchanged.
  */
 final class DatabaseFile implements AutoCloseable {
 
@@ -42,6 +44,10 @@ final class DatabaseFile implements AutoCloseable {
     private boolean recoveryPending;
     private boolean ready;
     private boolean appliedToDisk;
+    /** Apply writes pages and may record the log's own checkpoint. It does not append one. */
+    private boolean applying;
+    /** A normal open writes a checkpoint on the way in and on the way out. */
+    private boolean sessionBoundary;
     private long fileSize;
     private long catalogOffset;
     private int catalogLength;
@@ -75,14 +81,19 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     static DatabaseFile open(Path file, Cache cache) {
-        return open(file, Format.DEFAULT_PAGE_SIZE, true, cache);
+        return open(file, Format.DEFAULT_PAGE_SIZE, true, cache, false);
+    }
+
+    /** Opens without writing a checkpoint. Used while a log is applied. */
+    static DatabaseFile openApplying(Path file, Cache cache) {
+        return open(file, Format.DEFAULT_PAGE_SIZE, true, cache, true);
     }
 
     static DatabaseFile create(Path file, int pageSize) {
-        return open(file, Format.checkPageSize(pageSize), false, null);
+        return open(file, Format.checkPageSize(pageSize), false, null, false);
     }
 
-    private static DatabaseFile open(Path file, int pageSize, boolean existing, Cache cache) {
+    private static DatabaseFile open(Path file, int pageSize, boolean existing, Cache cache, boolean applying) {
         if (file == null) {
             throw new NexException("database file is required");
         }
@@ -114,6 +125,7 @@ final class DatabaseFile implements AutoCloseable {
                     ? Format.openHeld(path, StandardOpenOption.READ, StandardOpenOption.WRITE)
                     : Format.openHeld(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             DatabaseFile database = new DatabaseFile(path, channel, cache);
+            database.applying = applying;
             try {
                 database.lock();
                 if (created || channel.size() == 0) {
@@ -401,7 +413,9 @@ final class DatabaseFile implements AutoCloseable {
     @Override
     public void close() {
         try {
-            saveCheckpoint();
+            if (!applying) {
+                saveCheckpoint(sessionBoundary);
+            }
         } catch (RuntimeException ignored) {
             // the next open recovers from the log
         }
@@ -525,7 +539,7 @@ final class DatabaseFile implements AutoCloseable {
         if (logEpoch != epoch) {
             writeEpoch(logEpoch);
         }
-        if (applied || log.size() > checkpointLsn || logEpoch != epoch) {
+        if (!applying && (applied || log.size() > checkpointLsn || logEpoch != epoch)) {
             checkpoint();
         }
         header = readBytes(0, Format.DB_HEADER_SIZE);
@@ -554,7 +568,9 @@ final class DatabaseFile implements AutoCloseable {
         }
         if (!pending) {
             ready = true;
-            saveCheckpoint();
+            if (!applying) {
+                saveCheckpoint();
+            }
             return;
         }
         beginCommit();
@@ -574,7 +590,9 @@ final class DatabaseFile implements AutoCloseable {
             scrubPending();
             finishCommit();
             ready = true;
-            saveCheckpoint();
+            if (!applying) {
+                saveCheckpoint();
+            }
         } catch (RuntimeException exception) {
             abortCommit();
             throw exception;
@@ -697,6 +715,13 @@ final class DatabaseFile implements AutoCloseable {
         if (buffer.unchanged()) {
             return;
         }
+        if (applying) {
+            buffer.apply(this);
+            truncatePhysical(buffer.fileSize());
+            fileSize = buffer.fileSize();
+            forceChannel();
+            return;
+        }
         if (statements != null && !statements.isEmpty()) {
             log.appendTransaction(statements);
         }
@@ -732,15 +757,44 @@ final class DatabaseFile implements AutoCloseable {
      * Writes the checkpoint once opening has finished. A rejected log is left unchanged.
      */
     void saveCheckpoint() {
-        if (!ready || log == null || crashed || (recoveryPending && !appliedToDisk)) {
+        saveCheckpoint(false);
+    }
+
+    /** Start of a normal session: the checkpoint is stored in the database and in the log. */
+    void beginSession() {
+        checkpoint(true);
+        sessionBoundary = true;
+    }
+
+    long checkpointLsn() {
+        return checkpointLsn;
+    }
+
+    long logLength() {
+        return log.size();
+    }
+
+    private void saveCheckpoint(boolean boundary) {
+        if (applying || !ready || log == null || crashed || (recoveryPending && !appliedToDisk)) {
             return;
         }
-        checkpoint();
+        checkpoint(boundary);
     }
 
     private void checkpoint() {
+        checkpoint(false);
+    }
+
+    /**
+     * Syncs the pages and points the header at the end of the log.
+     * A boundary, written on start and on stop, always appends a checkpoint record.
+     */
+    private void checkpoint(boolean boundary) {
+        if (applying) {
+            return;
+        }
         forceChannel();
-        if (log.size() > checkpointLsn) {
+        if (boundary || log.size() > checkpointLsn) {
             log.appendCheckpoint();
             log.force();
         }
@@ -936,11 +990,16 @@ final class DatabaseFile implements AutoCloseable {
         }
         Path externalPath = logFile.toAbsolutePath().normalize();
         if (externalPath.equals(log.path.toAbsolutePath().normalize())) {
-            checkpoint();
+            long mark = log.lastCheckpoint();
+            if (canAdopt(log, mark)) {
+                adoptCheckpoint(mark);
+            }
             return ApplyPlan.none();
         }
         TransactionLog external = TransactionLog.openFile(externalPath, logId, pageSize);
         try {
+            long mark = external.lastCheckpoint();
+            boolean adopt = canAdopt(external, mark);
             long incoming = external.epoch();
             if (incoming == epoch) {
                 long from = appliedOffset > 0 ? appliedOffset : checkpointLsn;
@@ -950,14 +1009,14 @@ final class DatabaseFile implements AutoCloseable {
                 if (external.size() <= from) {
                     return ApplyPlan.none();
                 }
-                return new ApplyPlan(incoming, false, external.readTransactions(from), external.size());
+                return new ApplyPlan(incoming, false, external.readTransactions(from), external.size(), mark, adopt);
             }
             if (incoming == epoch + 1) {
                 if (log.size() != checkpointLsn) {
                     throw new NexException("the database still has changes without a checkpoint");
                 }
                 long from = appliedOffset > Format.LOG_HEADER_SIZE ? appliedOffset : Format.LOG_HEADER_SIZE;
-                return new ApplyPlan(incoming, true, external.readTransactions(from), external.size());
+                return new ApplyPlan(incoming, true, external.readTransactions(from), external.size(), mark, adopt);
             }
             if (incoming < epoch) {
                 throw new NexException("log is from a previous generation of the database");
@@ -968,13 +1027,38 @@ final class DatabaseFile implements AutoCloseable {
         }
     }
 
+    /** The offset belongs to this database's log, so the header can store it. */
+    private boolean canAdopt(TransactionLog external, long mark) {
+        if (mark < checkpointLsn || mark > log.size()) {
+            return false;
+        }
+        if (external.path.toAbsolutePath().normalize().equals(log.path.toAbsolutePath().normalize())) {
+            return true;
+        }
+        return external.epoch() == epoch && log.matches(external, mark);
+    }
+
+    /** Stores the checkpoint taken from a log, without appending a new record. */
+    private void adoptCheckpoint(long mark) {
+        if (mark < Format.LOG_HEADER_SIZE || mark <= checkpointLsn || mark > log.size()) {
+            return;
+        }
+        writeCheckpointLsn(mark);
+        writeStable(false);
+        forceChannel();
+    }
+
     /** Records how far the external log has been applied, so a new apply continues from there. */
     void noteApplied(long end) {
         writeAppliedOffset(end);
+        if (applying) {
+            forceChannel();
+            return;
+        }
         checkpoint();
     }
 
-    /** The next generation becomes this database's generation. */
+    /** The next generation becomes this database's generation. The checkpoint comes from the log. */
     void completeApply(ApplyPlan plan) {
         if (plan.advanceEpoch) {
             log.adoptEpoch(plan.incomingEpoch);
@@ -983,7 +1067,10 @@ final class DatabaseFile implements AutoCloseable {
         if (plan.end > appliedOffset) {
             writeAppliedOffset(plan.end);
         }
-        checkpoint();
+        if (plan.adoptCheckpoint) {
+            adoptCheckpoint(plan.checkpointInLog);
+        }
+        forceChannel();
     }
 
     private void applyRedo(long size, List<TransactionLog.Span> spans) {
@@ -1040,16 +1127,21 @@ final class DatabaseFile implements AutoCloseable {
         final boolean advanceEpoch;
         final List<TransactionLog.Batch> batches;
         final long end;
+        final long checkpointInLog;
+        final boolean adoptCheckpoint;
 
-        private ApplyPlan(long incomingEpoch, boolean advanceEpoch, List<TransactionLog.Batch> batches, long end) {
+        private ApplyPlan(long incomingEpoch, boolean advanceEpoch, List<TransactionLog.Batch> batches, long end,
+                          long checkpointInLog, boolean adoptCheckpoint) {
             this.incomingEpoch = incomingEpoch;
             this.advanceEpoch = advanceEpoch;
             this.batches = batches;
             this.end = end;
+            this.checkpointInLog = checkpointInLog;
+            this.adoptCheckpoint = adoptCheckpoint;
         }
 
         static ApplyPlan none() {
-            return new ApplyPlan(0L, false, List.of(), 0L);
+            return new ApplyPlan(0L, false, List.of(), 0L, 0L, false);
         }
 
         boolean idle() {

@@ -243,6 +243,46 @@ final class TransactionLog implements AutoCloseable {
         return consistentEnd;
     }
 
+    /**
+     * End offset of the last checkpoint record. The header size when the log has none.
+     * A torn record at the end is ignored. A corrupt record before the end is rejected.
+     */
+    long lastCheckpoint() {
+        long size = size();
+        if (size < Format.LOG_HEADER_SIZE) {
+            throw new NexException("transaction log is corrupt");
+        }
+        long mark = Format.LOG_HEADER_SIZE;
+        long at = Format.LOG_HEADER_SIZE;
+        while (at + 4 <= size) {
+            int recordLength = readInt(at);
+            if (recordLength < 20 || at + recordLength > size) {
+                break;
+            }
+            byte[] record = Format.readFully(channel, at, recordLength);
+            int stored = ByteBuffer.wrap(record, recordLength - 4, 4).order(Format.ORDER).getInt();
+            int expected = Format.crc(record, 4, recordLength - 8);
+            if (stored != expected) {
+                if (at + recordLength < size) {
+                    throw new NexException("transaction log is corrupt");
+                }
+                break;
+            }
+            int type = ByteBuffer.wrap(record, 4, 4).order(Format.ORDER).getInt();
+            long lsn = ByteBuffer.wrap(record, 8, 8).order(Format.ORDER).getLong();
+            if (lsn != at) {
+                throw new NexException("transaction log is corrupt");
+            }
+            if (type == Format.RECORD_CHECKPOINT) {
+                mark = at + recordLength;
+            } else if (type != Format.RECORD_REDO && type != Format.RECORD_TRANSACTION) {
+                throw new NexException("transaction log is corrupt");
+            }
+            at += recordLength;
+        }
+        return mark;
+    }
+
     void appendRedo(Collection<Span> spans, long fileSize) {
         ByteWriter payload = new ByteWriter();
         payload.u64(fileSize);

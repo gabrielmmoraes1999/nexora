@@ -1902,6 +1902,84 @@ class DatabaseTest {
     }
 
     @Test
+    void iniciarEEncerrarGravamCheckpoint() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        Path log = dir.resolve("loja.log");
+        long parado = Files.size(log);
+        assertEquals(parado, checkpoint(arquivo));
+
+        Database aberto = Database.open(arquivo, "dba", "dba");
+        long iniciado;
+        try {
+            iniciado = aberto.logLength();
+            assertTrue(iniciado > parado);
+            assertEquals(iniciado, aberto.checkpointLsn());
+        } finally {
+            aberto.close();
+        }
+        long fechado = Files.size(log);
+        assertTrue(fechado > iniciado);
+        assertEquals(fechado, checkpoint(arquivo));
+    }
+
+    @Test
+    void aplicarLogGravaSoOCheckpointDoArquivo() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'Ana')");
+        }
+        Path log = dir.resolve("loja.log");
+        long marca = checkpoint(arquivo);
+        long tamanho = Files.size(log);
+        assertEquals(tamanho, marca);
+        writeCheckpoint(arquivo, Format.LOG_HEADER_SIZE);
+
+        Database.applyLog(arquivo, log);
+
+        assertEquals(marca, checkpoint(arquivo));
+        assertEquals(tamanho, Files.size(log));
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            assertEquals("Ana", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
+        }
+    }
+
+    @Test
+    void logErradoNaoAlteraOCheckpoint() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'Ana')");
+        }
+        long marca = checkpoint(arquivo);
+        long tamanho = Files.size(dir.resolve("loja.log"));
+        byte[] header = Files.readAllBytes(arquivo);
+
+        Database.create(dir.resolve("outro.db"), DatabaseOptions.defaults());
+        NexException alheio = assertThrows(NexException.class,
+                () -> Database.applyLog(arquivo, dir.resolve("outro.log")));
+        assertTrue(alheio.getMessage().contains("does not belong"));
+        assertEquals(marca, checkpoint(arquivo));
+        assertEquals(tamanho, Files.size(dir.resolve("loja.log")));
+        assertArrayEquals(header, Files.readAllBytes(arquivo));
+
+        Path guardado = dir.resolve("antigo.log");
+        Files.copy(dir.resolve("loja.log"), guardado);
+        Database.backup(arquivo, dir.resolve("copia"));
+        long depois = checkpoint(arquivo);
+        long logDepois = Files.size(dir.resolve("loja.log"));
+        byte[] headerDepois = Files.readAllBytes(arquivo);
+        NexException geracao = assertThrows(NexException.class, () -> Database.applyLog(arquivo, guardado));
+        assertTrue(geracao.getMessage().contains("generation"));
+        assertEquals(depois, checkpoint(arquivo));
+        assertEquals(logDepois, Files.size(dir.resolve("loja.log")));
+        assertArrayEquals(headerDepois, Files.readAllBytes(arquivo));
+    }
+
+    @Test
     void recuperaCommitInterrompidoAntesDoCheckpoint() throws Exception {
         try (Database db = open()) {
             db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
@@ -2178,6 +2256,12 @@ class DatabaseTest {
     private static long checkpoint(Path database) throws Exception {
         byte[] header = Files.readAllBytes(database);
         return ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).getLong(Format.CHECKPOINT_LSN_OFFSET);
+    }
+
+    private static void writeCheckpoint(Path database, long value) throws Exception {
+        byte[] header = Files.readAllBytes(database);
+        ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).putLong(Format.CHECKPOINT_LSN_OFFSET, value);
+        Files.write(database, header);
     }
 
     private static long epoch(Path database) throws Exception {

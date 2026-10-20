@@ -19,7 +19,10 @@ import java.util.function.IntConsumer;
  * configuration, users, and connections live in it. The {@code .log} beside it
  * stores the committed transactions since creation or the last full backup.
  * If that file does not exist, or is empty, opening creates a log with only the header
- * and advances the generation: the old file can no longer open the database. Opening and closing write the checkpoint.
+ * and advances the generation: the old file can no longer open the database.
+ * Starting writes a checkpoint into the database and into the log. Stopping writes it again.
+ * Applying a log records only the checkpoint already stored in that file. A rejected log
+ * leaves the database checkpoint unchanged.
  *
  * <p>Opening requires a user and password and a file that already exists.
  * {@link #create(Path, DatabaseOptions)} chooses the page size, the password, and the name.
@@ -118,7 +121,7 @@ public final class Database implements AutoCloseable {
         if (log == null) {
             throw new NexException("transaction log is required");
         }
-        try (Engine engine = Engine.open(database, cache)) {
+        try (Engine engine = Engine.openApplying(database, cache)) {
             engine.applyExternalLog(log);
         }
     }
@@ -610,6 +613,18 @@ public final class Database implements AutoCloseable {
     public boolean transactionActive(Session session) {
         synchronized (engine) {
             return engine.transactionActive(session);
+        }
+    }
+
+    long checkpointLsn() {
+        synchronized (engine) {
+            return engine.checkpointLsn();
+        }
+    }
+
+    long logLength() {
+        synchronized (engine) {
+            return engine.logLength();
         }
     }
 
