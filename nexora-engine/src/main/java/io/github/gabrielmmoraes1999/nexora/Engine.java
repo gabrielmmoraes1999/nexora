@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
 final class Engine implements AutoCloseable {
@@ -125,6 +126,14 @@ final class Engine implements AutoCloseable {
     }
 
     void applyExternalLog(Path logFile) {
+        applyExternalLog(logFile, null);
+    }
+
+    /**
+     * {@code applied} receives the percent complete, from 1 to 100, when that percent changes.
+     * It is called after the transactions for that percent are in the database.
+     */
+    void applyExternalLog(Path logFile, IntConsumer applied) {
         DatabaseFile.ApplyPlan plan = storage.planApply(logFile);
         if (plan.idle()) {
             return;
@@ -135,12 +144,21 @@ final class Engine implements AutoCloseable {
         bypass = true;
         suppressCapture = false;
         try {
+            int total = plan.batches.size();
+            int done = 0;
+            int shown = 0;
             for (TransactionLog.Batch batch : plan.batches) {
                 for (TransactionLog.Applied statement : batch.statements) {
                     replay.schema(statement.schema);
                     execute(replay, statement.sql, statement.params);
                 }
                 storage.noteApplied(batch.end);
+                done++;
+                int percent = (int) Math.min(100L, done * 100L / total);
+                if (applied != null && percent > shown) {
+                    shown = percent;
+                    applied.accept(percent);
+                }
             }
             storage.completeApply(plan);
         } finally {

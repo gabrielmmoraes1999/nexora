@@ -115,6 +115,14 @@ public final class Database implements AutoCloseable {
     }
 
     public static void applyLog(Path database, Path log, Cache cache) {
+        applyLog(database, log, cache, null);
+    }
+
+    /**
+     * Applies a log onto the {@code .db}. {@code applied} receives the percent complete,
+     * from 1 to 100, when that percent changes. It is not called when the log is rejected.
+     */
+    public static void applyLog(Path database, Path log, Cache cache, IntConsumer applied) {
         if (database == null) {
             throw new NexException("database file is required");
         }
@@ -122,7 +130,7 @@ public final class Database implements AutoCloseable {
             throw new NexException("transaction log is required");
         }
         try (Engine engine = Engine.openApplying(database, cache)) {
-            engine.applyExternalLog(log);
+            engine.applyExternalLog(log, applied);
         }
     }
 

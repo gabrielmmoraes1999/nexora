@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 
@@ -1944,6 +1945,35 @@ class DatabaseTest {
         try (Database db = Database.open(arquivo, "dba", "dba")) {
             assertEquals("Ana", db.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
         }
+    }
+
+    @Test
+    void aplicarLogAvisaCadaTransacao() throws Exception {
+        Path arquivo = dir.resolve("loja.db");
+        Database.create(arquivo, DatabaseOptions.defaults());
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, nome VARCHAR(20))");
+            db.execute("INSERT INTO t VALUES (1, 'antes')");
+        }
+        Path destino = dir.resolve("copia");
+        Database.backup(arquivo, destino);
+        try (Database db = Database.open(arquivo, "dba", "dba")) {
+            db.execute("INSERT INTO t VALUES (2, 'depois')");
+            db.execute("INSERT INTO t VALUES (3, 'mais')");
+        }
+        List<Integer> applied = new ArrayList<>();
+        Database.applyLog(destino.resolve("loja.db"), dir.resolve("loja.log"), null, applied::add);
+        assertEquals(List.of(50, 100), applied);
+        try (Database db = Database.open(destino.resolve("loja.db"), "dba", "dba")) {
+            assertEquals("depois", db.query("SELECT nome FROM t WHERE id = 2").rows().get(0).getString("nome"));
+            assertEquals("mais", db.query("SELECT nome FROM t WHERE id = 3").rows().get(0).getString("nome"));
+        }
+
+        int[] rejected = {0};
+        Database.create(dir.resolve("outro.db"), DatabaseOptions.defaults());
+        assertThrows(NexException.class,
+                () -> Database.applyLog(destino.resolve("loja.db"), dir.resolve("outro.log"), null, index -> rejected[0]++));
+        assertEquals(0, rejected[0]);
     }
 
     @Test

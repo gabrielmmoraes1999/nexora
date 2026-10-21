@@ -64,6 +64,7 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -236,6 +237,7 @@ public final class ServerConsole extends JFrame {
     }
 
     private void boot() {
+        waitUntilShown();
         try {
             banner();
             if (shuttingDown) {
@@ -293,16 +295,24 @@ public final class ServerConsole extends JFrame {
     private void applyAndFinish() {
         Path file = arguments.databases().get(0).path();
         Path transactionLog = arguments.applyLog();
-        info("Applying transaction log " + transactionLog);
-        info("Database: " + file.toAbsolutePath());
+        show("Applying transaction log " + transactionLog);
+        show("Database: " + file.toAbsolutePath());
+        int[] shown = {0};
+        show("0% complete");
         try {
-            Database.applyLog(file, transactionLog, Cache.of(arguments.cacheBytes()));
+            Database.applyLog(file, transactionLog, Cache.of(arguments.cacheBytes()), percent -> {
+                shown[0] = percent;
+                show(percent + "% complete");
+            });
         } catch (RuntimeException exception) {
             error(message(exception));
             error("The log was not applied. Shutdown closes this window.");
             return;
         }
-        info("Transaction log applied.");
+        if (shown[0] < 100) {
+            show("100% complete");
+        }
+        show("Transaction log applied.");
         info("Server shutting down");
         try {
             Thread.sleep(1200);
@@ -687,30 +697,63 @@ public final class ServerConsole extends JFrame {
         write(true, message);
     }
 
+    private void waitUntilShown() {
+        while (!isDisplayable() && !shuttingDown) {
+            try {
+                Thread.sleep(15);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /** Writes a line and paints it before the caller continues. Used while a log is applied. */
+    private void show(String message) {
+        String text = message == null ? "" : message;
+        Runnable job = () -> append(false, text, true);
+        if (SwingUtilities.isEventDispatchThread()) {
+            job.run();
+            return;
+        }
+        try {
+            SwingUtilities.invokeAndWait(job);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        } catch (InvocationTargetException exception) {
+            // the console keeps the lines already written
+        }
+    }
+
     private void write(boolean failure, String message) {
         String text = message == null ? "" : message;
-        Runnable job = () -> {
-            StyledDocument document = console.getStyledDocument();
-            try {
-                trim(document);
-                if (text.isEmpty()) {
-                    document.insertString(document.getLength(), "\n", infoStyle);
-                } else if (failure) {
-                    document.insertString(document.getLength(), "E. " + STAMP.format(LocalDateTime.now()) + ". " + text + "\n", errorStyle);
-                } else {
-                    document.insertString(document.getLength(), "I. ", accentStyle);
-                    document.insertString(document.getLength(), STAMP.format(LocalDateTime.now()) + ". ", mutedStyle);
-                    document.insertString(document.getLength(), text + "\n", infoStyle);
-                }
-                console.setCaretPosition(document.getLength());
-            } catch (BadLocationException ignored) {
-                // the console keeps the lines already written
-            }
-        };
+        Runnable job = () -> append(failure, text, false);
         if (SwingUtilities.isEventDispatchThread()) {
             job.run();
         } else {
             SwingUtilities.invokeLater(job);
+        }
+    }
+
+    private void append(boolean failure, String text, boolean paint) {
+        StyledDocument document = console.getStyledDocument();
+        try {
+            trim(document);
+            if (text.isEmpty()) {
+                document.insertString(document.getLength(), "\n", infoStyle);
+            } else if (failure) {
+                document.insertString(document.getLength(), "E. " + STAMP.format(LocalDateTime.now()) + ". " + text + "\n", errorStyle);
+            } else {
+                document.insertString(document.getLength(), "I. ", accentStyle);
+                document.insertString(document.getLength(), STAMP.format(LocalDateTime.now()) + ". ", mutedStyle);
+                document.insertString(document.getLength(), text + "\n", infoStyle);
+            }
+            console.setCaretPosition(document.getLength());
+            if (paint && console.isShowing()) {
+                console.paintImmediately(console.getVisibleRect());
+            }
+        } catch (BadLocationException ignored) {
+            // the console keeps the lines already written
         }
     }
 
