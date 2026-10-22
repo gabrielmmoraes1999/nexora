@@ -372,7 +372,7 @@ An index name is unique within its schema. The primary key index, each `UNIQUE` 
 
 The entries live in 4096-byte pages in the table region. The file grows with the keys. An equality lookup reads only the pages on the path, from the root to the leaf, and the full key list does not stay in memory. The table rows are still loaded on open.
 
-The plan uses the index when the `WHERE` has equalities joined by `AND` that cover every column of the index, with a literal or `?`:
+The plan uses the index when the `WHERE` has equalities joined by `AND`, with a literal or `?`, and those equalities cover a leftmost prefix of the index. An index on `(order_id, number)` is used for `order_id = 10` and for `order_id = 10 AND number = 2`. A predicate on `number` alone does not use that index.
 
 ```sql
 SELECT id FROM customer WHERE email = ?;
@@ -398,7 +398,7 @@ DELETE FROM item WHERE order_id = 1 AND number = 2;
 
 ### Queries
 
-A query reads one table, with an alias, `DISTINCT`, `WHERE`, `ORDER BY`, `LIMIT`, and `OFFSET`. `FROM` can be left out when the list uses no column: the result has one row, and a false `WHERE` returns none. `SELECT *` still requires a table.
+A query reads tables, views, and procedure calls, with an alias, `DISTINCT`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, and `OFFSET`. `FROM` can be left out when the list uses no column: the result has one row, and a false `WHERE` returns none. `SELECT *` still requires a table. `GROUP BY` accepts expressions, a select-list ordinal, or an alias. A column outside an aggregate must be grouped. `HAVING` filters the groups and may use aggregates. Without `GROUP BY`, an aggregate query is still one group, including on an empty table. `GROUP BY` on an empty table returns no rows. `SELECT *` cannot be combined with `GROUP BY`.
 
 ```sql
 SELECT id, name AS customer
@@ -435,9 +435,48 @@ INSERT INTO log (occurred_at) VALUES (CURRENT_TIMESTAMP);
 SELECT LOCALTIME(3), CURRENT_TRANSACTION FROM NEX$DATABASE;
 ```
 
-`COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` occupy the entire `SELECT` list. Mixing an aggregate with a bare column fails, because there is no `GROUP BY`.
+`COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` can stand alone or sit next to grouped columns. Mixing an aggregate with a bare column fails when that column is not in the `GROUP BY`.
 
-Outside the dialect: `JOIN`, subquery, `UNION`, `GROUP BY`, `HAVING`, `INSERT ... SELECT`, procedure, and `SAVEPOINT`.
+```sql
+SELECT city, COUNT(*) AS total
+FROM customer
+GROUP BY city
+HAVING COUNT(*) > 5
+ORDER BY total DESC;
+```
+
+Joins run left to right. An equality in `ON` seeks an index of the right table when the join columns are a leftmost prefix of that index. When no index fits, that equality is hashed. A comparison that is not an equality, and `CROSS JOIN`, are nested loops. A filter that names only one side runs on that side before the join and can use an index there. `JOIN` and `INNER JOIN` are the same. `LEFT`, `RIGHT`, and `FULL` accept an optional `OUTER`. Those four require `ON`. `CROSS JOIN` does not. The condition uses the same predicates as `WHERE`. An unqualified column that appears in more than one input is an error. `SELECT *` concatenates the columns from left to right.
+
+```sql
+SELECT c.name, o.id
+FROM customer c
+JOIN orders o ON c.id = o.customer_id
+LEFT JOIN item i ON i.order_id = o.id
+WHERE c.city = 'Recife';
+```
+
+`UNION` removes duplicate rows. `UNION ALL` keeps them. Both sides need the same number of columns and the same inferred types. Names come from the first query. `ORDER BY`, `LIMIT`, and `OFFSET` apply to the combined result.
+
+```sql
+SELECT city FROM customer
+UNION
+SELECT city FROM supplier
+ORDER BY city
+LIMIT 10;
+```
+
+`WITH name AS (query)` defines a non-recursive common table expression. Several can appear in one query, and a later one can read an earlier one. An optional column list renames the output: `WITH name (a, b) AS (...)`. A CTE hides a table or view of the same name in that query. It cannot reference itself. `WITH RECURSIVE` is rejected.
+
+```sql
+WITH active AS (
+    SELECT id, name FROM customer WHERE open = TRUE
+)
+SELECT name FROM active ORDER BY name;
+```
+
+A view still stores one base relation. It can use `GROUP BY` and `HAVING` on that table. A view with `JOIN`, `UNION`, or `WITH` fails. `SELECT INTO` stays on one table. A cursor and `FOR SELECT` accept the same query clauses, except `LIMIT` and `OFFSET`.
+
+Outside the dialect: subquery, `NATURAL JOIN`, `USING`, a comma join, `INSERT ... SELECT`, `WITH RECURSIVE`, and `SAVEPOINT`.
 
 ## ResultSet
 

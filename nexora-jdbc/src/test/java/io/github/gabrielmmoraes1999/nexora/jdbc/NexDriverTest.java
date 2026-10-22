@@ -81,6 +81,25 @@ class NexDriverTest {
     }
 
     @Test
+    void conexaoSomenteLeituraAceitaWith() throws Exception {
+        criarBanco();
+        try (Connection connection = DriverManager.getConnection(url(), "dba", "dba")) {
+            connection.createStatement().execute("CREATE TABLE t (id INTEGER)");
+            connection.setReadOnly(true);
+            try (ResultSet rows = connection.createStatement().executeQuery("""
+                    WITH n AS (SELECT 1 AS id)
+                    SELECT id FROM n
+                    """)) {
+                assertTrue(rows.next());
+                assertEquals(1, rows.getInt(1));
+            }
+            SQLException escrita = assertThrows(SQLException.class,
+                    () -> connection.createStatement().execute("INSERT INTO t (id) VALUES (1)"));
+            assertEquals("25006", escrita.getSQLState());
+        }
+    }
+
+    @Test
     void consultaMetadadosEParametro() throws Exception {
         criarBanco();
         String url = url();

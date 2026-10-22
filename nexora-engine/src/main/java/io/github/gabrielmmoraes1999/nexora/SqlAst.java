@@ -7,9 +7,12 @@ record ParsedSql(List<Stmt> statements, int parameters) {
 
 sealed interface Stmt permits CreateTable, CreateIndex, DropTable, DropIndex, AddColumn, DropColumn, AlterColumnPosition, AddPrimaryKey, AddForeignKey,
         AddUnique, DropConstraint, DropPrimaryKey, DropForeignKey, DropUnique, Insert, Update, Delete, Select,
-        SelectProcedure, Grant, Revoke, BeginTx, CommitTx, RollbackTx, CreateGenerator, DropGenerator, SetGenerator,
+        SelectProcedure, UnionQuery, WithQuery, Grant, Revoke, BeginTx, CommitTx, RollbackTx, CreateGenerator, DropGenerator, SetGenerator,
         CreateProcedure, DropProcedure, ExecuteProcedure, CreateTrigger, DropTrigger, AlterTrigger, CreateView, DropView,
         CreateRole, DropRole, GrantRole, RevokeRole, DropConnection, CreateSchema, DropSchema, SetSchema {
+}
+
+sealed interface Query permits Select, SelectProcedure, UnionQuery, WithQuery {
 }
 
 record CreateView(boolean ifNotExists, String name, List<String> columns, String source) implements Stmt {
@@ -109,8 +112,24 @@ record Grant(List<String> privileges, String table, String user, boolean grantOp
 record Revoke(List<String> privileges, String table, String user) implements Stmt {
 }
 
-record Select(boolean distinct, boolean star, List<SelectItem> items, String table, String alias, Expr where,
-              List<OrderItem> orderBy, Long limit, Long offset) implements Stmt {
+record Select(boolean distinct, boolean star, List<SelectItem> items, String table, String alias, List<Join> joins,
+              Expr where, List<Expr> groupBy, Expr having, List<OrderItem> orderBy, Long limit, Long offset) implements Stmt, Query {
+}
+
+enum JoinKind {
+    INNER, LEFT, RIGHT, FULL, CROSS
+}
+
+record Join(JoinKind kind, String relation, String alias, Expr on) {
+}
+
+record UnionQuery(Query left, boolean all, Query right, List<OrderItem> orderBy, Long limit, Long offset) implements Stmt, Query {
+}
+
+record Cte(String name, List<String> columns, Query query) {
+}
+
+record WithQuery(List<Cte> ctes, Query body) implements Stmt, Query {
 }
 
 record BeginTx() implements Stmt {
@@ -143,7 +162,7 @@ enum BinaryOp {
     OR, AND, EQ, NE, LT, GT, LE, GE, CONCAT, ADD, SUB, MUL, DIV, MOD
 }
 
-sealed interface Expr permits Literal, Param, ColumnRef, VarRef, NextValue, ContextRef, Unary, Binary, IsNull, Like, InList, Between, Call {
+sealed interface Expr permits Literal, Param, ColumnRef, QualifiedStar, VarRef, NextValue, ContextRef, Unary, Binary, IsNull, Like, InList, Between, Call {
 }
 
 record Literal(Object value) implements Expr {
@@ -153,6 +172,10 @@ record Param(int index) implements Expr {
 }
 
 record ColumnRef(String qualifier, String name) implements Expr {
+}
+
+/** Every column of one relation in the SELECT list, as in {@code cr.*}. */
+record QualifiedStar(String qualifier) implements Expr {
 }
 
 record Unary(UnaryOp op, Expr expr) implements Expr {
@@ -216,10 +239,10 @@ record AlterTrigger(String name, boolean inactive) implements Stmt {
 }
 
 record SelectProcedure(boolean distinct, boolean star, List<SelectItem> items, String procedure, List<Expr> arguments, String alias,
-                       Expr where, List<OrderItem> orderBy, Long limit, Long offset) implements Stmt {
+                       Expr where, List<Expr> groupBy, Expr having, List<OrderItem> orderBy, Long limit, Long offset) implements Stmt, Query {
 }
 
-record CursorDef(String name, Select query) {
+record CursorDef(String name, Query query) {
 }
 
 record Routine(List<ParamDef> locals, List<CursorDef> cursors, Psql body) {
@@ -274,5 +297,5 @@ record PsqlFetch(String cursor, List<String> targets) implements Psql {
 record PsqlClose(String cursor) implements Psql {
 }
 
-record PsqlForSelect(Select query, List<String> targets, Psql body) implements Psql {
+record PsqlForSelect(Query query, List<String> targets, Psql body) implements Psql {
 }

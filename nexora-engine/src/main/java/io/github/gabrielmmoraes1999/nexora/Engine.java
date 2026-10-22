@@ -58,6 +58,9 @@ final class Engine implements AutoCloseable {
     private int procedureDepth;
     private int routineDepth;
     private int viewDepth;
+    private Map<String, Held> cteScope;
+    private Set<String> cteDefining = new HashSet<>();
+    private List<Evaluator.Frame> inferFrames;
     private Map<TableStore, TableStore.Snapshot> statementSnapshots;
     private IdentityHashMap<TableStore, Set<Long>> deletingRows;
     private IdentityHashMap<TableStore, Set<Long>> rewritingRows;
@@ -272,8 +275,7 @@ final class Engine implements AutoCloseable {
         ParsedSql parsed = parsed(sql);
         Object[] bound = bind(parameters, parsed.parameters());
         for (int i = 0; i < parsed.statements().size() - 1; i++) {
-            if (parsed.statements().get(i) instanceof Select || parsed.statements().get(i) instanceof SelectProcedure
-                    || parsed.statements().get(i) instanceof ExecuteProcedure) {
+            if (parsed.statements().get(i) instanceof Query || parsed.statements().get(i) instanceof ExecuteProcedure) {
                 throw new NexException("SELECT must be the last statement in the script");
             }
         }
@@ -597,8 +599,10 @@ final class Engine implements AutoCloseable {
                 }
                 yield SqlResult.update(0);
             }
-            case Select select -> query(select);
-            case SelectProcedure select -> queryProcedure(select);
+            case Select select -> runQuery(select);
+            case SelectProcedure select -> runQuery(select);
+            case UnionQuery union -> runQuery(union);
+            case WithQuery with -> runQuery(with);
             case CreateGenerator generator -> {
                 createGenerator(generator);
                 yield SqlResult.update(0);
@@ -1857,6 +1861,9 @@ final class Engine implements AutoCloseable {
     }
 
     private SqlResult query(Select statement) {
+        if (activeCte(statement.table()) || !statement.joins().isEmpty()) {
+            return querySources(statement);
+        }
         if (statement.table() == null) {
             return queryWithoutTable(statement);
         }
@@ -1866,7 +1873,8 @@ final class Engine implements AutoCloseable {
         guardAccess(statement.table(), "SELECT");
         TableStore table = require(statement.table());
         Schema schema = table.schema();
-        List<SelectItem> items = statement.star() ? star(schema) : statement.items();
+        List<SelectItem> items = statement.star() ? star(schema)
+                : expandStars(statement.items(), schema, schema.name, table.namespace(), statement.table(), statement.alias());
         if (items.isEmpty()) {
             throw new NexException("SELECT needs at least one expression");
         }
@@ -1879,7 +1887,7 @@ final class Engine implements AutoCloseable {
                 scalar = true;
             }
         }
-        if (aggregate && scalar) {
+        if (statement.groupBy().isEmpty() && aggregate && scalar) {
             throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         Evaluator evaluator = evaluator(table, statement.alias());
@@ -1887,6 +1895,38 @@ final class Engine implements AutoCloseable {
         List<ColumnMeta> columns = new ArrayList<>();
         for (SelectItem item : items) {
             columns.add(columnMeta(item, schema, table.namespace(), schema.name));
+        }
+        if (!statement.groupBy().isEmpty() || statement.having() != null) {
+            String tableName = schema.name;
+            String namespace = table.namespace();
+            String alias = statement.alias();
+            return grouped(statement.star(), statement.distinct(), statement.groupBy(), statement.having(),
+                    statement.orderBy(), statement.limit(), statement.offset(), items, columns, evaluator, new GroupSource() {
+                @Override
+                public int size() {
+                    return matched.size();
+                }
+
+                @Override
+                public void bind(int index) {
+                    evaluator.bind(matched.get(index));
+                }
+
+                @Override
+                public Projected projected(int index, Object[] values) {
+                    return new Projected(matched.get(index), values, null);
+                }
+
+                @Override
+                public String identify(ColumnRef column) {
+                    return identifyColumn(column, schema, tableName, namespace, alias);
+                }
+
+                @Override
+                public boolean hasColumn(String name) {
+                    return schema.indexOf(name) >= 0;
+                }
+            });
         }
         List<Projected> projected = new ArrayList<>();
         if (aggregate) {
@@ -1924,6 +1964,11 @@ final class Engine implements AutoCloseable {
             throw new NexException("SELECT * needs a table");
         }
         List<SelectItem> items = statement.items();
+        for (SelectItem item : items) {
+            if (item.expr() instanceof QualifiedStar star) {
+                throw new NexException("unknown qualifier: " + star.qualifier());
+            }
+        }
         if (items.isEmpty()) {
             throw new NexException("SELECT needs at least one expression");
         }
@@ -1936,7 +1981,7 @@ final class Engine implements AutoCloseable {
                 scalar = true;
             }
         }
-        if (aggregate && scalar) {
+        if (statement.groupBy().isEmpty() && aggregate && scalar) {
             throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         Schema schema = new Schema("", List.of(), new int[0], List.of(), List.of());
@@ -1948,6 +1993,35 @@ final class Engine implements AutoCloseable {
         }
         StoredRow row = new StoredRow(0, new Cell[0], -1, 0, true);
         List<StoredRow> matched = keep ? List.of(row) : List.of();
+        if (statement.having() != null) {
+            return grouped(statement.star(), statement.distinct(), statement.groupBy(), statement.having(),
+                    statement.orderBy(), statement.limit(), statement.offset(), items, columns, evaluator, new GroupSource() {
+                @Override
+                public int size() {
+                    return matched.size();
+                }
+
+                @Override
+                public void bind(int index) {
+                    evaluator.bind(matched.get(index));
+                }
+
+                @Override
+                public Projected projected(int index, Object[] values) {
+                    return new Projected(matched.get(index), values, null);
+                }
+
+                @Override
+                public String identify(ColumnRef column) {
+                    throw new NexException("column " + column.name() + " cannot be used in this statement");
+                }
+
+                @Override
+                public boolean hasColumn(String name) {
+                    return false;
+                }
+            });
+        }
         List<Projected> projected = new ArrayList<>();
         if (aggregate) {
             Object[] values = new Object[items.size()];
@@ -1990,11 +2064,17 @@ final class Engine implements AutoCloseable {
             }
             Session previous = actor;
             actor = ownerSession(view.owner());
+            Map<String, Held> savedScope = cteScope;
+            Set<String> savedDefining = cteDefining;
+            cteScope = null;
+            cteDefining = new HashSet<>();
             SqlResult produced;
             try {
                 produced = query(preparedView(view));
             } finally {
                 actor = previous;
+                cteScope = savedScope;
+                cteDefining = savedDefining;
             }
             if (produced.columns().size() != view.columns().size()) {
                 throw new NexException("the view " + view.name() + " does not match the stored SELECT");
@@ -2007,7 +2087,8 @@ final class Engine implements AutoCloseable {
     }
 
     private SqlResult projectView(Select statement, Schema schema, SqlResult produced, String namespace, String viewName) {
-        List<SelectItem> items = statement.star() ? star(schema) : statement.items();
+        List<SelectItem> items = statement.star() ? star(schema)
+                : expandStars(statement.items(), schema, viewName, namespace, statement.table(), statement.alias());
         if (items.isEmpty()) {
             throw new NexException("SELECT needs at least one expression");
         }
@@ -2020,7 +2101,7 @@ final class Engine implements AutoCloseable {
                 scalar = true;
             }
         }
-        if (aggregate && scalar) {
+        if (statement.groupBy().isEmpty() && aggregate && scalar) {
             throw new NexException("cannot mix aggregates and columns without GROUP BY");
         }
         Evaluator evaluator = evaluator(null, statement.alias());
@@ -2039,6 +2120,36 @@ final class Engine implements AutoCloseable {
         List<ColumnMeta> columns = new ArrayList<>();
         for (SelectItem item : items) {
             columns.add(columnMeta(item, schema, namespace, viewName));
+        }
+        if (!statement.groupBy().isEmpty() || statement.having() != null) {
+            String qualifier = namespace + "." + viewName;
+            return grouped(statement.star(), statement.distinct(), statement.groupBy(), statement.having(),
+                    statement.orderBy(), statement.limit(), statement.offset(), items, columns, evaluator, new GroupSource() {
+                @Override
+                public int size() {
+                    return matched.size();
+                }
+
+                @Override
+                public void bind(int index) {
+                    evaluator.bindView(matched.get(index));
+                }
+
+                @Override
+                public Projected projected(int index, Object[] values) {
+                    return new Projected(null, values, matched.get(index));
+                }
+
+                @Override
+                public String identify(ColumnRef column) {
+                    return identifyView(column, schema, statement.alias(), qualifier);
+                }
+
+                @Override
+                public boolean hasColumn(String name) {
+                    return schema.indexOf(name) >= 0;
+                }
+            });
         }
         List<Projected> projected = new ArrayList<>();
         if (aggregate) {
@@ -2072,10 +2183,14 @@ final class Engine implements AutoCloseable {
     }
 
     private void sort(List<Projected> projected, Select statement, List<SelectItem> items, Evaluator evaluator) {
+        sort(projected, statement.orderBy(), statement.distinct(), items, evaluator);
+    }
+
+    private void sort(List<Projected> projected, List<OrderItem> orderBy, boolean distinct, List<SelectItem> items, Evaluator evaluator) {
         projected.sort((left, right) -> {
-            for (OrderItem order : statement.orderBy()) {
-                Object lv = orderValue(left, order, items, statement.distinct(), evaluator);
-                Object rv = orderValue(right, order, items, statement.distinct(), evaluator);
+            for (OrderItem order : orderBy) {
+                Object lv = orderValue(left, order, items, distinct, evaluator);
+                Object rv = orderValue(right, order, items, distinct, evaluator);
                 int cmp;
                 if (lv == null && rv == null) {
                     cmp = 0;
@@ -2105,6 +2220,16 @@ final class Engine implements AutoCloseable {
         if (distinct) {
             throw new NexException("ORDER BY with DISTINCT must use columns from the SELECT list");
         }
+        if (Evaluator.containsAggregate(order.expr())) {
+            throw new NexException("ORDER BY aggregate must appear in the SELECT list");
+        }
+        if (evaluator.joined()) {
+            if (projected.source == null) {
+                throw new NexException("invalid ORDER BY");
+            }
+            evaluator.bindJoined(projected.source);
+            return evaluator.eval(order.expr());
+        }
         if (projected.row == null) {
             if (projected.source == null) {
                 throw new NexException("invalid ORDER BY");
@@ -2117,11 +2242,12 @@ final class Engine implements AutoCloseable {
     }
 
     private Integer selectIndex(Expr expr, List<SelectItem> items) {
-        if (expr instanceof Literal literal && literal.value() instanceof Long number) {
-            if (number < 1 || number > items.size()) {
-                throw new NexException("ORDER BY " + number + " is outside the SELECT list");
+        Long ordinal = ordinal(expr);
+        if (ordinal != null) {
+            if (ordinal < 1 || ordinal > items.size()) {
+                throw new NexException("ORDER BY " + ordinal + " is outside the SELECT list");
             }
-            return number.intValue() - 1;
+            return ordinal.intValue() - 1;
         }
         if (expr instanceof ColumnRef column && column.qualifier() == null) {
             for (int i = 0; i < items.size(); i++) {
@@ -2134,6 +2260,24 @@ final class Engine implements AutoCloseable {
                     return i;
                 }
             }
+        }
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).expr().equals(expr)) {
+                return i;
+            }
+        }
+        return null;
+    }
+
+    private static Long ordinal(Expr expr) {
+        if (!(expr instanceof Literal literal)) {
+            return null;
+        }
+        if (literal.value() instanceof Integer number) {
+            return number.longValue();
+        }
+        if (literal.value() instanceof Long number) {
+            return number;
         }
         return null;
     }
@@ -2164,6 +2308,1086 @@ final class Engine implements AutoCloseable {
             to = (int) Math.min(projected.size(), end);
         }
         return new ArrayList<>(projected.subList(from, to));
+    }
+
+    private SqlResult runQuery(Query query) {
+        return switch (query) {
+            case WithQuery with -> queryWith(with);
+            case UnionQuery union -> queryUnion(union);
+            case SelectProcedure procedure -> queryProcedure(procedure);
+            case Select select -> query(select);
+        };
+    }
+
+    private SqlResult queryWith(WithQuery with) {
+        Map<String, Held> saved = cteScope;
+        Map<String, Held> scope = new LinkedHashMap<>();
+        if (saved != null) {
+            scope.putAll(saved);
+        }
+        cteScope = scope;
+        try {
+            for (Cte cte : with.ctes()) {
+                String key = Names.fold(cte.name());
+                if (cteDefining.contains(key)) {
+                    throw new NexException("CTE cannot reference itself: " + cte.name());
+                }
+                cteDefining.add(key);
+                SqlResult result;
+                try {
+                    result = runQuery(cte.query());
+                } finally {
+                    cteDefining.remove(key);
+                }
+                if (!cte.columns().isEmpty() && cte.columns().size() != result.columns().size()) {
+                    throw new NexException("CTE column count does not match the query");
+                }
+                scope.put(key, holdRows(cte.name(), null, cteColumns(cte, result), rowsOf(result)));
+            }
+            return runQuery(with.body());
+        } finally {
+            cteScope = saved;
+        }
+    }
+
+    private List<ColumnMeta> cteColumns(Cte cte, SqlResult result) {
+        if (cte.columns().isEmpty()) {
+            return result.columns();
+        }
+        List<ColumnMeta> columns = new ArrayList<>();
+        for (int i = 0; i < cte.columns().size(); i++) {
+            ColumnMeta meta = result.columns().get(i);
+            columns.add(new ColumnMeta(cte.columns().get(i), meta.type(), meta.schema(), meta.table()));
+        }
+        return columns;
+    }
+
+    private SqlResult queryUnion(UnionQuery union) {
+        SqlResult left = runQuery(union.left());
+        SqlResult right = runQuery(union.right());
+        if (left.columns().size() != right.columns().size()) {
+            throw new NexException("UNION column count does not match");
+        }
+        for (int i = 0; i < left.columns().size(); i++) {
+            if (left.columns().get(i).type() != right.columns().get(i).type()) {
+                throw new NexException("UNION column types do not match");
+            }
+        }
+        List<SelectItem> items = new ArrayList<>();
+        for (ColumnMeta column : left.columns()) {
+            items.add(new SelectItem(new ColumnRef(null, column.name()), null, column.name()));
+        }
+        List<Projected> projected = new ArrayList<>();
+        Set<IndexKey> seen = new HashSet<>();
+        addUnion(projected, left, seen, union.all());
+        addUnion(projected, right, seen, union.all());
+        if (!union.orderBy().isEmpty()) {
+            sortUnion(projected, union.orderBy(), items);
+        }
+        projected = page(projected, union.limit(), union.offset());
+        List<Row> rows = new ArrayList<>();
+        for (Projected row : projected) {
+            rows.add(new Row(left.columns(), row.values));
+        }
+        return SqlResult.query(left.columns(), rows);
+    }
+
+    private void addUnion(List<Projected> projected, SqlResult result, Set<IndexKey> seen, boolean all) {
+        for (Row row : result.rows()) {
+            Object[] values = new Object[row.size()];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = row.get(i);
+            }
+            if (!all && !seen.add(new IndexKey(values))) {
+                continue;
+            }
+            projected.add(new Projected(null, values, null));
+        }
+    }
+
+    private void sortUnion(List<Projected> projected, List<OrderItem> order, List<SelectItem> items) {
+        projected.sort((left, right) -> {
+            for (OrderItem item : order) {
+                Integer index = selectIndex(item.expr(), items);
+                if (index == null) {
+                    throw new NexException("ORDER BY must use columns from the SELECT list");
+                }
+                int cmp = compareValues(left.values[index], right.values[index]);
+                if (item.descending()) {
+                    cmp = -cmp;
+                }
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        });
+    }
+
+    private boolean activeCte(String name) {
+        if (name == null || name.indexOf('.') >= 0) {
+            return false;
+        }
+        String key = Names.fold(name);
+        if (cteDefining.contains(key)) {
+            return true;
+        }
+        return cteScope != null && cteScope.containsKey(key);
+    }
+
+    private SqlResult querySources(Select statement) {
+        List<Expr> whereParts = conjuncts(statement.where());
+        Probe left = openProbe(statement.table(), statement.alias());
+        Held current = null;
+        for (Join join : statement.joins()) {
+            Probe right = openProbe(join.relation(), join.alias());
+            if (join.kind() == JoinKind.RIGHT) {
+                Probe inner = current == null ? left : new Probe(current.frames(), current.rows(), null, null);
+                Held driving = materialize(right, filtersOn(whereParts, right.frames()));
+                Held joined = joinInputs(driving, inner, join.on(), List.of(), true, false);
+                current = flip(joined, inner.frames(), right.frames());
+                continue;
+            }
+            if (current == null) {
+                current = materialize(left, filtersOn(whereParts, left.frames()));
+            } else {
+                current = filterHeld(current, filtersOn(whereParts, current.frames()));
+            }
+            if (join.kind() == JoinKind.CROSS) {
+                Held rightRows = materialize(right, filtersOn(whereParts, right.frames()));
+                current = joinRows(current, rightRows, null, false);
+                continue;
+            }
+            boolean full = join.kind() == JoinKind.FULL;
+            boolean outer = full || join.kind() == JoinKind.LEFT;
+            current = joinInputs(current, right, join.on(), outer ? List.of() : whereParts, outer, full);
+        }
+        if (current == null) {
+            current = materialize(left, filtersOn(whereParts, left.frames()));
+        }
+        return projectHeld(statement, current);
+    }
+
+    private SqlResult projectHeld(Select statement, Held held) {
+        Evaluator evaluator = evaluator(null, null);
+        evaluator.useFrames(held.frames());
+        List<Object[]> matched = new ArrayList<>();
+        for (Object[] row : held.rows()) {
+            evaluator.bindJoined(row);
+            if (statement.where() == null || evaluator.truth(statement.where())) {
+                matched.add(row);
+            }
+        }
+        List<SelectItem> items = new ArrayList<>();
+        List<ColumnMeta> columns = new ArrayList<>();
+        if (statement.star()) {
+            for (Evaluator.Frame frame : held.frames()) {
+                String qualifier = frame.alias != null ? frame.alias : frame.name;
+                String namespace = frame.namespace == null ? "" : frame.namespace;
+                for (Column column : frame.schema.columns) {
+                    items.add(new SelectItem(new ColumnRef(qualifier, column.name), null, column.name));
+                    columns.add(new ColumnMeta(column.name, column.type, namespace, frame.name));
+                }
+            }
+        } else {
+            inferFrames = held.frames();
+            try {
+                for (SelectItem item : statement.items()) {
+                    if (item.expr() instanceof QualifiedStar star) {
+                        for (Evaluator.Frame frame : framesForStar(held.frames(), star.qualifier())) {
+                            String namespace = frame.namespace == null ? "" : frame.namespace;
+                            for (Column column : frame.schema.columns) {
+                                items.add(new SelectItem(new ColumnRef(star.qualifier(), column.name), null, column.name));
+                                columns.add(new ColumnMeta(column.name, column.type, namespace, frame.name));
+                            }
+                        }
+                        continue;
+                    }
+                    items.add(item);
+                    if (item.expr() instanceof ColumnRef column) {
+                        Evaluator.Frame frame = Evaluator.Frame.find(held.frames(), column.qualifier(), column.name());
+                        String namespace = frame.namespace == null ? "" : frame.namespace;
+                        columns.add(new ColumnMeta(item.label(), frame.schema.column(column.name()).type, namespace, frame.name));
+                    } else {
+                        columns.add(new ColumnMeta(item.label(), infer(item.expr(), held.frames().get(0).schema)));
+                    }
+                }
+            } finally {
+                inferFrames = null;
+            }
+        }
+        if (items.isEmpty()) {
+            throw new NexException("SELECT needs at least one expression");
+        }
+        boolean aggregate = false;
+        for (SelectItem item : items) {
+            if (Evaluator.containsAggregate(item.expr())) {
+                aggregate = true;
+            }
+        }
+        if (!statement.groupBy().isEmpty() || statement.having() != null || aggregate) {
+            return grouped(statement.star(), statement.distinct(), statement.groupBy(), statement.having(),
+                    statement.orderBy(), statement.limit(), statement.offset(), items, columns, evaluator, new GroupSource() {
+                @Override
+                public int size() {
+                    return matched.size();
+                }
+
+                @Override
+                public void bind(int index) {
+                    evaluator.bindJoined(matched.get(index));
+                }
+
+                @Override
+                public Projected projected(int index, Object[] values) {
+                    return new Projected(null, values, matched.get(index));
+                }
+
+                @Override
+                public String identify(ColumnRef column) {
+                    return Evaluator.Frame.identify(held.frames(), column);
+                }
+
+                @Override
+                public boolean hasColumn(String name) {
+                    return Evaluator.Frame.hasColumn(held.frames(), name);
+                }
+            });
+        }
+        List<Projected> projected = new ArrayList<>();
+        for (Object[] row : matched) {
+            evaluator.bindJoined(row);
+            Object[] values = new Object[items.size()];
+            for (int i = 0; i < items.size(); i++) {
+                values[i] = materialize(evaluator.eval(items.get(i).expr()));
+            }
+            projected.add(new Projected(null, values, row));
+        }
+        if (statement.distinct()) {
+            projected = distinct(projected);
+        }
+        if (!statement.orderBy().isEmpty()) {
+            sort(projected, statement, items, evaluator);
+        }
+        projected = page(projected, statement.limit(), statement.offset());
+        List<Row> rows = new ArrayList<>();
+        for (Projected row : projected) {
+            rows.add(new Row(columns, row.values));
+        }
+        return SqlResult.query(columns, rows);
+    }
+
+    private Probe openProbe(String written, String alias) {
+        if (written != null && written.indexOf('.') < 0) {
+            String key = Names.fold(written);
+            if (cteDefining.contains(key)) {
+                throw new NexException("CTE cannot reference itself: " + written);
+            }
+            Held cte = cteScope == null ? null : cteScope.get(key);
+            if (cte != null) {
+                List<Evaluator.Frame> frames = new ArrayList<>();
+                for (Evaluator.Frame frame : cte.frames()) {
+                    frames.add(frame.withAlias(alias));
+                }
+                return new Probe(frames, cte.rows(), null, alias);
+            }
+        }
+        if (findView(written) != null) {
+            Held view = loadView(written, alias);
+            return new Probe(view.frames(), view.rows(), null, alias);
+        }
+        guardAccess(written, "SELECT");
+        TableStore table = require(written);
+        Schema schema = table.schema();
+        Evaluator.Frame frame = new Evaluator.Frame(schema, schema.name, written, table.namespace(), alias, 0, schema.columns.size());
+        return new Probe(List.of(frame), null, table, alias);
+    }
+
+    private Held materialize(Probe probe, List<Expr> filters) {
+        Expr filter = andAll(filters);
+        if (probe.table != null) {
+            Evaluator evaluator = evaluator(probe.table, probe.alias);
+            List<Object[]> rows = new ArrayList<>();
+            for (StoredRow row : match(probe.table, evaluator, filter)) {
+                rows.add(cells(probe.table, row));
+            }
+            return new Held(probe.frames, rows);
+        }
+        if (filter == null) {
+            return new Held(probe.frames, probe.rows);
+        }
+        return filterHeld(new Held(probe.frames, probe.rows), filters);
+    }
+
+    private Held filterHeld(Held held, List<Expr> filters) {
+        Expr filter = andAll(filters);
+        if (filter == null) {
+            return held;
+        }
+        Evaluator evaluator = evaluator(null, null);
+        evaluator.useFrames(held.frames());
+        List<Object[]> rows = new ArrayList<>();
+        for (Object[] row : held.rows()) {
+            evaluator.bindJoined(row);
+            if (evaluator.truth(filter)) {
+                rows.add(row);
+            }
+        }
+        return new Held(held.frames(), rows);
+    }
+
+    private Object[] cells(TableStore table, StoredRow row) {
+        Schema schema = table.schema();
+        Object[] values = new Object[schema.columns.size()];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = materialize(table.value(row, i));
+        }
+        return values;
+    }
+
+    private Held loadView(String written, String alias) {
+        Map<String, Held> savedScope = cteScope;
+        Set<String> savedDefining = cteDefining;
+        cteScope = null;
+        cteDefining = new HashSet<>();
+        SqlResult produced;
+        try {
+            produced = query(new Select(false, true, List.of(), written, null, List.of(), null, List.of(), null, List.of(), null, null));
+        } finally {
+            cteScope = savedScope;
+            cteDefining = savedDefining;
+        }
+        return holdRows(written, alias, produced.columns(), rowsOf(produced));
+    }
+
+    private Held holdRows(String written, String alias, List<ColumnMeta> metas, List<Object[]> rows) {
+        Relation relation = Relation.parse(written);
+        String namespace = relation.schema() == null ? "" : relation.schema();
+        List<Column> columns = new ArrayList<>();
+        for (ColumnMeta meta : metas) {
+            DataType type = meta.type();
+            int length = type == DataType.VARCHAR || type == DataType.CHAR ? 256 : 0;
+            columns.add(new Column(meta.name(), type, length, 0, false, false, 0L, false, null));
+            if (meta.schema() != null && !meta.schema().isEmpty()) {
+                namespace = meta.schema();
+            }
+        }
+        Schema schema = new Schema(relation.name(), columns, new int[0], List.of(), List.of());
+        Evaluator.Frame frame = new Evaluator.Frame(schema, relation.name(), written, namespace, alias, 0, columns.size());
+        return new Held(List.of(frame), rows);
+    }
+
+    private List<Object[]> rowsOf(SqlResult result) {
+        List<Object[]> rows = new ArrayList<>();
+        for (Row row : result.rows()) {
+            Object[] values = new Object[row.size()];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = row.get(i);
+            }
+            rows.add(values);
+        }
+        return rows;
+    }
+
+    private Held joinInputs(Held left, Probe right, Expr on, List<Expr> whereParts, boolean keepLeft, boolean keepRight) {
+        List<Expr> onParts = conjuncts(on);
+        List<Evaluator.Frame> rightFrames = right.frames();
+        List<Expr> rightFilters = new ArrayList<>();
+        for (Expr part : onParts) {
+            if (onlyReferences(part, rightFrames)) {
+                rightFilters.add(part);
+            }
+        }
+        List<Expr> extra = new ArrayList<>();
+        if (!keepLeft && !keepRight) {
+            List<Evaluator.Frame> both = combine(left.frames(), rightFrames);
+            for (Expr part : whereParts) {
+                if (onlyReferences(part, rightFrames)) {
+                    rightFilters.add(part);
+                } else if (references(part, left.frames()) && references(part, rightFrames) && onlyReferences(part, both)) {
+                    extra.add(part);
+                }
+            }
+        }
+        List<Equi> pairs = equiPairs(onParts, left.frames(), rightFrames);
+        pairs.addAll(equiPairs(extra, left.frames(), rightFrames));
+        if (pairs.isEmpty()) {
+            Held rightRows = materialize(right, rightFilters);
+            List<Expr> conditionParts = new ArrayList<>();
+            if (on != null) {
+                conditionParts.add(on);
+            }
+            conditionParts.addAll(extra);
+            Expr condition = andAll(conditionParts);
+            if (keepRight) {
+                return fullJoin(left, rightRows, condition);
+            }
+            return joinRows(left, rightRows, condition, keepLeft);
+        }
+        Fixed fixed = fixedEquals(rightFilters, rightFrames);
+        if (fixed.contradiction) {
+            return unmatched(left, rightFrames, keepLeft);
+        }
+        Set<Integer> seekColumns = new HashSet<>();
+        for (Equi pair : pairs) {
+            seekColumns.add(pair.rightIndex());
+        }
+        seekColumns.addAll(fixed.bound().keySet());
+        if (right.table != null && right.table.canSeek(seekColumns)) {
+            return indexJoin(left, right, pairs, fixed.bound(), on, extra, rightFilters, keepLeft, keepRight);
+        }
+        return hashJoin(left, right, pairs, rightFilters, on, extra, keepLeft, keepRight);
+    }
+
+    private Held unmatched(Held left, List<Evaluator.Frame> rightFrames, boolean keepLeft) {
+        List<Evaluator.Frame> frames = combine(left.frames(), rightFrames);
+        if (!keepLeft) {
+            return new Held(frames, List.of());
+        }
+        Object[] rightNulls = new Object[width(rightFrames)];
+        List<Object[]> rows = new ArrayList<>();
+        for (Object[] leftRow : left.rows()) {
+            rows.add(concat(leftRow, rightNulls));
+        }
+        return new Held(frames, rows);
+    }
+
+    private Held indexJoin(Held left, Probe right, List<Equi> pairs, Map<Integer, Object> fixed, Expr on, List<Expr> extra,
+                           List<Expr> rightFilters, boolean keepLeft, boolean keepRight) {
+        List<Evaluator.Frame> frames = combine(left.frames(), right.frames());
+        Evaluator evaluator = evaluator(null, null);
+        evaluator.useFrames(frames);
+        List<Object[]> rows = new ArrayList<>();
+        Object[] rightNulls = new Object[width(right.frames())];
+        Set<Long> matched = keepRight ? new HashSet<>() : null;
+        List<StoredRow> population = keepRight
+                ? match(right.table, evaluator(right.table, right.alias), andAll(rightFilters))
+                : List.of();
+        for (Object[] leftRow : left.rows()) {
+            Map<Integer, Object> key = seekKey(leftRow, pairs, fixed);
+            boolean any = false;
+            if (key != null) {
+                List<StoredRow> found = right.table.lookup(key);
+                if (found != null) {
+                    for (StoredRow stored : found) {
+                        Object[] combined = concat(leftRow, cells(right.table, stored));
+                        if (!accept(evaluator, combined, on, extra)) {
+                            continue;
+                        }
+                        rows.add(combined);
+                        any = true;
+                        if (matched != null) {
+                            matched.add(stored.id);
+                        }
+                    }
+                }
+            }
+            if (!any && keepLeft) {
+                rows.add(concat(leftRow, rightNulls));
+            }
+        }
+        if (keepRight) {
+            Object[] leftNulls = new Object[width(left.frames())];
+            for (StoredRow stored : population) {
+                if (!matched.contains(stored.id)) {
+                    rows.add(concat(leftNulls, cells(right.table, stored)));
+                }
+            }
+        }
+        return new Held(frames, rows);
+    }
+
+    private Held hashJoin(Held left, Probe right, List<Equi> pairs, List<Expr> rightFilters, Expr on, List<Expr> extra,
+                          boolean keepLeft, boolean keepRight) {
+        Held rightHeld = materialize(right, rightFilters);
+        List<Evaluator.Frame> frames = combine(left.frames(), rightHeld.frames());
+        Evaluator evaluator = evaluator(null, null);
+        evaluator.useFrames(frames);
+        Map<IndexKey, List<Integer>> buckets = new HashMap<>();
+        List<Object[]> rightRows = rightHeld.rows();
+        for (int i = 0; i < rightRows.size(); i++) {
+            Object[] parts = hashParts(rightRows.get(i), pairs, false);
+            if (parts == null) {
+                continue;
+            }
+            buckets.computeIfAbsent(new IndexKey(parts), key -> new ArrayList<>()).add(i);
+        }
+        boolean[] hit = keepRight ? new boolean[rightRows.size()] : null;
+        List<Object[]> rows = new ArrayList<>();
+        Object[] rightNulls = new Object[width(rightHeld.frames())];
+        for (Object[] leftRow : left.rows()) {
+            Object[] parts = hashParts(leftRow, pairs, true);
+            boolean any = false;
+            List<Integer> hits = parts == null ? null : buckets.get(new IndexKey(parts));
+            if (hits != null) {
+                for (int index : hits) {
+                    Object[] combined = concat(leftRow, rightRows.get(index));
+                    if (!accept(evaluator, combined, on, extra)) {
+                        continue;
+                    }
+                    rows.add(combined);
+                    any = true;
+                    if (hit != null) {
+                        hit[index] = true;
+                    }
+                }
+            }
+            if (!any && keepLeft) {
+                rows.add(concat(leftRow, rightNulls));
+            }
+        }
+        if (keepRight) {
+            Object[] leftNulls = new Object[width(left.frames())];
+            for (int i = 0; i < rightRows.size(); i++) {
+                if (!hit[i]) {
+                    rows.add(concat(leftNulls, rightRows.get(i)));
+                }
+            }
+        }
+        return new Held(frames, rows);
+    }
+
+    private Map<Integer, Object> seekKey(Object[] leftRow, List<Equi> pairs, Map<Integer, Object> fixed) {
+        Map<Integer, Object> key = new HashMap<>(fixed);
+        for (Equi pair : pairs) {
+            Object raw = leftRow[pair.left().offset + pair.leftIndex()];
+            if (raw == null) {
+                return null;
+            }
+            Column column = pair.right().schema.columns.get(pair.rightIndex());
+            Object coerced = Values.coerce(column.type, column.length, column.scale, raw);
+            if (coerced == null || Values.compare(coerced, raw) != 0) {
+                return null;
+            }
+            Object previous = key.get(pair.rightIndex());
+            if (previous != null && Values.compare(previous, coerced) != 0) {
+                return null;
+            }
+            key.put(pair.rightIndex(), coerced);
+        }
+        return key.isEmpty() ? null : key;
+    }
+
+    private Object[] hashParts(Object[] row, List<Equi> pairs, boolean leftSide) {
+        Object[] parts = new Object[pairs.size()];
+        for (int i = 0; i < pairs.size(); i++) {
+            Equi pair = pairs.get(i);
+            Object raw = leftSide
+                    ? row[pair.left().offset + pair.leftIndex()]
+                    : row[pair.right().offset + pair.rightIndex()];
+            if (raw == null) {
+                return null;
+            }
+            Column column = pair.right().schema.columns.get(pair.rightIndex());
+            Object coerced = Values.coerce(column.type, column.length, column.scale, raw);
+            if (coerced == null || Values.compare(coerced, raw) != 0) {
+                return null;
+            }
+            parts[i] = coerced;
+        }
+        return parts;
+    }
+
+    private boolean accept(Evaluator evaluator, Object[] row, Expr on, List<Expr> extra) {
+        evaluator.bindJoined(row);
+        if (on != null && !evaluator.truth(on)) {
+            return false;
+        }
+        for (Expr expr : extra) {
+            if (!evaluator.truth(expr)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private List<Equi> equiPairs(List<Expr> parts, List<Evaluator.Frame> left, List<Evaluator.Frame> right) {
+        List<Equi> pairs = new ArrayList<>();
+        for (Expr expr : parts) {
+            if (!(expr instanceof Binary binary) || binary.op() != BinaryOp.EQ) {
+                continue;
+            }
+            if (!(binary.left() instanceof ColumnRef leftRef) || !(binary.right() instanceof ColumnRef rightRef)) {
+                continue;
+            }
+            Evaluator.Frame leftOnLeft = tryFrame(left, leftRef);
+            Evaluator.Frame leftOnRight = tryFrame(right, leftRef);
+            Evaluator.Frame rightOnLeft = tryFrame(left, rightRef);
+            Evaluator.Frame rightOnRight = tryFrame(right, rightRef);
+            Evaluator.Frame leftFrame;
+            Evaluator.Frame rightFrame;
+            ColumnRef leftColumn;
+            ColumnRef rightColumn;
+            if (leftOnLeft != null && leftOnRight == null && rightOnRight != null && rightOnLeft == null) {
+                leftFrame = leftOnLeft;
+                rightFrame = rightOnRight;
+                leftColumn = leftRef;
+                rightColumn = rightRef;
+            } else if (rightOnLeft != null && rightOnRight == null && leftOnRight != null && leftOnLeft == null) {
+                leftFrame = rightOnLeft;
+                rightFrame = leftOnRight;
+                leftColumn = rightRef;
+                rightColumn = leftRef;
+            } else {
+                continue;
+            }
+            int leftIndex = leftFrame.schema.indexOf(leftColumn.name());
+            int rightIndex = rightFrame.schema.indexOf(rightColumn.name());
+            if (leftIndex < 0 || rightIndex < 0) {
+                continue;
+            }
+            pairs.add(new Equi(leftFrame, leftIndex, rightFrame, rightIndex));
+        }
+        return pairs;
+    }
+
+    private Fixed fixedEquals(List<Expr> filters, List<Evaluator.Frame> frames) {
+        Map<Integer, Object> equals = new HashMap<>();
+        for (Expr expr : filters) {
+            if (!(expr instanceof Binary binary) || binary.op() != BinaryOp.EQ) {
+                continue;
+            }
+            ColumnRef column;
+            Expr valueExpr;
+            if (binary.left() instanceof ColumnRef left && constant(binary.right()) != Values.MISSING) {
+                column = left;
+                valueExpr = binary.right();
+            } else if (binary.right() instanceof ColumnRef right && constant(binary.left()) != Values.MISSING) {
+                column = right;
+                valueExpr = binary.left();
+            } else {
+                continue;
+            }
+            Evaluator.Frame frame = tryFrame(frames, column);
+            if (frame == null) {
+                continue;
+            }
+            int index = frame.schema.indexOf(column.name());
+            if (index < 0) {
+                continue;
+            }
+            Object raw = constant(valueExpr);
+            if (raw == null) {
+                return new Fixed(Map.of(), true);
+            }
+            Column definition = frame.schema.columns.get(index);
+            Object coerced;
+            try {
+                coerced = Values.coerce(definition.type, definition.length, definition.scale, raw);
+                if (Values.compare(coerced, raw) != 0) {
+                    continue;
+                }
+            } catch (NexException exception) {
+                continue;
+            }
+            Object previous = equals.get(index);
+            if (previous != null && Values.compare(previous, coerced) != 0) {
+                return new Fixed(Map.of(), true);
+            }
+            equals.put(index, coerced);
+        }
+        return new Fixed(equals, false);
+    }
+
+    private List<Expr> conjuncts(Expr expr) {
+        List<Expr> parts = new ArrayList<>();
+        flattenAnd(expr, parts);
+        return parts;
+    }
+
+    private void flattenAnd(Expr expr, List<Expr> parts) {
+        if (expr instanceof Binary binary && binary.op() == BinaryOp.AND) {
+            flattenAnd(binary.left(), parts);
+            flattenAnd(binary.right(), parts);
+            return;
+        }
+        if (expr != null) {
+            parts.add(expr);
+        }
+    }
+
+    private Expr andAll(List<Expr> parts) {
+        Expr combined = null;
+        for (Expr part : parts) {
+            combined = combined == null ? part : new Binary(BinaryOp.AND, combined, part);
+        }
+        return combined;
+    }
+
+    private List<Expr> filtersOn(List<Expr> parts, List<Evaluator.Frame> frames) {
+        List<Expr> filters = new ArrayList<>();
+        for (Expr part : parts) {
+            if (onlyReferences(part, frames)) {
+                filters.add(part);
+            }
+        }
+        return filters;
+    }
+
+    private boolean onlyReferences(Expr expr, List<Evaluator.Frame> frames) {
+        for (ColumnRef column : columnRefs(expr)) {
+            if (tryFrame(frames, column) == null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean references(Expr expr, List<Evaluator.Frame> frames) {
+        for (ColumnRef column : columnRefs(expr)) {
+            if (tryFrame(frames, column) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Evaluator.Frame tryFrame(List<Evaluator.Frame> frames, ColumnRef column) {
+        try {
+            return Evaluator.Frame.find(frames, column.qualifier(), column.name());
+        } catch (NexException exception) {
+            return null;
+        }
+    }
+
+    private List<ColumnRef> columnRefs(Expr expr) {
+        List<ColumnRef> refs = new ArrayList<>();
+        collectColumns(expr, refs);
+        return refs;
+    }
+
+    private void collectColumns(Expr expr, List<ColumnRef> refs) {
+        if (expr instanceof ColumnRef column) {
+            refs.add(column);
+        } else if (expr instanceof Unary unary) {
+            collectColumns(unary.expr(), refs);
+        } else if (expr instanceof Binary binary) {
+            collectColumns(binary.left(), refs);
+            collectColumns(binary.right(), refs);
+        } else if (expr instanceof IsNull isNull) {
+            collectColumns(isNull.expr(), refs);
+        } else if (expr instanceof Like like) {
+            collectColumns(like.expr(), refs);
+            collectColumns(like.pattern(), refs);
+            if (like.escape() != null) {
+                collectColumns(like.escape(), refs);
+            }
+        } else if (expr instanceof InList inList) {
+            collectColumns(inList.expr(), refs);
+            for (Expr value : inList.values()) {
+                collectColumns(value, refs);
+            }
+        } else if (expr instanceof Between between) {
+            collectColumns(between.expr(), refs);
+            collectColumns(between.low(), refs);
+            collectColumns(between.high(), refs);
+        } else if (expr instanceof Call call) {
+            for (Expr arg : call.args()) {
+                collectColumns(arg, refs);
+            }
+        }
+    }
+
+    private Held joinRows(Held left, Held right, Expr on, boolean keepLeft) {
+        List<Evaluator.Frame> frames = combine(left.frames(), right.frames());
+        Evaluator evaluator = evaluator(null, null);
+        evaluator.useFrames(frames);
+        List<Object[]> rows = new ArrayList<>();
+        Object[] rightNulls = new Object[width(right.frames())];
+        for (Object[] leftRow : left.rows()) {
+            boolean any = false;
+            for (Object[] rightRow : right.rows()) {
+                Object[] combined = concat(leftRow, rightRow);
+                if (on == null || matches(evaluator, combined, on)) {
+                    rows.add(combined);
+                    any = true;
+                }
+            }
+            if (!any && keepLeft) {
+                rows.add(concat(leftRow, rightNulls));
+            }
+        }
+        return new Held(frames, rows);
+    }
+
+    private Held flip(Held joined, List<Evaluator.Frame> leftFrames, List<Evaluator.Frame> rightFrames) {
+        int leftWidth = width(leftFrames);
+        int rightWidth = width(rightFrames);
+        List<Object[]> rows = new ArrayList<>();
+        for (Object[] row : joined.rows()) {
+            Object[] ordered = new Object[row.length];
+            System.arraycopy(row, rightWidth, ordered, 0, leftWidth);
+            System.arraycopy(row, 0, ordered, leftWidth, rightWidth);
+            rows.add(ordered);
+        }
+        return new Held(combine(leftFrames, rightFrames), rows);
+    }
+
+    private Held fullJoin(Held left, Held right, Expr on) {
+        List<Evaluator.Frame> frames = combine(left.frames(), right.frames());
+        Evaluator evaluator = evaluator(null, null);
+        evaluator.useFrames(frames);
+        List<Object[]> rows = new ArrayList<>();
+        boolean[] matched = new boolean[right.rows().size()];
+        Object[] rightNulls = new Object[width(right.frames())];
+        Object[] leftNulls = new Object[width(left.frames())];
+        for (Object[] leftRow : left.rows()) {
+            boolean any = false;
+            for (int index = 0; index < right.rows().size(); index++) {
+                Object[] combined = concat(leftRow, right.rows().get(index));
+                if (matches(evaluator, combined, on)) {
+                    rows.add(combined);
+                    matched[index] = true;
+                    any = true;
+                }
+            }
+            if (!any) {
+                rows.add(concat(leftRow, rightNulls));
+            }
+        }
+        for (int index = 0; index < right.rows().size(); index++) {
+            if (!matched[index]) {
+                rows.add(concat(leftNulls, right.rows().get(index)));
+            }
+        }
+        return new Held(frames, rows);
+    }
+
+    private boolean matches(Evaluator evaluator, Object[] row, Expr on) {
+        evaluator.bindJoined(row);
+        return evaluator.truth(on);
+    }
+
+    private List<Evaluator.Frame> combine(List<Evaluator.Frame> left, List<Evaluator.Frame> right) {
+        List<Evaluator.Frame> frames = new ArrayList<>(left);
+        int shift = width(left);
+        for (Evaluator.Frame frame : right) {
+            frames.add(frame.shift(shift));
+        }
+        return frames;
+    }
+
+    private static int width(List<Evaluator.Frame> frames) {
+        int width = 0;
+        for (Evaluator.Frame frame : frames) {
+            width += frame.width;
+        }
+        return width;
+    }
+
+    private static Object[] concat(Object[] left, Object[] right) {
+        Object[] combined = new Object[left.length + right.length];
+        System.arraycopy(left, 0, combined, 0, left.length);
+        System.arraycopy(right, 0, combined, left.length, right.length);
+        return combined;
+    }
+
+    private SqlResult grouped(boolean star, boolean distinct, List<Expr> groupBy, Expr having, List<OrderItem> orderBy,
+                              Long limit, Long offset, List<SelectItem> items, List<ColumnMeta> columns,
+                              Evaluator evaluator, GroupSource source) {
+        if (star && !groupBy.isEmpty()) {
+            throw new NexException("SELECT * cannot be combined with GROUP BY");
+        }
+        if (groupBy.isEmpty()) {
+            boolean aggregate = false;
+            boolean scalar = false;
+            for (SelectItem item : items) {
+                if (Evaluator.containsAggregate(item.expr())) {
+                    aggregate = true;
+                } else {
+                    scalar = true;
+                }
+            }
+            if (aggregate && scalar) {
+                throw new NexException("cannot mix aggregates and columns without GROUP BY");
+            }
+        }
+        List<Expr> keys = groupKeys(groupBy, items, source);
+        for (SelectItem item : items) {
+            checkGrouped(item.expr(), keys, source);
+        }
+        if (having != null) {
+            checkGrouped(having, keys, source);
+        }
+        Map<IndexKey, List<Integer>> groups = new LinkedHashMap<>();
+        if (keys.isEmpty()) {
+            List<Integer> all = new ArrayList<>();
+            for (int index = 0; index < source.size(); index++) {
+                all.add(index);
+            }
+            groups.put(new IndexKey(new Object[0]), all);
+        } else {
+            for (int index = 0; index < source.size(); index++) {
+                source.bind(index);
+                Object[] keyValues = new Object[keys.size()];
+                for (int key = 0; key < keys.size(); key++) {
+                    keyValues[key] = materialize(evaluator.eval(keys.get(key)));
+                }
+                groups.computeIfAbsent(new IndexKey(keyValues), ignored -> new ArrayList<>()).add(index);
+            }
+        }
+        List<Projected> projected = new ArrayList<>();
+        for (List<Integer> members : groups.values()) {
+            if (having != null && !evaluator.truthGrouped(having, members, source::bind)) {
+                continue;
+            }
+            Object[] values = new Object[items.size()];
+            for (int index = 0; index < items.size(); index++) {
+                values[index] = materialize(evaluator.evalGrouped(items.get(index).expr(), members, source::bind));
+            }
+            if (members.isEmpty()) {
+                projected.add(new Projected(null, values, null));
+            } else {
+                projected.add(source.projected(members.get(0), values));
+            }
+        }
+        if (distinct) {
+            projected = distinct(projected);
+        }
+        if (!orderBy.isEmpty()) {
+            sort(projected, orderBy, distinct, items, evaluator);
+        }
+        projected = page(projected, limit, offset);
+        List<Row> rows = new ArrayList<>();
+        for (Projected row : projected) {
+            rows.add(new Row(columns, row.values));
+        }
+        return SqlResult.query(columns, rows);
+    }
+
+    private List<Expr> groupKeys(List<Expr> groupBy, List<SelectItem> items, GroupSource source) {
+        List<Expr> keys = new ArrayList<>();
+        for (Expr key : groupBy) {
+            Long ordinal = ordinal(key);
+            if (ordinal != null) {
+                if (ordinal < 1 || ordinal > items.size()) {
+                    throw new NexException("GROUP BY " + ordinal + " is outside the SELECT list");
+                }
+                keys.add(items.get(ordinal.intValue() - 1).expr());
+                continue;
+            }
+            if (key instanceof ColumnRef column && column.qualifier() == null && !source.hasColumn(column.name())) {
+                Integer alias = aliasIndex(column.name(), items);
+                if (alias != null) {
+                    keys.add(items.get(alias).expr());
+                    continue;
+                }
+            }
+            keys.add(key);
+        }
+        for (Expr key : keys) {
+            if (Evaluator.containsAggregate(key)) {
+                throw new NexException("GROUP BY cannot contain an aggregate");
+            }
+        }
+        return keys;
+    }
+
+    private Integer aliasIndex(String name, List<SelectItem> items) {
+        for (int index = 0; index < items.size(); index++) {
+            SelectItem item = items.get(index);
+            if (Names.same(item.label(), name) || (item.alias() != null && Names.same(item.alias(), name))) {
+                return index;
+            }
+        }
+        return null;
+    }
+
+    private void checkGrouped(Expr expr, List<Expr> keys, GroupSource source) {
+        if (matchesKey(expr, keys, source)) {
+            return;
+        }
+        switch (expr) {
+            case Call call when Evaluator.aggregate(call.name()) -> {
+            }
+            case Call call -> {
+                for (Expr argument : call.args()) {
+                    checkGrouped(argument, keys, source);
+                }
+            }
+            case ColumnRef column -> {
+                String id = source.identify(column);
+                if (!groupedColumn(id, keys, source)) {
+                    throw new NexException("column " + column.name() + " must appear in the GROUP BY");
+                }
+            }
+            case Unary unary -> checkGrouped(unary.expr(), keys, source);
+            case Binary binary -> {
+                checkGrouped(binary.left(), keys, source);
+                checkGrouped(binary.right(), keys, source);
+            }
+            case IsNull isNull -> checkGrouped(isNull.expr(), keys, source);
+            case Like like -> {
+                checkGrouped(like.expr(), keys, source);
+                checkGrouped(like.pattern(), keys, source);
+                if (like.escape() != null) {
+                    checkGrouped(like.escape(), keys, source);
+                }
+            }
+            case InList inList -> {
+                checkGrouped(inList.expr(), keys, source);
+                for (Expr value : inList.values()) {
+                    checkGrouped(value, keys, source);
+                }
+            }
+            case Between between -> {
+                checkGrouped(between.expr(), keys, source);
+                checkGrouped(between.low(), keys, source);
+                checkGrouped(between.high(), keys, source);
+            }
+            default -> {
+            }
+        }
+    }
+
+    private boolean matchesKey(Expr expr, List<Expr> keys, GroupSource source) {
+        for (Expr key : keys) {
+            if (expr.equals(key)) {
+                return true;
+            }
+            if (expr instanceof ColumnRef column && key instanceof ColumnRef grouped
+                    && source.identify(column).equals(source.identify(grouped))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean groupedColumn(String id, List<Expr> keys, GroupSource source) {
+        for (Expr key : keys) {
+            if (key instanceof ColumnRef column && source.identify(column).equals(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String identifyColumn(ColumnRef column, Schema schema, String tableName, String namespace, String alias) {
+        if (column.qualifier() != null
+                && !Names.same(column.qualifier(), tableName)
+                && !Names.same(column.qualifier(), namespace + "." + tableName)
+                && (alias == null || !Names.same(column.qualifier(), alias))) {
+            throw new NexException("unknown qualifier: " + column.qualifier());
+        }
+        int index = schema.indexOf(column.name());
+        if (index < 0) {
+            throw new NexException("column not found: " + column.name());
+        }
+        return tableName + ":" + index;
+    }
+
+    private String identifyView(ColumnRef column, Schema schema, String alias, String qualifier) {
+        if (column.qualifier() != null
+                && !Names.same(column.qualifier(), schema.name)
+                && !Names.same(column.qualifier(), qualifier)
+                && (alias == null || !Names.same(column.qualifier(), alias))) {
+            throw new NexException("unknown qualifier: " + column.qualifier());
+        }
+        int index = schema.indexOf(column.name());
+        if (index < 0) {
+            throw new NexException("column not found: " + column.name());
+        }
+        return schema.name + ":" + index;
     }
 
     private List<StoredRow> match(TableStore table, Evaluator evaluator, Expr where) {
@@ -2271,12 +3495,76 @@ final class Engine implements AutoCloseable {
         return items;
     }
 
+    private List<SelectItem> expandStars(List<SelectItem> items, Schema schema, String tableName, String namespace,
+                                          String written, String alias) {
+        boolean qualified = false;
+        for (SelectItem item : items) {
+            if (item.expr() instanceof QualifiedStar) {
+                qualified = true;
+                break;
+            }
+        }
+        if (!qualified) {
+            return items;
+        }
+        List<SelectItem> expanded = new ArrayList<>();
+        for (SelectItem item : items) {
+            if (!(item.expr() instanceof QualifiedStar star)) {
+                expanded.add(item);
+                continue;
+            }
+            if (!matchesQualifier(star.qualifier(), tableName, namespace, written, alias)) {
+                throw new NexException("unknown qualifier: " + star.qualifier());
+            }
+            expanded.addAll(star(schema));
+        }
+        return expanded;
+    }
+
+    private static boolean matchesQualifier(String qualifier, String tableName, String namespace, String written, String alias) {
+        if (tableName != null && Names.same(qualifier, tableName)) {
+            return true;
+        }
+        if (written != null && Names.same(qualifier, written)) {
+            return true;
+        }
+        if (alias != null && Names.same(qualifier, alias)) {
+            return true;
+        }
+        return namespace != null && !namespace.isEmpty() && tableName != null
+                && Names.same(qualifier, namespace + "." + tableName);
+    }
+
+    private List<Evaluator.Frame> framesForStar(List<Evaluator.Frame> frames, String qualifier) {
+        List<Evaluator.Frame> matched = new ArrayList<>();
+        for (Evaluator.Frame frame : frames) {
+            if (frame.matches(qualifier)) {
+                matched.add(frame);
+            }
+        }
+        if (matched.isEmpty()) {
+            throw new NexException("unknown qualifier: " + qualifier);
+        }
+        if (matched.size() == 1) {
+            return matched;
+        }
+        for (Evaluator.Frame frame : matched) {
+            if (frame.alias == null || !Names.same(frame.alias, qualifier)) {
+                throw new NexException("ambiguous qualifier: " + qualifier);
+            }
+        }
+        return matched;
+    }
+
     private DataType infer(Expr expr, Schema schema) {
         return switch (expr) {
             case Literal literal -> literal.value() == null ? DataType.VARCHAR : dataTypeOf(literal.value());
             case Param param -> param.index() < params.length && params[param.index()] != null
                     ? dataTypeOf(params[param.index()]) : DataType.VARCHAR;
-            case ColumnRef column -> schema.column(column.name()).type;
+            case ColumnRef column -> inferFrames == null
+                    ? schema.column(column.name()).type
+                    : Evaluator.Frame.type(inferFrames, column);
+            case QualifiedStar ignored -> throw new NexException("* cannot be used in this expression");
             case VarRef variable -> scope != null ? scope.typeOf(variable.name()) : DataType.VARCHAR;
             case NextValue ignored -> DataType.BIGINT;
             case ContextRef context -> contextType(context);
@@ -4061,6 +5349,10 @@ final class Engine implements AutoCloseable {
         cursors = installCursors(routine);
         frame = new RoutineFrame(outputs, selectable);
         psqlHalt = false;
+        Map<String, Held> savedScope = cteScope;
+        Set<String> savedDefining = cteDefining;
+        cteScope = null;
+        cteDefining = new HashSet<>();
         enterRoutine();
         try {
             callBody(() -> runPsql(routine.body()));
@@ -4074,20 +5366,71 @@ final class Engine implements AutoCloseable {
             cursors = previousCursors;
             frame = previousFrame;
             psqlHalt = previousHalt;
+            cteScope = savedScope;
+            cteDefining = savedDefining;
         }
     }
 
     private SqlResult queryProcedure(SelectProcedure statement) {
         ProcedureRows called = callProcedure(
                 new ExecuteProcedure(statement.procedure(), statement.arguments(), List.of()), true);
-        List<SelectItem> items = statement.star() ? starOutputs(called.outputs) : statement.items();
+        Schema schema = outputSchema(called.name, called.outputs);
+        List<SelectItem> items = statement.star() ? starOutputs(called.outputs)
+                : expandStars(statement.items(), schema, schema.name, null, statement.procedure(), statement.alias());
         if (items.isEmpty()) {
             throw new NexException("SELECT needs at least one expression");
         }
-        Schema schema = outputSchema(called.name, called.outputs);
         List<ColumnMeta> columns = new ArrayList<>();
         for (SelectItem item : items) {
             columns.add(new ColumnMeta(item.label(), infer(item.expr(), schema)));
+        }
+        boolean aggregate = false;
+        for (SelectItem item : items) {
+            if (Evaluator.containsAggregate(item.expr())) {
+                aggregate = true;
+            }
+        }
+        if (!statement.groupBy().isEmpty() || statement.having() != null || aggregate) {
+            if (statement.star() && !statement.groupBy().isEmpty()) {
+                throw new NexException("SELECT * cannot be combined with GROUP BY");
+            }
+            Evaluator evaluator = evaluator(null, statement.alias());
+            evaluator.useView(schema, called.name);
+            List<Object[]> matched = new ArrayList<>();
+            for (Object[] produced : called.rows) {
+                evaluator.bindView(produced);
+                if (statement.where() == null || evaluator.truth(statement.where())) {
+                    matched.add(produced);
+                }
+            }
+            String procedureName = called.name;
+            return grouped(statement.star(), statement.distinct(), statement.groupBy(), statement.having(),
+                    statement.orderBy(), statement.limit(), statement.offset(), items, columns, evaluator, new GroupSource() {
+                @Override
+                public int size() {
+                    return matched.size();
+                }
+
+                @Override
+                public void bind(int index) {
+                    evaluator.bindView(matched.get(index));
+                }
+
+                @Override
+                public Projected projected(int index, Object[] values) {
+                    return new Projected(null, values, matched.get(index));
+                }
+
+                @Override
+                public String identify(ColumnRef column) {
+                    return identifyView(column, schema, statement.alias(), procedureName);
+                }
+
+                @Override
+                public boolean hasColumn(String name) {
+                    return schema.indexOf(name) >= 0;
+                }
+            });
         }
         List<Projected> projected = new ArrayList<>();
         for (Object[] produced : called.rows) {
@@ -4356,7 +5699,8 @@ final class Engine implements AutoCloseable {
         scope.preferVariables = false;
         SqlResult result;
         try {
-            result = query(new Select(false, false, items, statement.table(), null, statement.where(), List.of(), null, null));
+            result = query(new Select(false, false, items, statement.table(), null, List.of(), statement.where(),
+                    List.of(), null, List.of(), null, null));
         } finally {
             scope.preferVariables = previous;
         }
@@ -4443,11 +5787,11 @@ final class Engine implements AutoCloseable {
         scope.rowCount = 0;
     }
 
-    private SqlResult runCursorQuery(Select query) {
+    private SqlResult runCursorQuery(Query query) {
         boolean previous = scope.preferVariables;
         scope.preferVariables = false;
         try {
-            return query(query);
+            return runQuery(query);
         } finally {
             scope.preferVariables = previous;
         }
@@ -4732,7 +6076,7 @@ final class Engine implements AutoCloseable {
         }
         Schema base = relationSchema(select.table());
         guardAccess(select.table(), "SELECT");
-        List<SelectItem> items = select.star() ? star(base) : select.items();
+        List<SelectItem> items = viewItems(select, base);
         List<String> names = new ArrayList<>();
         if (statement.columns().isEmpty()) {
             for (SelectItem item : items) {
@@ -4794,6 +6138,21 @@ final class Engine implements AutoCloseable {
         }
     }
 
+    private List<SelectItem> viewItems(Select select, Schema base) {
+        if (select.star()) {
+            return star(base);
+        }
+        return expandStars(select.items(), base, base.name, relationNamespace(select.table()), select.table(), select.alias());
+    }
+
+    private String relationNamespace(String written) {
+        StoredView view = findView(written);
+        if (view != null) {
+            return view.schema();
+        }
+        return require(written).namespace();
+    }
+
     private Schema relationSchema(String name) {
         if (name == null) {
             throw new NexException("view needs a table");
@@ -4813,7 +6172,7 @@ final class Engine implements AutoCloseable {
         try {
             Select select = preparedView(view);
             Schema base = relationSchema(select.table());
-            List<SelectItem> items = select.star() ? star(base) : select.items();
+            List<SelectItem> items = viewItems(select, base);
             if (items.size() != view.columns().size()) {
                 throw new NexException("the view " + view.name() + " does not match the stored SELECT");
             }
@@ -4915,8 +6274,8 @@ final class Engine implements AutoCloseable {
             Column column = base.column(name);
             items.add(new SelectItem(new ColumnRef(null, column.name), null, column.name));
         }
-        return new Select(select.distinct(), false, items, select.table(), select.alias(),
-                select.where(), select.orderBy(), select.limit(), select.offset());
+        return new Select(select.distinct(), false, items, select.table(), select.alias(), select.joins(),
+                select.where(), select.groupBy(), select.having(), select.orderBy(), select.limit(), select.offset());
     }
 
     private Select boundView(StoredView view) {
@@ -4928,8 +6287,8 @@ final class Engine implements AutoCloseable {
         if (bound.indexOf('.') < 0) {
             bound = Relation.PUBLIC + "." + bound;
         }
-        return new Select(select.distinct(), select.star(), select.items(), bound, select.alias(),
-                select.where(), select.orderBy(), select.limit(), select.offset());
+        return new Select(select.distinct(), select.star(), select.items(), bound, select.alias(), select.joins(),
+                select.where(), select.groupBy(), select.having(), select.orderBy(), select.limit(), select.offset());
     }
 
     private StoredRow findGenerator(String written) {
@@ -5132,6 +6491,30 @@ final class Engine implements AutoCloseable {
     }
 
     private record Projected(StoredRow row, Object[] values, Object[] source) {
+    }
+
+    private record Held(List<Evaluator.Frame> frames, List<Object[]> rows) {
+    }
+
+    private record Probe(List<Evaluator.Frame> frames, List<Object[]> rows, TableStore table, String alias) {
+    }
+
+    private record Equi(Evaluator.Frame left, int leftIndex, Evaluator.Frame right, int rightIndex) {
+    }
+
+    private record Fixed(Map<Integer, Object> bound, boolean contradiction) {
+    }
+
+    private interface GroupSource {
+        int size();
+
+        void bind(int index);
+
+        Projected projected(int index, Object[] values);
+
+        String identify(ColumnRef column);
+
+        boolean hasColumn(String name);
     }
 
     private record StoredProcedure(String schema, String name, String source, String owner) {

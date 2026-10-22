@@ -2,8 +2,10 @@ package io.github.gabrielmmoraes1999.nexora;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 final class SqlParser {
 
@@ -35,7 +37,7 @@ final class SqlParser {
             throw new NexException("view expects SELECT");
         }
         parser.expectKeyword("SELECT");
-        Stmt body = parser.select();
+        Query body = parser.selectQuery();
         if (parser.parameters != 0) {
             throw new NexException("view does not accept parameters");
         }
@@ -43,8 +45,11 @@ final class SqlParser {
         if (!parser.peek(TokenKind.EOF)) {
             throw new NexException("text after the view SELECT");
         }
-        if (!(body instanceof Select select)) {
+        if (body instanceof SelectProcedure) {
             throw new NexException("view does not accept a procedure SELECT");
+        }
+        if (!(body instanceof Select select) || !select.joins().isEmpty()) {
+            throw new NexException("view reads one table");
         }
         return select;
     }
@@ -122,8 +127,11 @@ final class SqlParser {
         if (consumeKeyword("EXECUTE")) {
             return executeProcedure(false);
         }
+        if (consumeKeyword("WITH")) {
+            return withQuery();
+        }
         if (consumeKeyword("SELECT")) {
-            return select();
+            return asStatement(selectQuery());
         }
         if (consumeKeyword("BEGIN")) {
             optionalKeyword("TRANSACTION");
@@ -314,12 +322,18 @@ final class SqlParser {
         int start = current().start;
         int before = parameters;
         expectKeyword("SELECT");
-        Stmt body = select();
+        Query body = selectQuery();
         if (parameters != before) {
             throw error("CREATE VIEW does not accept parameters");
         }
-        if (!(body instanceof Select)) {
+        if (body instanceof SelectProcedure) {
             throw error("CREATE VIEW does not accept a procedure SELECT");
+        }
+        if (!(body instanceof Select select) || !select.joins().isEmpty()) {
+            throw error("CREATE VIEW reads one table");
+        }
+        if (select.star() && !select.groupBy().isEmpty()) {
+            throw error("SELECT * cannot be combined with GROUP BY");
         }
         int end = tokens.get(cursor - 1).end;
         return new CreateView(ifNotExists, name, columns, sql.substring(start, end).trim());
@@ -761,7 +775,7 @@ final class SqlParser {
             expectKeyword("CURSOR");
             expectKeyword("FOR");
             expectSymbol("(");
-            Select query = cursorQuery();
+            Query query = cursorQuery();
             expectSymbol(")");
             expectSymbol(";");
             cursors.add(new CursorDef(name, query));
@@ -884,7 +898,7 @@ final class SqlParser {
     }
 
     private Psql forSelect() {
-        Select query = cursorQuery();
+        Query query = cursorQuery();
         List<String> targets = intoTargets();
         expectKeyword("DO");
         return new PsqlForSelect(query, targets, psqlStatement());
@@ -900,72 +914,36 @@ final class SqlParser {
         return targets;
     }
 
-    private Select cursorQuery() {
-        expectKeyword("SELECT");
-        boolean distinct = consumeKeyword("DISTINCT");
-        boolean star = false;
-        List<SelectItem> items = new ArrayList<>();
-        if (peekSymbol("*")) {
-            consumeSymbol("*");
-            star = true;
-            if (peekSymbol(",")) {
-                throw error("SELECT * cannot be combined with other expressions");
-            }
+    private Query cursorQuery() {
+        Query query;
+        if (consumeKeyword("WITH")) {
+            query = withQuery();
         } else {
-            do {
-                int start = current().start;
-                Expr expr = expression();
-                String alias = null;
-                if (consumeKeyword("AS")) {
-                    alias = expectIdent();
-                } else if (current().kind == TokenKind.IDENT && !peekClause()) {
-                    alias = expectIdent();
-                }
-                int end = tokens.get(cursor - 1).end;
-                String label = alias != null ? alias : sql.substring(start, end).trim().replaceAll("\\s+", " ");
-                items.add(new SelectItem(expr, alias, label));
-            } while (consumeSymbol(","));
+            expectKeyword("SELECT");
+            query = selectQuery();
         }
-        expectKeyword("FROM");
-        if (peekKeyword("JOIN") || peekKeyword(1, "JOIN")) {
-            throw error("JOIN is not supported");
-        }
-        String table = expectRelation();
-        if (peekSymbol("(")) {
-            throw error("cursor does not call a procedure");
-        }
-        String alias = null;
-        if (consumeKeyword("AS")) {
-            alias = expectIdent();
-        } else if (current().kind == TokenKind.IDENT && !peekClause()) {
-            alias = expectIdent();
-        }
-        if (peekKeyword("JOIN") || consumeKeyword("JOIN")) {
-            throw error("JOIN is not supported");
-        }
-        Expr where = null;
-        if (consumeKeyword("WHERE")) {
-            where = expression();
-        }
-        if (peekKeyword("GROUP") || peekKeyword("HAVING") || peekKeyword("UNION")) {
-            throw error("GROUP BY, HAVING, and UNION are not supported");
-        }
-        List<OrderItem> order = new ArrayList<>();
-        if (consumeKeyword("ORDER")) {
-            expectKeyword("BY");
-            do {
-                Expr expr = expression();
-                boolean desc = consumeKeyword("DESC");
-                if (!desc) {
-                    consumeKeyword("ASC");
-                }
-                order.add(new OrderItem(expr, desc));
-            } while (consumeSymbol(","));
-        }
-        if (peekKeyword("LIMIT") || peekKeyword("OFFSET")) {
+        if (limitOf(query) != null || offsetOf(query) != null) {
             throw error("cursor accepts WHERE and ORDER BY");
         }
-        return new Select(distinct, star, items, table, alias, where, order, null, null);
+        return query;
+    }
+
+    private Long limitOf(Query query) {
+        return switch (query) {
+            case Select select -> select.limit();
+            case SelectProcedure procedure -> procedure.limit();
+            case UnionQuery union -> union.limit();
+            case WithQuery with -> limitOf(with.body());
+        };
+    }
+
+    private Long offsetOf(Query query) {
+        return switch (query) {
+            case Select select -> select.offset();
+            case SelectProcedure procedure -> procedure.offset();
+            case UnionQuery union -> union.offset();
+            case WithQuery with -> offsetOf(with.body());
+        };
     }
 
     private boolean looksLikeAssignment() {
@@ -1086,7 +1064,144 @@ final class SqlParser {
         return new Delete(table, where);
     }
 
-    private Stmt select() {
+    private Stmt asStatement(Query query) {
+        return switch (query) {
+            case Select select -> select;
+            case SelectProcedure procedure -> procedure;
+            case UnionQuery union -> union;
+            case WithQuery with -> with;
+        };
+    }
+
+    private Query selectQuery() {
+        Query head = selectBody();
+        Query combined = head;
+        while (peekKeyword("UNION")) {
+            consumeKeyword("UNION");
+            boolean all = consumeKeyword("ALL");
+            expectKeyword("SELECT");
+            combined = new UnionQuery(combined, all, selectBody(), List.of(), null, null);
+        }
+        return applyTail(combined, readTail());
+    }
+
+    private WithQuery withQuery() {
+        if (peekKeyword("RECURSIVE")) {
+            throw error("WITH RECURSIVE is not supported");
+        }
+        List<Cte> ctes = new ArrayList<>();
+        Set<String> names = new HashSet<>();
+        do {
+            String name = expectIdent();
+            if (!names.add(Names.fold(name))) {
+                throw error("duplicate CTE: " + name);
+            }
+            List<String> columns = List.of();
+            if (peekSymbol("(")) {
+                columns = nameList();
+                Set<String> used = new HashSet<>();
+                for (String column : columns) {
+                    if (!used.add(Names.fold(column))) {
+                        throw error("duplicate column: " + column);
+                    }
+                }
+            }
+            expectKeyword("AS");
+            expectSymbol("(");
+            Query body = nestedQuery();
+            expectSymbol(")");
+            rejectSelfReference(name, body);
+            ctes.add(new Cte(name, columns, body));
+        } while (consumeSymbol(","));
+        return new WithQuery(List.copyOf(ctes), nestedQuery());
+    }
+
+    private Query nestedQuery() {
+        if (consumeKeyword("WITH")) {
+            return withQuery();
+        }
+        expectKeyword("SELECT");
+        return selectQuery();
+    }
+
+    private void rejectSelfReference(String name, Query query) {
+        switch (query) {
+            case Select select -> {
+                if (sameCte(select.table(), name)) {
+                    throw error("CTE cannot reference itself: " + name);
+                }
+                for (Join join : select.joins()) {
+                    if (sameCte(join.relation(), name)) {
+                        throw error("CTE cannot reference itself: " + name);
+                    }
+                }
+            }
+            case SelectProcedure procedure -> {
+                if (sameCte(procedure.procedure(), name)) {
+                    throw error("CTE cannot reference itself: " + name);
+                }
+            }
+            case UnionQuery union -> {
+                rejectSelfReference(name, union.left());
+                rejectSelfReference(name, union.right());
+            }
+            case WithQuery with -> {
+                boolean shadowed = false;
+                for (Cte cte : with.ctes()) {
+                    if (Names.same(cte.name(), name)) {
+                        shadowed = true;
+                        continue;
+                    }
+                    rejectSelfReference(name, cte.query());
+                }
+                if (!shadowed) {
+                    rejectSelfReference(name, with.body());
+                }
+            }
+        }
+    }
+
+    private boolean sameCte(String relation, String name) {
+        return relation != null && relation.indexOf('.') < 0 && Names.same(relation, name);
+    }
+
+    /**
+     * Reads {@code alias.*} or {@code schema.table.*} when that is the next select item.
+     * Returns null without consuming tokens when the dot introduces a column.
+     */
+    private String qualifiedStar() {
+        if (current().kind != TokenKind.IDENT) {
+            return null;
+        }
+        int index = cursor + 1;
+        if (!symbolAt(index, ".")) {
+            return null;
+        }
+        String qualifier = current().text;
+        while (symbolAt(index, ".")) {
+            if (symbolAt(index + 1, "*")) {
+                cursor = index + 2;
+                return qualifier;
+            }
+            index++;
+            if (index >= tokens.size() || tokens.get(index).kind != TokenKind.IDENT) {
+                return null;
+            }
+            qualifier = qualifier + "." + tokens.get(index).text;
+            index++;
+        }
+        return null;
+    }
+
+    private boolean symbolAt(int index, String symbol) {
+        if (index >= tokens.size()) {
+            return false;
+        }
+        Token token = tokens.get(index);
+        return token.kind == TokenKind.SYMBOL && token.text.equals(symbol);
+    }
+
+    private Query selectBody() {
         boolean distinct = consumeKeyword("DISTINCT");
         boolean star = false;
         List<SelectItem> items = new ArrayList<>();
@@ -1098,6 +1213,17 @@ final class SqlParser {
             }
         } else {
             do {
+                if (peekSymbol("*")) {
+                    throw error("SELECT * cannot be combined with other expressions");
+                }
+                String qualified = qualifiedStar();
+                if (qualified != null) {
+                    if (consumeKeyword("AS") || (current().kind == TokenKind.IDENT && !peekClause())) {
+                        throw error("* cannot have an alias");
+                    }
+                    items.add(new SelectItem(new QualifiedStar(qualified), null, qualified + ".*"));
+                    continue;
+                }
                 int start = current().start;
                 Expr expr = expression();
                 String alias = null;
@@ -1115,12 +1241,20 @@ final class SqlParser {
             if (star) {
                 throw error("SELECT * requires a table");
             }
-            SelectTail tail = selectTail();
-            return new Select(distinct, false, items, null, null, tail.where, tail.order, tail.limit, tail.offset);
+            Expr where = null;
+            if (consumeKeyword("WHERE")) {
+                where = expression();
+            }
+            List<Expr> groupBy = parseGroupBy();
+            if (!groupBy.isEmpty()) {
+                throw error("GROUP BY requires a table");
+            }
+            Expr having = parseHaving();
+            return new Select(distinct, false, items, null, null, List.of(), where, groupBy, having, List.of(), null, null);
         }
         expectKeyword("FROM");
-        if (peekKeyword("JOIN") || peekKeyword(1, "JOIN")) {
-            throw error("JOIN is not supported");
+        if (isJoinStart() || peekKeyword("NATURAL") || peekKeyword("OUTER")) {
+            throw error("expected a table");
         }
         String first = expectIdent();
         String table;
@@ -1139,81 +1273,145 @@ final class SqlParser {
                 } while (consumeSymbol(","));
             }
             expectSymbol(")");
-            String procedureAlias = null;
-            if (consumeKeyword("AS")) {
-                procedureAlias = expectIdent();
-            } else if (current().kind == TokenKind.IDENT && !peekClause()) {
-                procedureAlias = expectIdent();
-            }
-            if (peekKeyword("JOIN") || consumeKeyword("JOIN")) {
-                throw error("JOIN is not supported");
+            String procedureAlias = readAlias();
+            if (isJoinStart() || peekKeyword("NATURAL")) {
+                throw error("JOIN is not supported on a procedure");
             }
             Expr procedureWhere = null;
             if (consumeKeyword("WHERE")) {
                 procedureWhere = expression();
             }
-            if (peekKeyword("GROUP") || peekKeyword("HAVING") || peekKeyword("UNION")) {
-                throw error("GROUP BY, HAVING, and UNION are not supported");
-            }
-            List<OrderItem> procedureOrder = new ArrayList<>();
-            if (consumeKeyword("ORDER")) {
-                expectKeyword("BY");
-                do {
-                    Expr expr = expression();
-                    boolean desc = consumeKeyword("DESC");
-                    if (!desc) {
-                        consumeKeyword("ASC");
-                    }
-                    procedureOrder.add(new OrderItem(expr, desc));
-                } while (consumeSymbol(","));
-            }
-            Long procedureLimit = null;
-            Long procedureOffset = null;
-            if (consumeKeyword("LIMIT")) {
-                procedureLimit = expectLong("LIMIT");
-                if (consumeKeyword("OFFSET")) {
-                    procedureOffset = expectLong("OFFSET");
-                }
-            }
-            if (consumeKeyword("OFFSET")) {
-                if (procedureOffset != null) {
-                    throw error("duplicate OFFSET");
-                }
-                procedureOffset = expectLong("OFFSET");
-            }
+            List<Expr> procedureGroup = parseGroupBy();
+            Expr procedureHaving = parseHaving();
             return new SelectProcedure(distinct, star, items, table, arguments, procedureAlias, procedureWhere,
-                    procedureOrder, procedureLimit, procedureOffset);
+                    procedureGroup, procedureHaving, List.of(), null, null);
         }
-        String alias = null;
-        if (consumeKeyword("AS")) {
-            alias = expectIdent();
-        } else if (current().kind == TokenKind.IDENT && !peekClause()) {
-            alias = expectIdent();
-        }
-        SelectTail tail = selectTail();
-        return new Select(distinct, star, items, table, alias, tail.where, tail.order, tail.limit, tail.offset);
-    }
-
-    private SelectTail selectTail() {
-        if (peekKeyword("JOIN") || consumeKeyword("JOIN")) {
-            throw error("JOIN is not supported");
-        }
+        String alias = readAlias();
+        List<Join> joins = readJoins();
         Expr where = null;
         if (consumeKeyword("WHERE")) {
             where = expression();
         }
-        if (peekKeyword("GROUP") || peekKeyword("HAVING") || peekKeyword("UNION")) {
-            throw error("GROUP BY, HAVING, and UNION are not supported");
+        List<Expr> groupBy = parseGroupBy();
+        Expr having = parseHaving();
+        return new Select(distinct, star, items, table, alias, joins, where, groupBy, having, List.of(), null, null);
+    }
+
+    private Query applyTail(Query query, Tail tail) {
+        return switch (query) {
+            case Select select -> new Select(select.distinct(), select.star(), select.items(), select.table(), select.alias(),
+                    select.joins(), select.where(), select.groupBy(), select.having(), tail.order, tail.limit, tail.offset);
+            case SelectProcedure procedure -> new SelectProcedure(procedure.distinct(), procedure.star(), procedure.items(),
+                    procedure.procedure(), procedure.arguments(), procedure.alias(), procedure.where(),
+                    procedure.groupBy(), procedure.having(), tail.order, tail.limit, tail.offset);
+            case UnionQuery union -> new UnionQuery(union.left(), union.all(), union.right(), tail.order, tail.limit, tail.offset);
+            case WithQuery with -> throw error("WITH cannot follow SELECT");
+        };
+    }
+
+    private List<Join> readJoins() {
+        List<Join> joins = new ArrayList<>();
+        while (isJoinStart() || peekKeyword("NATURAL") || peekKeyword("OUTER")) {
+            if (consumeKeyword("NATURAL")) {
+                throw error("NATURAL JOIN is not supported");
+            }
+            if (peekKeyword("OUTER")) {
+                throw error("expected LEFT, RIGHT, or FULL");
+            }
+            joins.add(oneJoin());
         }
+        return joins;
+    }
+
+    private Join oneJoin() {
+        JoinKind kind;
+        if (consumeKeyword("CROSS")) {
+            expectKeyword("JOIN");
+            kind = JoinKind.CROSS;
+        } else if (consumeKeyword("INNER")) {
+            expectKeyword("JOIN");
+            kind = JoinKind.INNER;
+        } else if (consumeKeyword("LEFT")) {
+            consumeKeyword("OUTER");
+            expectKeyword("JOIN");
+            kind = JoinKind.LEFT;
+        } else if (consumeKeyword("RIGHT")) {
+            consumeKeyword("OUTER");
+            expectKeyword("JOIN");
+            kind = JoinKind.RIGHT;
+        } else if (consumeKeyword("FULL")) {
+            consumeKeyword("OUTER");
+            expectKeyword("JOIN");
+            kind = JoinKind.FULL;
+        } else {
+            expectKeyword("JOIN");
+            kind = JoinKind.INNER;
+        }
+        String relation = expectRelation();
+        if (peekSymbol("(")) {
+            throw error("JOIN does not call a procedure");
+        }
+        String alias = readAlias();
+        Expr on = null;
+        if (kind == JoinKind.CROSS) {
+            if (peekKeyword("USING")) {
+                throw error("USING is not supported");
+            }
+            if (consumeKeyword("ON")) {
+                throw error("CROSS JOIN does not accept ON");
+            }
+        } else {
+            if (peekKeyword("USING")) {
+                throw error("USING is not supported");
+            }
+            expectKeyword("ON");
+            on = expression();
+        }
+        return new Join(kind, relation, alias, on);
+    }
+
+    private boolean isJoinStart() {
+        return peekKeyword("JOIN") || peekKeyword("INNER") || peekKeyword("CROSS")
+                || peekKeyword("LEFT") || peekKeyword("RIGHT") || peekKeyword("FULL");
+    }
+
+    private String readAlias() {
+        if (consumeKeyword("AS")) {
+            return expectIdent();
+        }
+        if (current().kind == TokenKind.IDENT && !peekClause()) {
+            return expectIdent();
+        }
+        return null;
+    }
+
+    private List<Expr> parseGroupBy() {
+        if (!consumeKeyword("GROUP")) {
+            return List.of();
+        }
+        expectKeyword("BY");
+        List<Expr> keys = new ArrayList<>();
+        do {
+            keys.add(expression());
+        } while (consumeSymbol(","));
+        return keys;
+    }
+
+    private Expr parseHaving() {
+        if (!consumeKeyword("HAVING")) {
+            return null;
+        }
+        return expression();
+    }
+
+    private Tail readTail() {
         List<OrderItem> order = new ArrayList<>();
         if (consumeKeyword("ORDER")) {
             expectKeyword("BY");
             do {
                 Expr expr = expression();
-                boolean desc = false;
-                if (consumeKeyword("DESC")) {
-                    desc = true;
-                } else {
+                boolean desc = consumeKeyword("DESC");
+                if (!desc) {
                     consumeKeyword("ASC");
                 }
                 order.add(new OrderItem(expr, desc));
@@ -1233,10 +1431,10 @@ final class SqlParser {
             }
             offset = expectLong("OFFSET");
         }
-        return new SelectTail(where, order, limit, offset);
+        return new Tail(order, limit, offset);
     }
 
-    private record SelectTail(Expr where, List<OrderItem> order, Long limit, Long offset) {
+    private record Tail(List<OrderItem> order, Long limit, Long offset) {
     }
 
     private ColDef column() {
@@ -1748,7 +1946,10 @@ final class SqlParser {
     private boolean peekClause() {
         return peekKeyword("FROM") || peekKeyword("WHERE") || peekKeyword("ORDER") || peekKeyword("GROUP")
                 || peekKeyword("HAVING") || peekKeyword("LIMIT") || peekKeyword("OFFSET") || peekKeyword("UNION")
-                || peekKeyword("JOIN") || peekKeyword("SET") || peekKeyword("INTO") || peekKeyword("DO");
+                || peekKeyword("JOIN") || peekKeyword("INNER") || peekKeyword("LEFT") || peekKeyword("RIGHT")
+                || peekKeyword("FULL") || peekKeyword("CROSS") || peekKeyword("OUTER") || peekKeyword("NATURAL")
+                || peekKeyword("USING") || peekKeyword("ON")
+                || peekKeyword("SET") || peekKeyword("INTO") || peekKeyword("DO");
     }
 
     private boolean peekKeyword(String keyword) {

@@ -90,7 +90,7 @@ final class Jdbc {
 
     static boolean readOnlyCommand(String sql) {
         return switch (firstKeyword(sql)) {
-            case "SELECT", "BEGIN", "START", "COMMIT", "ROLLBACK" -> true;
+            case "SELECT", "WITH", "BEGIN", "START", "COMMIT", "ROLLBACK" -> true;
             default -> false;
         };
     }

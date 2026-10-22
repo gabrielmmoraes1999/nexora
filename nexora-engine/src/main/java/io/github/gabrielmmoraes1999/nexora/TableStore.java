@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -233,31 +234,41 @@ final class TableStore implements AutoCloseable {
         indexes = kept;
     }
 
+    /**
+     * True when some index has a leftmost prefix inside {@code columns}.
+     * The values are not required; this only decides whether a seek is possible.
+     */
+    boolean canSeek(Set<Integer> columns) {
+        if (columns.isEmpty()) {
+            return false;
+        }
+        Map<Integer, Object> marker = new HashMap<>();
+        for (Integer column : columns) {
+            marker.put(column, Boolean.TRUE);
+        }
+        return chooseIndex(marker) != null;
+    }
+
     List<StoredRow> lookup(Map<Integer, Object> equals) {
         if (equals.isEmpty()) {
             return null;
         }
-        IndexTree.DiskIndex best = null;
-        for (IndexTree.DiskIndex index : indexes) {
-            if (!index.covers(equals)) {
-                continue;
-            }
-            if (best == null || index.columns.length > best.columns.length) {
-                best = index;
-            }
-        }
+        IndexTree.DiskIndex best = chooseIndex(equals);
         if (best == null) {
             return null;
         }
-        Object[] parts = new Object[best.columns.length];
-        for (int i = 0; i < parts.length; i++) {
+        int prefix = best.prefixLength(equals);
+        Object[] parts = new Object[prefix];
+        for (int i = 0; i < prefix; i++) {
             Object value = equals.get(best.columns[i]);
             if (value == null) {
                 return List.of();
             }
             parts[i] = value;
         }
-        List<Long> ids = best.find(schema, parts, pages());
+        List<Long> ids = prefix == best.columns.length
+                ? best.find(schema, parts, pages())
+                : best.findPrefix(schema, prefix, parts, pages());
         List<StoredRow> found = new ArrayList<>();
         for (Long id : ids) {
             StoredRow row = rows.get(id);
@@ -267,6 +278,24 @@ final class TableStore implements AutoCloseable {
         }
         found.sort((left, right) -> Long.compare(left.id, right.id));
         return found;
+    }
+
+    private IndexTree.DiskIndex chooseIndex(Map<Integer, Object> equals) {
+        IndexTree.DiskIndex best = null;
+        int bestPrefix = 0;
+        for (IndexTree.DiskIndex index : indexes) {
+            int prefix = index.prefixLength(equals);
+            if (prefix == 0) {
+                continue;
+            }
+            boolean exact = prefix == index.columns.length;
+            boolean bestExact = best != null && bestPrefix == best.columns.length;
+            if (best == null || prefix > bestPrefix || (prefix == bestPrefix && exact && !bestExact)) {
+                best = index;
+                bestPrefix = prefix;
+            }
+        }
+        return best;
     }
 
     Object value(StoredRow row, int index) {

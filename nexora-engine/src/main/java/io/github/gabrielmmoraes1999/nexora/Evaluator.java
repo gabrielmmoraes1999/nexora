@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.IntConsumer;
 
 final class Evaluator {
 
@@ -30,6 +31,8 @@ final class Evaluator {
     private Schema viewSchema;
     private String viewQualifier;
     private Object[] viewRow;
+    private List<Frame> frames;
+    private Object[] joinedRow;
 
     Evaluator(TableStore table, Object[] params, String alias) {
         this(table, params, alias, null, null, null);
@@ -46,6 +49,7 @@ final class Evaluator {
 
     void bind(StoredRow row) {
         this.current = row;
+        this.joinedRow = null;
     }
 
     void useView(Schema schema, String qualifier) {
@@ -56,6 +60,45 @@ final class Evaluator {
     void bindView(Object[] row) {
         this.viewRow = row;
         this.current = null;
+        this.joinedRow = null;
+    }
+
+    void useFrames(List<Frame> frames) {
+        this.frames = frames;
+    }
+
+    boolean joined() {
+        return frames != null;
+    }
+
+    void bindJoined(Object[] row) {
+        this.joinedRow = row;
+        this.current = null;
+        this.viewRow = null;
+    }
+
+    Object evalGrouped(Expr expr, List<Integer> members, IntConsumer bind) {
+        IntConsumer groupBind = index -> bind.accept(members.get(index));
+        Expr folded = foldBound(expr, members.size(), groupBind);
+        if (members.isEmpty()) {
+            current = null;
+            viewRow = null;
+            joinedRow = null;
+        } else {
+            bind.accept(members.get(0));
+        }
+        return eval(folded);
+    }
+
+    boolean truthGrouped(Expr expr, List<Integer> members, IntConsumer bind) {
+        Object value = evalGrouped(expr, members, bind);
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        throw new NexException("condition must be logical");
     }
 
     boolean owns(ColumnRef column) {
@@ -84,6 +127,7 @@ final class Evaluator {
             case Literal literal -> literal.value();
             case Param param -> param(param);
             case ColumnRef column -> column(column);
+            case QualifiedStar ignored -> throw new NexException("* cannot be used in this expression");
             case VarRef variable -> {
                 if (scope == null) {
                     throw new NexException("variable " + variable.name() + " cannot be used in this statement");
@@ -144,49 +188,33 @@ final class Evaluator {
     }
 
     private Expr foldAggregates(Expr expr, List<StoredRow> rows) {
-        return switch (expr) {
-            case Call call when aggregate(call.name()) -> new Literal(computeAggregate(call, rows));
-            case Call call -> new Call(call.name(), call.distinct(), call.star(), foldAll(call.args(), rows));
-            case Unary unary -> new Unary(unary.op(), foldAggregates(unary.expr(), rows));
-            case Binary binary -> new Binary(binary.op(), foldAggregates(binary.left(), rows), foldAggregates(binary.right(), rows));
-            case IsNull isNull -> new IsNull(foldAggregates(isNull.expr(), rows), isNull.negated());
-            case Like like -> new Like(foldAggregates(like.expr(), rows), foldAggregates(like.pattern(), rows),
-                    like.escape() == null ? null : foldAggregates(like.escape(), rows), like.negated());
-            case InList inList -> new InList(foldAggregates(inList.expr(), rows), foldAll(inList.values(), rows), inList.negated());
-            case Between between -> new Between(foldAggregates(between.expr(), rows), foldAggregates(between.low(), rows),
-                    foldAggregates(between.high(), rows), between.negated());
-            default -> expr;
-        };
-    }
-
-    private List<Expr> foldAll(List<Expr> expressions, List<StoredRow> rows) {
-        List<Expr> folded = new ArrayList<>(expressions.size());
-        for (Expr expr : expressions) {
-            folded.add(foldAggregates(expr, rows));
-        }
-        return folded;
+        return foldBound(expr, rows.size(), index -> bind(rows.get(index)));
     }
 
     private Expr foldAggregatesValues(Expr expr, List<Object[]> rows) {
+        return foldBound(expr, rows.size(), index -> bindView(rows.get(index)));
+    }
+
+    private Expr foldBound(Expr expr, int size, IntConsumer bindRow) {
         return switch (expr) {
-            case Call call when aggregate(call.name()) -> new Literal(computeAggregateValues(call, rows));
-            case Call call -> new Call(call.name(), call.distinct(), call.star(), foldAllValues(call.args(), rows));
-            case Unary unary -> new Unary(unary.op(), foldAggregatesValues(unary.expr(), rows));
-            case Binary binary -> new Binary(binary.op(), foldAggregatesValues(binary.left(), rows), foldAggregatesValues(binary.right(), rows));
-            case IsNull isNull -> new IsNull(foldAggregatesValues(isNull.expr(), rows), isNull.negated());
-            case Like like -> new Like(foldAggregatesValues(like.expr(), rows), foldAggregatesValues(like.pattern(), rows),
-                    like.escape() == null ? null : foldAggregatesValues(like.escape(), rows), like.negated());
-            case InList inList -> new InList(foldAggregatesValues(inList.expr(), rows), foldAllValues(inList.values(), rows), inList.negated());
-            case Between between -> new Between(foldAggregatesValues(between.expr(), rows), foldAggregatesValues(between.low(), rows),
-                    foldAggregatesValues(between.high(), rows), between.negated());
+            case Call call when aggregate(call.name()) -> new Literal(computeAggregate(call, size, bindRow));
+            case Call call -> new Call(call.name(), call.distinct(), call.star(), foldAllBound(call.args(), size, bindRow));
+            case Unary unary -> new Unary(unary.op(), foldBound(unary.expr(), size, bindRow));
+            case Binary binary -> new Binary(binary.op(), foldBound(binary.left(), size, bindRow), foldBound(binary.right(), size, bindRow));
+            case IsNull isNull -> new IsNull(foldBound(isNull.expr(), size, bindRow), isNull.negated());
+            case Like like -> new Like(foldBound(like.expr(), size, bindRow), foldBound(like.pattern(), size, bindRow),
+                    like.escape() == null ? null : foldBound(like.escape(), size, bindRow), like.negated());
+            case InList inList -> new InList(foldBound(inList.expr(), size, bindRow), foldAllBound(inList.values(), size, bindRow), inList.negated());
+            case Between between -> new Between(foldBound(between.expr(), size, bindRow), foldBound(between.low(), size, bindRow),
+                    foldBound(between.high(), size, bindRow), between.negated());
             default -> expr;
         };
     }
 
-    private List<Expr> foldAllValues(List<Expr> expressions, List<Object[]> rows) {
+    private List<Expr> foldAllBound(List<Expr> expressions, int size, IntConsumer bindRow) {
         List<Expr> folded = new ArrayList<>(expressions.size());
         for (Expr expr : expressions) {
-            folded.add(foldAggregatesValues(expr, rows));
+            folded.add(foldBound(expr, size, bindRow));
         }
         return folded;
     }
@@ -325,6 +353,9 @@ final class Evaluator {
                 throw new NexException(column.qualifier() + " does not exist in this context");
             }
             return scope.field(column.qualifier(), column.name());
+        }
+        if (frames != null) {
+            return joinedColumn(column);
         }
         String qualifier = column.qualifier();
         if (qualifier != null && alias != null && Names.same(qualifier, alias)) {
@@ -773,5 +804,101 @@ final class Evaluator {
             return decimal.toPlainString();
         }
         return String.valueOf(value);
+    }
+
+    private Object joinedColumn(ColumnRef column) {
+        Frame frame = Frame.find(frames, column.qualifier(), column.name());
+        if (joinedRow == null) {
+            throw new NexException("column " + column.name() + " cannot be used in this statement");
+        }
+        int index = frame.schema.indexOf(column.name());
+        return joinedRow[frame.offset + index];
+    }
+
+    static final class Frame {
+        final Schema schema;
+        final String name;
+        final String written;
+        final String namespace;
+        final String alias;
+        final int offset;
+        final int width;
+
+        Frame(Schema schema, String name, String written, String namespace, String alias, int offset, int width) {
+            this.schema = schema;
+            this.name = name;
+            this.written = written;
+            this.namespace = namespace;
+            this.alias = alias;
+            this.offset = offset;
+            this.width = width;
+        }
+
+        Frame shift(int delta) {
+            return new Frame(schema, name, written, namespace, alias, offset + delta, width);
+        }
+
+        Frame withAlias(String alias) {
+            return new Frame(schema, name, written, namespace, alias, offset, width);
+        }
+
+        boolean matches(String qualifier) {
+            if (alias != null && Names.same(alias, qualifier)) {
+                return true;
+            }
+            if (Names.same(name, qualifier)) {
+                return true;
+            }
+            if (written != null && Names.same(written, qualifier)) {
+                return true;
+            }
+            return namespace != null && !namespace.isEmpty() && Names.same(namespace + "." + name, qualifier);
+        }
+
+        static Frame find(List<Frame> frames, String qualifier, String name) {
+            Frame found = null;
+            boolean qualifierHit = false;
+            for (Frame frame : frames) {
+                if (qualifier != null && !frame.matches(qualifier)) {
+                    continue;
+                }
+                if (qualifier != null) {
+                    qualifierHit = true;
+                }
+                if (frame.schema.indexOf(name) < 0) {
+                    continue;
+                }
+                if (found != null) {
+                    throw new NexException("ambiguous column: " + name);
+                }
+                found = frame;
+            }
+            if (found == null) {
+                if (qualifier != null && !qualifierHit) {
+                    throw new NexException("unknown qualifier: " + qualifier);
+                }
+                throw new NexException("column not found: " + name);
+            }
+            return found;
+        }
+
+        static String identify(List<Frame> frames, ColumnRef column) {
+            Frame frame = find(frames, column.qualifier(), column.name());
+            return frames.indexOf(frame) + ":" + frame.schema.indexOf(column.name());
+        }
+
+        static boolean hasColumn(List<Frame> frames, String name) {
+            for (Frame frame : frames) {
+                if (frame.schema.indexOf(name) >= 0) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static DataType type(List<Frame> frames, ColumnRef column) {
+            Frame frame = find(frames, column.qualifier(), column.name());
+            return frame.schema.column(column.name()).type;
+        }
     }
 }

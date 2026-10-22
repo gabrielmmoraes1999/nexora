@@ -115,15 +115,22 @@ final class IndexTree {
         }
 
         boolean covers(Map<Integer, Object> equals) {
-            if (columns.length == 0) {
-                return false;
-            }
+            return prefixLength(equals) == columns.length && columns.length > 0;
+        }
+
+        /**
+         * How many leading columns of this index are present in {@code equals}.
+         * A lookup can use that prefix the way PostgreSQL, MySQL, and Firebird do.
+         */
+        int prefixLength(Map<Integer, Object> equals) {
+            int count = 0;
             for (int column : columns) {
                 if (!equals.containsKey(column)) {
-                    return false;
+                    break;
                 }
+                count++;
             }
-            return true;
+            return count;
         }
 
         List<Long> find(Schema schema, Object[] values, PageSource pages) {
@@ -142,6 +149,72 @@ final class IndexTree {
                 found.add(id);
             }
             return found;
+        }
+
+        /**
+         * Every row whose leading index columns equal {@code values}.
+         * Walks from the first matching leaf to the next ones.
+         */
+        List<Long> findPrefix(Schema schema, int prefix, Object[] values, PageSource pages) {
+            Node node = live(pages);
+            if (node == null || prefix <= 0) {
+                return List.of();
+            }
+            List<Step> path = new ArrayList<>();
+            while (!node.leaf) {
+                int child = node.lowerChild(schema, columns, prefix, values);
+                path.add(new Step(node, child));
+                node = load(node, child, pages);
+            }
+            List<Long> found = new ArrayList<>();
+            int at = node.lowerBound(schema, columns, prefix, values);
+            while (node != null) {
+                while (at < node.keys.length) {
+                    int cmp = IndexKeys.prefixCompare(schema, columns, node.keys[at], prefix, values);
+                    if (cmp > 0) {
+                        return found;
+                    }
+                    if (cmp == 0 && node.ids[at] != null) {
+                        for (long id : node.ids[at]) {
+                            found.add(id);
+                        }
+                    }
+                    at++;
+                }
+                node = nextLeaf(path, pages);
+                at = 0;
+            }
+            return found;
+        }
+
+        private static Node nextLeaf(List<Step> path, PageSource pages) {
+            while (!path.isEmpty()) {
+                Step parent = path.get(path.size() - 1);
+                int count = parent.node.childOffsets.length;
+                int next = parent.child + 1;
+                if (next >= count) {
+                    path.remove(path.size() - 1);
+                    continue;
+                }
+                parent.child = next;
+                Node node = load(parent.node, next, pages);
+                while (node != null && !node.leaf) {
+                    path.add(new Step(node, 0));
+                    node = load(node, 0, pages);
+                }
+                return node;
+            }
+            return null;
+        }
+
+        private static final class Step {
+            final Node node;
+            int child;
+
+            Step(Node node, int child) {
+                this.node = node;
+                this.child = child;
+            }
         }
 
         DiskIndex insert(Schema schema, Object[] values, long rowId, List<Extent> freed, PageSource pages) {
@@ -511,6 +584,36 @@ final class IndexTree {
                 return lo;
             }
             return -1;
+        }
+
+        /** First key whose leading columns are greater than or equal to {@code values}. */
+        int lowerBound(Schema schema, int[] columns, int prefix, Object[] values) {
+            int lo = 0;
+            int hi = keys.length;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (IndexKeys.prefixCompare(schema, columns, keys[mid], prefix, values) < 0) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo;
+        }
+
+        /** Child that holds the first key whose leading columns are greater than or equal to {@code values}. */
+        int lowerChild(Schema schema, int[] columns, int prefix, Object[] values) {
+            int lo = 0;
+            int hi = keys.length;
+            while (lo < hi) {
+                int mid = (lo + hi) >>> 1;
+                if (IndexKeys.prefixCompare(schema, columns, keys[mid], prefix, values) < 0) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo;
         }
 
         int childIndex(Schema schema, int[] columns, byte[] key) {
@@ -976,6 +1079,18 @@ final class IndexTree {
                 int width = width(type);
                 a += width;
                 b += width;
+            }
+            return 0;
+        }
+
+        static int prefixCompare(Schema schema, int[] columns, byte[] encoded, int prefix, Object[] values) {
+            ByteBuffer buffer = ByteBuffer.wrap(encoded).order(Format.ORDER);
+            for (int i = 0; i < prefix; i++) {
+                Object stored = read(buffer, schema.columns.get(columns[i]));
+                int cmp = Values.compare(stored, values[i]);
+                if (cmp != 0) {
+                    return cmp;
+                }
             }
             return 0;
         }
