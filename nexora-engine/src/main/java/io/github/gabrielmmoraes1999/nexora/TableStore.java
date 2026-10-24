@@ -109,6 +109,40 @@ final class TableStore implements AutoCloseable {
         return new ArrayList<>(rows.values());
     }
 
+    /** Column values of a row, including bytes that still live in the table region. */
+    Object[] copyValues(Schema shape, StoredRow row) {
+        Object[] values = new Object[shape.columns.size()];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = detached(logical(row.cells[i], shape.columns.get(i)));
+        }
+        return values;
+    }
+
+    /**
+     * Puts {@code id} back. An existing row is overwritten, so recovery can apply the same undo twice.
+     */
+    void restoreRow(long id, Object[] raw) {
+        if (raw.length != schema.columns.size()) {
+            throw new NexException("value count does not match the columns of " + schema.name);
+        }
+        Cell[] cells = new Cell[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            cells[i] = toCell(schema.columns.get(i), raw[i]);
+        }
+        if (rows.containsKey(id)) {
+            update(java.util.Map.of(id, cells));
+            return;
+        }
+        unshare();
+        StoredRow row = new StoredRow(id, cells, -1, 0, true);
+        rows.put(id, row);
+        if (id >= nextRowId) {
+            nextRowId = id + 1;
+        }
+        indexInserted(row);
+        dirty = true;
+    }
+
     StoredRow row(long id) {
         return rows.get(id);
     }
@@ -564,6 +598,34 @@ final class TableStore implements AutoCloseable {
         return snapshot;
     }
 
+    /**
+     * Copies a snapshot off the pages a checkpoint is about to overwrite.
+     * The committed image keeps its rows, but its index roots and heap
+     * offsets belong to the previous file layout.
+     */
+    Snapshot pin(Snapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        for (StoredRow row : snapshot.rows.values()) {
+            for (int i = 0; i < row.cells.length; i++) {
+                Cell cell = row.cells[i];
+                if (!cell.onDisk()) {
+                    continue;
+                }
+                Object value = logical(cell, snapshot.schema.columns.get(i));
+                row.cells[i] = new Cell(value, -1, 0);
+            }
+        }
+        List<IndexTree.DiskIndex> built = new ArrayList<>();
+        for (IndexTree.DiskIndex index : IndexTree.empty(snapshot.schema)) {
+            built.add(index.fill(snapshot.schema, snapshot.rows.values(), this::keyParts, new ArrayList<>(), pages()));
+        }
+        return new Snapshot(snapshot.schema, snapshot.rows, built, snapshot.freeExtents, snapshot.pendingFree,
+                snapshot.fileSize, snapshot.nextRowId, snapshot.metaOffset, snapshot.metaLength,
+                snapshot.generation, snapshot.activeSlot, snapshot.dirty, snapshot.shared);
+    }
+
     void restore(Snapshot snapshot) {
         if (snapshot == undo) {
             undo = null;
@@ -632,6 +694,16 @@ final class TableStore implements AutoCloseable {
     void publishChanges(Snapshot base, Snapshot committed) {
         if (base == null || committed == null) {
             throw new NexException("failed internally to commit " + schema.name);
+        }
+        // The statement already changed this table. Commit keeps those rows, as Sybase does,
+        // instead of copying every value back onto the previous image.
+        if (base.rows == committed.rows && schema.sameStructure(committed.schema) && sameShape(schema, committed.schema)) {
+            undo = null;
+            if (rows != committed.rows || schema != committed.schema || indexes != committed.indexes
+                    || fileSize != committed.fileSize || nextRowId != committed.nextRowId) {
+                dirty = true;
+            }
+            return;
         }
         if (!schema.sameStructure(committed.schema)) {
             if (!base.schema.sameStructure(committed.schema)) {

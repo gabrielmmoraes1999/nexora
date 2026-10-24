@@ -7,14 +7,25 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoField;
 import java.util.Arrays;
 import java.util.Locale;
 
 final class Values {
 
     static final Object MISSING = new Object();
-    private static final DateTimeFormatter SQL_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss[.SSS]");
+    /**
+     * Export writes {@link LocalDateTime#toString()} with the {@code T} turned into a space,
+     * so the fraction may be 1 to 9 digits, or absent. {@code [.SSS]} rejects {@code .4} and {@code .66}.
+     */
+    private static final DateTimeFormatter SQL_TIMESTAMP = new DateTimeFormatterBuilder()
+            .appendPattern("yyyy-MM-dd HH:mm:ss")
+            .optionalStart()
+            .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
+            .optionalEnd()
+            .toFormatter();
 
     private Values() {
     }

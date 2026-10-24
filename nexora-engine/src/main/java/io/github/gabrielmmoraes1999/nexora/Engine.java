@@ -65,6 +65,14 @@ final class Engine implements AutoCloseable {
     private IdentityHashMap<TableStore, Set<Long>> deletingRows;
     private IdentityHashMap<TableStore, Set<Long>> rewritingRows;
     private String pinnedSchema;
+    private CheckpointPolicy policy = CheckpointPolicy.defaults();
+    private volatile boolean stopping;
+    private Thread checkpointThread;
+    private boolean checkpointRunning;
+    private long lastCheckpointNanos = System.nanoTime();
+    private Long commitMarker;
+    private Long rollbackMarker;
+    private boolean catalogDirty;
 
     private Engine(DatabaseFile storage) {
         this.storage = storage;
@@ -108,10 +116,13 @@ final class Engine implements AutoCloseable {
         Engine engine = new Engine(storage);
         try {
             engine.loadTables();
+            engine.recoverUncommitted();
+            engine.recoverCommittedSql();
             engine.ensureSystem(DatabaseOptions.defaults());
             if (session) {
                 engine.closeStaleConnections();
                 engine.storage.beginSession();
+                engine.startCheckpoints();
             }
             return engine;
         } catch (RuntimeException exception) {
@@ -258,7 +269,14 @@ final class Engine implements AutoCloseable {
         } finally {
             actor = previous;
             if (outer) {
-                if (session != null && transactions.containsKey(session)) {
+                boolean openTxn = session != null && transactions.containsKey(session);
+                if (openTxn && !suppressCapture) {
+                    spillPending(session);
+                    if (!storage.leaveForRecovery()) {
+                        maybeCheckpoint();
+                    }
+                }
+                if (openTxn) {
                     park(session);
                     inTransaction = false;
                     transactionSession = null;
@@ -529,12 +547,17 @@ final class Engine implements AutoCloseable {
         if (closed) {
             return;
         }
+        stopping = true;
+        if (checkpointThread != null) {
+            checkpointThread.interrupt();
+        }
         try {
             try {
                 discardAll();
                 if (inTransaction) {
                     rollback();
                 }
+                flushCommitted();
             } catch (RuntimeException ignored) {
                 // closing discards the open transaction
             }
@@ -575,11 +598,11 @@ final class Engine implements AutoCloseable {
             case CommitTx ignored -> {
                 Session owner = transactionSession != null ? transactionSession : actor;
                 OpenTxn txn = owner == null ? null : transactions.get(owner);
-                if (txn == null) {
-                    if (!inTransaction) {
-                        throw new NexException("there is no open transaction");
-                    }
-                    flush();
+            if (txn == null) {
+                if (!inTransaction) {
+                    throw new NexException("there is no open transaction");
+                }
+                flush();
                     inTransaction = false;
                     transactionSession = null;
                     transactionId = null;
@@ -3720,16 +3743,20 @@ final class Engine implements AutoCloseable {
     }
 
     private void flush() {
-        List<TransactionLog.Applied> transactions = List.copyOf(pending);
-        flushMatching(table -> true, transactions);
+        List<TransactionLog.Applied> transactions = new ArrayList<>(pending);
         pending.clear();
+        flushMatching(table -> true, transactions);
     }
 
     private boolean flushMatching(Predicate<TableStore> include) {
-        return flushMatching(include, List.of());
+        return flushMatching(include, List.of(), false);
     }
 
     private boolean flushMatching(Predicate<TableStore> include, List<TransactionLog.Applied> transactions) {
+        return flushMatching(include, transactions, false);
+    }
+
+    private boolean flushMatching(Predicate<TableStore> include, List<TransactionLog.Applied> transactions, boolean pagesOnly) {
         List<TableStore> dirty = new ArrayList<>();
         for (TableStore table : tables.values()) {
             if (table.isDirty() && include.test(table)) {
@@ -3737,8 +3764,28 @@ final class Engine implements AutoCloseable {
             }
         }
         if (dirty.isEmpty()) {
+            if (!catalogDirty || pagesOnly) {
+                storage.ensureScrubbed();
+                return false;
+            }
             storage.ensureScrubbed();
-            return false;
+            storage.beginCommit();
+            try {
+                storage.armScrub();
+                DatabaseFile.Allocator draft = storage.draft();
+                draft.free(storage.catalogOffset(), storage.catalogSpan());
+                storage.publish(snapshotTables(), draft);
+                storage.scrubPending();
+                storage.finishCommit(transactions, commitMarker, rollbackMarker);
+                catalogDirty = false;
+                return true;
+            } catch (RuntimeException exception) {
+                storage.abortCommit();
+                if (storage.leaveForRecovery() || exception instanceof NexException) {
+                    throw exception;
+                }
+                throw new NexException("failed to commit changes: " + exception.getMessage(), exception);
+            }
         }
         storage.ensureScrubbed();
         storage.beginCommit();
@@ -3822,7 +3869,12 @@ final class Engine implements AutoCloseable {
             clean.free(storage.catalogOffset(), storage.catalogSpan());
             storage.publish(snapshotTables(), clean);
             storage.scrubPending();
-            storage.finishCommit(transactions);
+            if (pagesOnly) {
+                storage.finishPages();
+            } else {
+                storage.finishCommit(transactions, commitMarker, rollbackMarker);
+                catalogDirty = false;
+            }
             published = true;
         } catch (RuntimeException exception) {
             storage.abortCommit();
@@ -6652,6 +6704,35 @@ final class Engine implements AutoCloseable {
         if (txn == null) {
             throw new NexException("there is no open transaction");
         }
+        if (storage.leaveForRecovery()) {
+            restoreTxnMemory(session, txn);
+            clearTxnFlags(session);
+            return;
+        }
+        if (txn.hardened && txn.hardenedImage != null && !txn.hardenedImage.empty()) {
+            if (installed == session) {
+                park(session);
+            }
+            applyUndo(txn.hardenedImage);
+            refreshActiveUndo();
+            rollbackMarker = txn.id;
+            try {
+                flush();
+            } finally {
+                rollbackMarker = null;
+            }
+            clearTxnFlags(session);
+            return;
+        }
+        restoreTxnMemory(session, txn);
+        undoCatalog(txn);
+        if (!suppressCapture && !storage.leaveForRecovery()) {
+            storage.logRollback(txn.id);
+        }
+        clearTxnFlags(session);
+    }
+
+    private void restoreTxnMemory(Session session, OpenTxn txn) {
         if (installed == session) {
             for (TableStore table : txn.tables.keySet()) {
                 TableStore.Snapshot back = txn.held.get(table);
@@ -6663,13 +6744,544 @@ final class Engine implements AutoCloseable {
                 }
             }
         }
-        undoCatalog(txn);
+    }
+
+    private void clearTxnFlags(Session session) {
         if (installed == session || transactionSession == session) {
             installed = null;
             inTransaction = false;
             transactionSession = null;
             transactionId = null;
         }
+    }
+
+    void checkpoint() {
+        checkpoint(true);
+    }
+
+    void checkpointPolicy(CheckpointPolicy next) {
+        if (next == null) {
+            throw new NexException("checkpoint policy is required");
+        }
+        policy = next;
+        if (checkpointThread == null && next.intervalMillis() > 0 && !closed) {
+            startCheckpoints();
+        }
+    }
+
+    /** Closes the files as a process crash: no rollback and no checkpoint. */
+    void crash() {
+        if (closed) {
+            return;
+        }
+        stopping = true;
+        if (checkpointThread != null) {
+            checkpointThread.interrupt();
+        }
+        closed = true;
+        storage.abandon();
+    }
+
+    private void startCheckpoints() {
+        if (policy.intervalMillis() <= 0 || checkpointThread != null) {
+            return;
+        }
+        lastCheckpointNanos = System.nanoTime();
+        checkpointThread = new Thread(this::checkpointLoop, "nexora-checkpoint");
+        checkpointThread.setDaemon(true);
+        checkpointThread.start();
+    }
+
+    private void checkpointLoop() {
+        while (!stopping) {
+            long wait;
+            synchronized (this) {
+                wait = policy.intervalMillis();
+            }
+            if (wait <= 0 || stopping) {
+                return;
+            }
+            try {
+                Thread.sleep(wait);
+            } catch (InterruptedException interrupted) {
+                return;
+            }
+            synchronized (this) {
+                if (stopping || closed) {
+                    return;
+                }
+                try {
+                    maybeCheckpoint();
+                } catch (RuntimeException exception) {
+                    if (storage.leaveForRecovery()) {
+                        stopping = true;
+                    }
+                }
+            }
+        }
+    }
+
+    private void maybeCheckpoint() {
+        if (checkpointRunning || closed || stopping || storage.leaveForRecovery() || !policyDue()) {
+            return;
+        }
+        // Pages of an open transaction are written here, between statements. Commit
+        // only appends its record. Rollback uses the undo stored by this checkpoint.
+        checkpoint(true);
+    }
+
+    private boolean policyDue() {
+        if (policy.intervalMillis() > 0) {
+            long elapsed = (System.nanoTime() - lastCheckpointNanos) / 1_000_000L;
+            if (elapsed >= policy.intervalMillis()) {
+                return true;
+            }
+        }
+        int dirtyTables = 0;
+        long dirtyBytes = 0;
+        for (Map.Entry<Session, OpenTxn> entry : transactions.entrySet()) {
+            for (TableStore table : entry.getValue().tables.keySet()) {
+                if (!changedSinceCheckpoint(entry.getKey(), entry.getValue(), table)) {
+                    continue;
+                }
+                dirtyTables++;
+                dirtyBytes += 256;
+            }
+        }
+        if (dirtyTables >= policy.dirtyTables() || dirtyBytes >= policy.dirtyBytes()) {
+            return true;
+        }
+        if (storage.logLength() - storage.checkpointLsn() >= policy.logBytes()) {
+            return true;
+        }
+        long maximum = storage.cacheMaximum();
+        return maximum > 0 && policy.cachePressure() <= 1
+                && storage.cacheResident() >= (long) (maximum * policy.cachePressure());
+    }
+
+    private void checkpoint(boolean force) {
+        if (checkpointRunning || closed || storage.leaveForRecovery()) {
+            return;
+        }
+        checkpointRunning = true;
+        boolean previousIn = inTransaction;
+        Session previousSession = transactionSession;
+        Long previousId = transactionId;
+        Session previousInstalled = installed;
+        try {
+            if (previousInstalled != null && transactions.containsKey(previousInstalled)) {
+                park(previousInstalled);
+            }
+            List<TransactionLog.TxnUndo> writing = new ArrayList<>();
+            List<Session> sessions = new ArrayList<>();
+            for (Map.Entry<Session, OpenTxn> entry : transactions.entrySet()) {
+                OpenTxn txn = entry.getValue();
+                TransactionLog.TxnUndo image = capture(entry.getKey(), txn);
+                if (image.empty()) {
+                    continue;
+                }
+                if (txn.hardened && !dirtySince(entry.getKey(), txn)) {
+                    continue;
+                }
+                writing.add(image);
+                sessions.add(entry.getKey());
+            }
+            if (!writing.isEmpty()) {
+                storage.logUndo(writing);
+                for (int i = 0; i < sessions.size(); i++) {
+                    Session session = sessions.get(i);
+                    OpenTxn txn = transactions.get(session);
+                    if (txn == null) {
+                        continue;
+                    }
+                    activate(session);
+                    for (TableStore table : txn.tables.keySet()) {
+                        txn.layout.put(table, table.pin(txn.layout.get(table)));
+                        txn.held.put(table, table.pin(txn.held.get(table)));
+                    }
+                    flushMatching(table -> txn.tables.containsKey(table), List.of(), true);
+                    txn.hardened = true;
+                    txn.hardenedImage = writing.get(i);
+                    park(session);
+                }
+            }
+            refreshActiveUndo();
+            boolean catalogOpen = openCatalogChange();
+            if (!catalogOpen) {
+                flushCommitted();
+            }
+            if ((force || !writing.isEmpty()) && (!catalogOpen || !committedPagesPending())) {
+                storage.writeCheckpoint();
+            }
+        } finally {
+            if (previousInstalled != null && transactions.containsKey(previousInstalled) && !storage.leaveForRecovery()) {
+                activate(previousInstalled);
+            } else if (!storage.leaveForRecovery()) {
+                installed = previousInstalled != null && transactions.containsKey(previousInstalled) ? previousInstalled : null;
+                inTransaction = previousIn;
+                transactionSession = previousSession;
+                transactionId = previousId;
+            }
+            lastCheckpointNanos = System.nanoTime();
+            checkpointRunning = false;
+        }
+    }
+
+    private void spillPending(Session session) {
+        if (suppressCapture || session == null || pending.isEmpty()) {
+            return;
+        }
+        OpenTxn txn = transactions.get(session);
+        if (txn == null) {
+            return;
+        }
+        List<TransactionLog.Applied> fresh = new ArrayList<>();
+        for (TransactionLog.Applied applied : pending) {
+            if (!transactionControl(applied.sql)) {
+                fresh.add(applied);
+            }
+        }
+        pending.clear();
+        if (!fresh.isEmpty()) {
+            storage.logStatements(txn.id, fresh);
+        }
+    }
+
+    private void recoverCommittedSql() {
+        List<TransactionLog.Batch> batches = storage.takeSqlReplay();
+        if (batches.isEmpty()) {
+            return;
+        }
+        Session replay = new Session("DBA", true, 0);
+        boolean previousBypass = bypass;
+        boolean previousSuppress = suppressCapture;
+        bypass = true;
+        suppressCapture = true;
+        try {
+            execute(replay, "BEGIN", new Object[0]);
+            for (TransactionLog.Batch batch : batches) {
+                for (TransactionLog.Applied statement : batch.statements) {
+                    if (transactionControl(statement.sql)) {
+                        continue;
+                    }
+                    replay.schema(statement.schema);
+                    execute(replay, statement.sql, statement.params);
+                    if (!transactions.containsKey(replay)) {
+                        execute(replay, "BEGIN", new Object[0]);
+                    }
+                }
+            }
+            if (transactions.containsKey(replay)) {
+                execute(replay, "COMMIT", new Object[0]);
+            }
+            flush();
+        } finally {
+            bypass = previousBypass;
+            suppressCapture = previousSuppress;
+        }
+    }
+
+    private void flushCommitted() {
+        if (closed || storage.leaveForRecovery() || openCatalogChange()) {
+            return;
+        }
+        if (!catalogDirty && !committedPagesPending()) {
+            return;
+        }
+        flushMatching(table -> !openTransactionTable(table), List.of());
+    }
+
+    private boolean openTransactionTable(TableStore table) {
+        for (OpenTxn txn : transactions.values()) {
+            if (txn.tables.containsKey(table)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean openCatalogChange() {
+        for (OpenTxn txn : transactions.values()) {
+            if (!txn.created.isEmpty() || !txn.dropped.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean committedPagesPending() {
+        for (TableStore table : tables.values()) {
+            if (table.isDirty() && !openTransactionTable(table)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean transactionControl(String sql) {
+        if (sql == null) {
+            return false;
+        }
+        int index = 0;
+        while (index < sql.length() && Character.isWhitespace(sql.charAt(index))) {
+            index++;
+        }
+        int start = index;
+        while (index < sql.length() && Character.isLetter(sql.charAt(index))) {
+            index++;
+        }
+        if (start == index) {
+            return false;
+        }
+        String word = sql.substring(start, index);
+        return word.equalsIgnoreCase("BEGIN")
+                || word.equalsIgnoreCase("COMMIT")
+                || word.equalsIgnoreCase("ROLLBACK")
+                || word.equalsIgnoreCase("START");
+    }
+
+    private void recoverUncommitted() {
+        if (!storage.undoPending()) {
+            return;
+        }
+        for (TransactionLog.TxnUndo undo : storage.pendingUndos()) {
+            applyUndo(undo);
+        }
+        storage.activeUndo(List.of());
+        flush();
+        storage.clearUndoPending();
+    }
+
+    private void refreshActiveUndo() {
+        List<TransactionLog.TxnUndo> images = new ArrayList<>();
+        for (Map.Entry<Session, OpenTxn> entry : transactions.entrySet()) {
+            OpenTxn txn = entry.getValue();
+            if (!txn.hardened) {
+                continue;
+            }
+            TransactionLog.TxnUndo image = capture(entry.getKey(), txn);
+            if (image.empty()) {
+                txn.hardened = false;
+                txn.hardenedImage = null;
+                continue;
+            }
+            txn.hardenedImage = image;
+            images.add(image);
+        }
+        storage.activeUndo(images);
+    }
+
+    private TransactionLog.TxnUndo capture(Session session, OpenTxn txn) {
+        List<TransactionLog.TableUndo> tables = new ArrayList<>();
+        for (TableStore table : txn.tables.keySet()) {
+            TransactionLog.TableUndo diff = diff(session, txn, table);
+            if (diff != null && !diff.empty()) {
+                tables.add(diff);
+            }
+        }
+        List<String[]> created = new ArrayList<>();
+        for (TableStore table : txn.created.keySet()) {
+            if (txn.dropped.containsValue(table)) {
+                continue;
+            }
+            created.add(new String[]{table.namespace(), table.schema().name});
+        }
+        return new TransactionLog.TxnUndo(txn.id, created, tables);
+    }
+
+    private TransactionLog.TableUndo diff(Session session, OpenTxn txn, TableStore table) {
+        TableStore.Snapshot before = txn.layout.get(table);
+        if (before == null) {
+            return null;
+        }
+        Schema afterSchema;
+        Collection<StoredRow> afterRows;
+        if (installed == session) {
+            afterSchema = table.schema();
+            afterRows = table.scan();
+        } else {
+            TableStore.Snapshot after = txn.workspace.get(table);
+            if (after == null) {
+                after = txn.held.get(table);
+            }
+            if (after == null) {
+                return null;
+            }
+            afterSchema = after.schema;
+            afterRows = after.rows.values();
+        }
+        if (!sameColumns(before.schema, afterSchema)) {
+            throw new NexException("checkpoint cannot store a structure change of " + table.schema().name);
+        }
+        TransactionLog.TableUndo previous = previousUndo(txn, table);
+        List<Long> inserted = new ArrayList<>();
+        List<TransactionLog.RowImage> updated = new ArrayList<>();
+        List<TransactionLog.RowImage> deleted = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        for (StoredRow row : afterRows) {
+            seen.add(row.id);
+            StoredRow original = before.rows.get(row.id);
+            if (original == null) {
+                inserted.add(row.id);
+                continue;
+            }
+            if (original == row) {
+                continue;
+            }
+            Object[] oldValues = previousValues(previous, row.id);
+            if (oldValues == null) {
+                oldValues = table.copyValues(before.schema, original);
+            }
+            Object[] newValues = table.copyValues(afterSchema, row);
+            if (!Arrays.deepEquals(oldValues, newValues)) {
+                updated.add(new TransactionLog.RowImage(row.id, oldValues));
+            }
+        }
+        for (StoredRow row : before.rows.values()) {
+            if (seen.contains(row.id)) {
+                continue;
+            }
+            Object[] oldValues = previousValues(previous, row.id);
+            if (oldValues == null) {
+                oldValues = table.copyValues(before.schema, row);
+            }
+            deleted.add(new TransactionLog.RowImage(row.id, oldValues));
+        }
+        if (inserted.isEmpty() && updated.isEmpty() && deleted.isEmpty()) {
+            return null;
+        }
+        long[] ids = new long[inserted.size()];
+        for (int i = 0; i < ids.length; i++) {
+            ids[i] = inserted.get(i);
+        }
+        return new TransactionLog.TableUndo(table.namespace(), table.schema().name, ids, updated, deleted);
+    }
+
+    private static TransactionLog.TableUndo previousUndo(OpenTxn txn, TableStore table) {
+        if (txn.hardenedImage == null) {
+            return null;
+        }
+        for (TransactionLog.TableUndo undo : txn.hardenedImage.tables) {
+            if (Names.same(undo.schema, table.namespace()) && Names.same(undo.table, table.schema().name)) {
+                return undo;
+            }
+        }
+        return null;
+    }
+
+    private static Object[] previousValues(TransactionLog.TableUndo previous, long id) {
+        if (previous == null) {
+            return null;
+        }
+        for (TransactionLog.RowImage row : previous.updated) {
+            if (row.id == id) {
+                return row.values;
+            }
+        }
+        for (TransactionLog.RowImage row : previous.deleted) {
+            if (row.id == id) {
+                return row.values;
+            }
+        }
+        return null;
+    }
+
+    private static boolean sameColumns(Schema left, Schema right) {
+        if (left.columns.size() != right.columns.size()) {
+            return false;
+        }
+        for (int i = 0; i < left.columns.size(); i++) {
+            Column one = left.columns.get(i);
+            Column other = right.columns.get(i);
+            if (!Names.same(one.name, other.name) || one.type != other.type) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean dirtySince(Session session, OpenTxn txn) {
+        for (TableStore table : txn.tables.keySet()) {
+            if (changedSinceCheckpoint(session, txn, table)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean changedSinceCheckpoint(Session session, OpenTxn txn, TableStore table) {
+        if (installed == session) {
+            if (table.isDirty()) {
+                return true;
+            }
+            for (StoredRow row : table.scan()) {
+                if (row.dirty) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        TableStore.Snapshot after = txn.workspace.get(table);
+        if (after == null) {
+            return !txn.hardened && txn.layout.containsKey(table);
+        }
+        if (after.dirty) {
+            return true;
+        }
+        for (StoredRow row : after.rows.values()) {
+            if (row.dirty) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void applyUndo(TransactionLog.TxnUndo undo) {
+        for (TransactionLog.TableUndo tableUndo : undo.tables) {
+            TableStore table = tables.get(Relation.key(tableUndo.schema, tableUndo.table));
+            if (table == null) {
+                throw new NexException("table not found: " + tableUndo.table);
+            }
+            table.reload();
+            if (tableUndo.inserted.length > 0) {
+                List<Long> ids = new ArrayList<>(tableUndo.inserted.length);
+                for (long id : tableUndo.inserted) {
+                    ids.add(id);
+                }
+                table.delete(ids);
+            }
+            Map<Long, Cell[]> replacements = new LinkedHashMap<>();
+            for (TransactionLog.RowImage row : tableUndo.updated) {
+                replacements.put(row.id, cellsOf(table, row.values));
+            }
+            if (!replacements.isEmpty()) {
+                table.update(replacements);
+            }
+            for (TransactionLog.RowImage row : tableUndo.deleted) {
+                table.restoreRow(row.id, row.values);
+            }
+        }
+        for (String[] created : undo.created) {
+            String key = Relation.key(created[0], created[1]);
+            TableStore table = tables.remove(key);
+            if (table == null) {
+                continue;
+            }
+            storage.retire(table.base(), table.capacity());
+            catalogDirty = true;
+        }
+    }
+
+    private static Cell[] cellsOf(TableStore table, Object[] values) {
+        Cell[] cells = new Cell[values.length];
+        List<Column> columns = table.schema().columns;
+        if (values.length != columns.size()) {
+            throw new NexException("value count does not match the columns of " + table.schema().name);
+        }
+        for (int i = 0; i < values.length; i++) {
+            cells[i] = TableStore.toCell(columns.get(i), values[i]);
+        }
+        return cells;
     }
 
     private void discardAll() {
@@ -6702,8 +7314,17 @@ final class Engine implements AutoCloseable {
             }
             throw exception;
         }
+        commitMarker = txn.id;
+        txn.hardened = false;
+        txn.hardenedImage = null;
+        refreshActiveUndo();
         try {
-            flush();
+            if (!suppressCapture && !storage.leaveForRecovery()) {
+                spillPending(owner);
+                storage.logCommit(txn.id);
+            } else {
+                pending.clear();
+            }
             for (TableStore table : txn.dropped.values()) {
                 discardTable(table);
             }
@@ -6719,6 +7340,8 @@ final class Engine implements AutoCloseable {
                 // the flush failure already explains the error
             }
             throw exception;
+        } finally {
+            commitMarker = null;
         }
         transactions.remove(owner);
         installed = null;
@@ -6769,6 +7392,9 @@ final class Engine implements AutoCloseable {
         private final IdentityHashMap<TableStore, Boolean> tables = new IdentityHashMap<>();
         private final IdentityHashMap<TableStore, Boolean> created = new IdentityHashMap<>();
         private final LinkedHashMap<String, TableStore> dropped = new LinkedHashMap<>();
+
+        private boolean hardened;
+        private TransactionLog.TxnUndo hardenedImage;
 
         private OpenTxn(long id) {
             this.id = id;

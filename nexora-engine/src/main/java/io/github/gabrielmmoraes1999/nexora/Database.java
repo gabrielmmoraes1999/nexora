@@ -21,8 +21,11 @@ import java.util.function.IntConsumer;
  * If that file does not exist, or is empty, opening creates a log with only the header
  * and advances the generation: the old file can no longer open the database.
  * Starting writes a checkpoint into the database and into the log. Stopping writes it again.
- * Applying a log records only the checkpoint already stored in that file. A rejected log
- * leaves the database checkpoint unchanged.
+ * A checkpoint may also store pages of a transaction that is still open. That does not commit it.
+ * Opening undoes those transactions. SQL waits for that checkpoint, two open transactions cannot
+ * change the same table, and a large before-image is stored whole in the log. The log is not
+ * cut until a full backup. Applying a log records only the checkpoint already stored
+ * in that file. A rejected log leaves the database checkpoint unchanged.
  *
  * <p>Opening requires a user and password and a file that already exists.
  * {@link #create(Path, DatabaseOptions)} chooses the page size, the password, and the name.
@@ -633,6 +636,34 @@ public final class Database implements AutoCloseable {
     long logLength() {
         synchronized (engine) {
             return engine.logLength();
+        }
+    }
+
+    /**
+     * Writes dirty pages, including those of transactions that are still open.
+     * The open transactions stay open. {@code COMMIT} is a separate operation.
+     */
+    public void checkpoint() {
+        synchronized (engine) {
+            if (owner == null || owner.closed()) {
+                throw new NexException("session closed");
+            }
+            engine.checkpoint();
+        }
+    }
+
+    /** Replaces the thresholds of the automatic checkpoint. */
+    public void checkpointPolicy(CheckpointPolicy policy) {
+        synchronized (engine) {
+            engine.checkpointPolicy(policy);
+        }
+    }
+
+    /** Drops the process without rolling back and without a checkpoint. */
+    void crash() {
+        synchronized (engine) {
+            owner = null;
+            engine.crash();
         }
     }
 

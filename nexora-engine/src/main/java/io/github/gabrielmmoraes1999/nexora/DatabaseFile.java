@@ -25,6 +25,10 @@ import java.util.TreeMap;
  * a new log, with only the header, advances the generation, and continues from the
  * pages already stored. The log from the previous generation can no longer open the database.
  * Starting writes a checkpoint into the database and into the log. Stopping writes it again.
+ * A checkpoint may store pages of a transaction that is still open. The undo record is forced
+ * first, and opening undoes that transaction. Writing the page does not commit it.
+ * The checkpoint uses the same lock as SQL. Two open transactions cannot change the same table.
+ * A large before-image is stored whole in the log, and the log is not cut until a full backup.
  * Applying a log records only the checkpoint already stored in that file. A rejected log
  * leaves the database checkpoint unchanged.
  */
@@ -39,6 +43,13 @@ final class DatabaseFile implements AutoCloseable {
     private long appliedOffset;
     private long checkpointLsn = Format.LOG_HEADER_SIZE;
     private boolean stable;
+    /** Undo of transactions whose uncommitted pages were stored by the last checkpoint. */
+    private List<TransactionLog.TxnUndo> activeUndo = List.of();
+    private boolean undoPending;
+    private List<TransactionLog.TxnUndo> pendingUndos = List.of();
+    /** Committed SQL whose pages were not stored. Opening runs it once. */
+    private List<TransactionLog.Batch> sqlReplay = List.of();
+    private long spilledSinceForce;
     private CommitBuffer commit;
     private boolean crashed;
     private boolean recoveryPending;
@@ -302,6 +313,18 @@ final class DatabaseFile implements AutoCloseable {
         return cache.maximum();
     }
 
+    long cacheResident() {
+        return cache.resident();
+    }
+
+    /** Appends a checkpoint record and advances the header. The active undo, if any, is stored in the record. */
+    void writeCheckpoint() {
+        if (crashed || log == null) {
+            return;
+        }
+        checkpoint(true);
+    }
+
     void ensureScrubbed() {
         if (scrubFlag() == Format.SCRUB_CLEAN && wipeAfter.isEmpty()) {
             return;
@@ -536,10 +559,14 @@ final class DatabaseFile implements AutoCloseable {
         if (checkpointLsn > log.size()) {
             throw new NexException("transaction log does not cover the checkpoint");
         }
+        pendingUndos = log.transactionsToUndo(checkpointLsn);
+        undoPending = !pendingUndos.isEmpty();
+        sqlReplay = log.sqlToReplay(checkpointLsn);
         if (logEpoch != epoch) {
             writeEpoch(logEpoch);
         }
-        if (!applying && (applied || log.size() > checkpointLsn || logEpoch != epoch)) {
+        if (!applying && !undoPending && sqlReplay.isEmpty()
+                && (applied || log.size() > checkpointLsn || logEpoch != epoch)) {
             checkpoint();
         }
         header = readBytes(0, Format.DB_HEADER_SIZE);
@@ -568,7 +595,7 @@ final class DatabaseFile implements AutoCloseable {
         }
         if (!pending) {
             ready = true;
-            if (!applying) {
+            if (!applying && !undoPending) {
                 saveCheckpoint();
             }
             return;
@@ -590,7 +617,7 @@ final class DatabaseFile implements AutoCloseable {
             scrubPending();
             finishCommit();
             ready = true;
-            if (!applying) {
+            if (!applying && !undoPending) {
                 saveCheckpoint();
             }
         } catch (RuntimeException exception) {
@@ -703,10 +730,18 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     void finishCommit() {
-        finishCommit(List.of());
+        finishCommit(List.of(), null, null);
     }
 
     void finishCommit(List<TransactionLog.Applied> statements) {
+        finishCommit(statements, null, null);
+    }
+
+    /**
+     * {@code commitId} and {@code rollbackId} are written before the page redo and forced with it.
+     * Neither one is a checkpoint, and neither one is implied by writing pages.
+     */
+    void finishCommit(List<TransactionLog.Applied> statements, Long commitId, Long rollbackId) {
         if (commit == null) {
             return;
         }
@@ -722,8 +757,15 @@ final class DatabaseFile implements AutoCloseable {
             forceChannel();
             return;
         }
+        if (commitId != null) {
+            log.appendCommit(commitId);
+        }
+        if (rollbackId != null) {
+            log.appendRollback(rollbackId);
+        }
         if (statements != null && !statements.isEmpty()) {
             log.appendTransaction(statements);
+            statements.clear();
         }
         log.appendRedo(buffer.spans(), buffer.fileSize());
         recoveryPending = true;
@@ -737,6 +779,111 @@ final class DatabaseFile implements AutoCloseable {
         fileSize = buffer.fileSize();
         appliedToDisk = true;
         checkpoint();
+    }
+
+    /**
+     * Writes the commit buffer to the database file and forces it.
+     * No transaction record and no checkpoint LSN update: the caller logs the undo first.
+     */
+    void finishPages() {
+        if (commit == null) {
+            return;
+        }
+        CommitBuffer buffer = commit;
+        commit = null;
+        if (!buffer.unchanged()) {
+            buffer.apply(this);
+            truncatePhysical(buffer.fileSize());
+            fileSize = buffer.fileSize();
+            forceChannel();
+        }
+        if (TransactionLog.crashAfterCheckpointPages) {
+            crashed = true;
+            throw new NexException("simulated crash during the checkpoint");
+        }
+    }
+
+    List<TransactionLog.Batch> takeSqlReplay() {
+        List<TransactionLog.Batch> replay = sqlReplay;
+        sqlReplay = List.of();
+        return replay == null ? List.of() : replay;
+    }
+
+    /** Writes the statement text of an open transaction. Syncs every 32 MB so commit only syncs the tail. */
+    void logStatements(long txnId, List<TransactionLog.Applied> statements) {
+        if (log == null || statements == null || statements.isEmpty()) {
+            return;
+        }
+        log.appendTxnSql(txnId, statements);
+        long bytes = 0;
+        for (TransactionLog.Applied statement : statements) {
+            bytes += statement.sql == null ? 0 : statement.sql.length();
+        }
+        spilledSinceForce += bytes;
+        if (spilledSinceForce >= 32L * 1024 * 1024) {
+            log.force();
+            spilledSinceForce = 0;
+        }
+    }
+
+    /** The commit record. Pages stay in memory until a later flush. */
+    void logCommit(long txnId) {
+        if (log == null) {
+            throw new NexException("transaction log is required");
+        }
+        log.appendCommit(txnId);
+        log.force();
+        spilledSinceForce = 0;
+    }
+
+    /** Drops SQL that was written while the transaction was open. */
+    void logRollback(long txnId) {
+        if (log == null) {
+            throw new NexException("transaction log is required");
+        }
+        log.appendRollback(txnId);
+        log.force();
+        spilledSinceForce = 0;
+    }
+
+    /** Forces the undo images. Pages that depend on them must be written only after this returns. */
+    void logUndo(List<TransactionLog.TxnUndo> undos) {
+        if (log == null) {
+            throw new NexException("transaction log is required");
+        }
+        if (undos != null) {
+            for (TransactionLog.TxnUndo undo : undos) {
+                log.appendUndo(undo);
+            }
+        }
+        log.force();
+        if (TransactionLog.crashAfterUndo) {
+            crashed = true;
+            throw new NexException("simulated crash after the undo record");
+        }
+    }
+
+    void activeUndo(List<TransactionLog.TxnUndo> undos) {
+        activeUndo = undos == null || undos.isEmpty() ? List.of() : List.copyOf(undos);
+    }
+
+    boolean undoPending() {
+        return undoPending;
+    }
+
+    List<TransactionLog.TxnUndo> pendingUndos() {
+        return pendingUndos;
+    }
+
+    void clearUndoPending() {
+        undoPending = false;
+        pendingUndos = List.of();
+    }
+
+    /** Closes the files without a checkpoint. Used when a crash is simulated. */
+    void abandon() {
+        crashed = true;
+        close();
     }
 
     void abortCommit() {
@@ -775,7 +922,7 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private void saveCheckpoint(boolean boundary) {
-        if (applying || !ready || log == null || crashed || (recoveryPending && !appliedToDisk)) {
+        if (applying || !ready || log == null || crashed || undoPending || (recoveryPending && !appliedToDisk)) {
             return;
         }
         checkpoint(boundary);
@@ -794,8 +941,8 @@ final class DatabaseFile implements AutoCloseable {
             return;
         }
         forceChannel();
-        if (boundary || log.size() > checkpointLsn) {
-            log.appendCheckpoint();
+        if (boundary || log.size() > checkpointLsn || !activeUndo.isEmpty()) {
+            log.appendCheckpoint(activeUndo);
             log.force();
         }
         writeCheckpointLsn(log.size());

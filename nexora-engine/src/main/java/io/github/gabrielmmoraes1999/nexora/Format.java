@@ -41,6 +41,14 @@ final class Format {
     static final int RECORD_CHECKPOINT = 2;
     /** Committed SQL: the transactions the applier runs again. */
     static final int RECORD_TRANSACTION = 3;
+    /** Before-image of one transaction. Written before a checkpoint stores its pages. */
+    static final int RECORD_UNDO = 4;
+    /** The transaction id is durable. Recovery must not undo it. */
+    static final int RECORD_COMMIT = 5;
+    /** The transaction id was undone and its restored pages were logged. */
+    static final int RECORD_ROLLBACK = 6;
+    /** SQL written while the transaction is open. A later commit of the same id makes it durable. */
+    static final int RECORD_TXN_SQL = 7;
     static final int DEFAULT_PAGE_SIZE = 8192;
     static final int CATALOG_MAGIC = 0x43415441;
     static final int SLOT_A = 16;
@@ -64,6 +72,16 @@ final class Format {
     static final ByteOrder ORDER = ByteOrder.BIG_ENDIAN;
 
     private Format() {
+    }
+
+    static boolean knownLogRecord(int type) {
+        return type == RECORD_REDO
+                || type == RECORD_CHECKPOINT
+                || type == RECORD_TRANSACTION
+                || type == RECORD_UNDO
+                || type == RECORD_COMMIT
+                || type == RECORD_ROLLBACK
+                || type == RECORD_TXN_SQL;
     }
 
     static long align8(long value) {

@@ -17,7 +17,9 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiConsumer;
 import java.util.function.LongConsumer;
@@ -38,6 +40,12 @@ final class TransactionLog implements AutoCloseable {
      * Crash test: after the REDO is on disk and before the pages are applied.
      */
     static volatile boolean crashAfterRedo;
+
+    /** Crash test: the undo record is durable and the checkpoint has not written pages. */
+    static volatile boolean crashAfterUndo;
+
+    /** Crash test: checkpoint pages are on disk and the checkpoint record is not. */
+    static volatile boolean crashAfterCheckpointPages;
 
     final Path path;
     private final FileChannel channel;
@@ -275,7 +283,7 @@ final class TransactionLog implements AutoCloseable {
             }
             if (type == Format.RECORD_CHECKPOINT) {
                 mark = at + recordLength;
-            } else if (type != Format.RECORD_REDO && type != Format.RECORD_TRANSACTION) {
+            } else if (!Format.knownLogRecord(type)) {
                 throw new NexException("transaction log is corrupt");
             }
             at += recordLength;
@@ -284,16 +292,22 @@ final class TransactionLog implements AutoCloseable {
     }
 
     void appendRedo(Collection<Span> spans, long fileSize) {
-        ByteWriter payload = new ByteWriter();
-        payload.u64(fileSize);
-        int pieces = 0;
         ByteWriter body = new ByteWriter();
+        int pieces = 0;
+        boolean wrote = false;
         for (Span span : spans) {
             long remaining = span.length;
             long offset = span.offset;
             int dataAt = 0;
             while (remaining > 0) {
-                int chunk = (int) Math.min(Integer.MAX_VALUE, remaining);
+                int chunk = redoChunk(span, remaining, pieces == 0 ? 0 : body.size());
+                if (pieces > 0 && body.size() + redoBytes(span, chunk) > CHUNK) {
+                    writeRedo(fileSize, pieces, body);
+                    wrote = true;
+                    body = new ByteWriter();
+                    pieces = 0;
+                    chunk = redoChunk(span, remaining, 0);
+                }
                 body.u8(span.data == null ? 1 : 0);
                 body.u64(offset);
                 body.u32(chunk);
@@ -306,13 +320,118 @@ final class TransactionLog implements AutoCloseable {
                 pieces++;
             }
         }
+        if (pieces > 0 || !wrote) {
+            writeRedo(fileSize, pieces, body);
+        }
+    }
+
+    private void writeRedo(long fileSize, int pieces, ByteWriter body) {
+        ByteWriter payload = new ByteWriter();
+        payload.u64(fileSize);
         payload.u32(pieces);
         payload.raw(body.toArray(), 0, body.size());
         append(Format.RECORD_REDO, payload.toArray());
     }
 
+    private static int redoBytes(Span span, int chunk) {
+        return 13 + (span.data == null ? 0 : chunk);
+    }
+
+    private static int redoChunk(Span span, long remaining, int used) {
+        int cap = span.data == null ? Integer.MAX_VALUE : Math.max(1, CHUNK - 13 - used);
+        return (int) Math.min(remaining, cap);
+    }
+
     void appendCheckpoint() {
-        append(Format.RECORD_CHECKPOINT, new byte[0]);
+        appendCheckpoint(List.of());
+    }
+
+    /**
+     * An empty list keeps the historical checkpoint record, with no payload.
+     * A non-empty list is the undo still required for transactions whose pages were stored.
+     */
+    void appendCheckpoint(List<TxnUndo> active) {
+        if (active == null || active.isEmpty()) {
+            append(Format.RECORD_CHECKPOINT, new byte[0]);
+            return;
+        }
+        append(Format.RECORD_CHECKPOINT, encodeActive(active));
+    }
+
+    void appendUndo(TxnUndo undo) {
+        append(Format.RECORD_UNDO, encodeUndo(undo));
+    }
+
+    void appendCommit(long txnId) {
+        ByteWriter payload = new ByteWriter();
+        payload.u64(txnId);
+        append(Format.RECORD_COMMIT, payload.toArray());
+    }
+
+    void appendRollback(long txnId) {
+        ByteWriter payload = new ByteWriter();
+        payload.u64(txnId);
+        append(Format.RECORD_ROLLBACK, payload.toArray());
+    }
+
+    /**
+     * Transactions whose pages may contain uncommitted changes and that have no
+     * later commit or rollback. The checkpoint record that ends at {@code checkpointLsn}
+     * is included. Records after it replace or cancel that image.
+     */
+    List<TxnUndo> transactionsToUndo(long checkpointLsn) {
+        long size = size();
+        if (size < Format.LOG_HEADER_SIZE) {
+            throw new NexException("transaction log is corrupt");
+        }
+        Map<Long, TxnUndo> active = new LinkedHashMap<>();
+        long at = Format.LOG_HEADER_SIZE;
+        while (at + 4 <= size) {
+            int recordLength = readInt(at);
+            if (recordLength < 20 || at + recordLength > size) {
+                break;
+            }
+            byte[] record = Format.readFully(channel, at, recordLength);
+            int stored = ByteBuffer.wrap(record, recordLength - 4, 4).order(Format.ORDER).getInt();
+            int expected = Format.crc(record, 4, recordLength - 8);
+            if (stored != expected) {
+                if (at + recordLength < size) {
+                    throw new NexException("transaction log is corrupt");
+                }
+                break;
+            }
+            int type = ByteBuffer.wrap(record, 4, 4).order(Format.ORDER).getInt();
+            long lsn = ByteBuffer.wrap(record, 8, 8).order(Format.ORDER).getLong();
+            if (lsn != at) {
+                throw new NexException("transaction log is corrupt");
+            }
+            if (!Format.knownLogRecord(type)) {
+                throw new NexException("transaction log is corrupt");
+            }
+            long end = at + recordLength;
+            boolean inForce = end == checkpointLsn || at >= checkpointLsn;
+            if (inForce) {
+                byte[] plain = readable(record);
+                if (type == Format.RECORD_CHECKPOINT && end == checkpointLsn) {
+                    active.clear();
+                    for (TxnUndo undo : decodeActive(plain)) {
+                        active.put(undo.id, undo);
+                    }
+                } else if (at >= checkpointLsn && type == Format.RECORD_CHECKPOINT) {
+                    active.clear();
+                    for (TxnUndo undo : decodeActive(plain)) {
+                        active.put(undo.id, undo);
+                    }
+                } else if (at >= checkpointLsn && type == Format.RECORD_UNDO) {
+                    TxnUndo undo = decodeUndo(plain);
+                    active.put(undo.id, undo);
+                } else if (at >= checkpointLsn && (type == Format.RECORD_COMMIT || type == Format.RECORD_ROLLBACK)) {
+                    active.remove(readTxnId(plain));
+                }
+            }
+            at += recordLength;
+        }
+        return List.copyOf(active.values());
     }
 
     /** Writes the SQL committed in this commit. The applier runs these statements. */
@@ -320,6 +439,62 @@ final class TransactionLog implements AutoCloseable {
         if (statements == null || statements.isEmpty()) {
             return;
         }
+        List<Applied> chunk = new ArrayList<>();
+        int estimate = 4;
+        for (Applied statement : statements) {
+            int cost = statementCost(statement);
+            if (!chunk.isEmpty() && estimate + cost > CHUNK) {
+                writeTransaction(chunk);
+                chunk.clear();
+                estimate = 4;
+            }
+            chunk.add(statement);
+            estimate += cost;
+        }
+        if (!chunk.isEmpty()) {
+            writeTransaction(chunk);
+        }
+    }
+
+    /** SQL of an open transaction. It becomes durable only when that id is committed. */
+    void appendTxnSql(long txnId, List<Applied> statements) {
+        if (statements == null || statements.isEmpty()) {
+            return;
+        }
+        List<Applied> chunk = new ArrayList<>();
+        int estimate = 12;
+        for (Applied statement : statements) {
+            int cost = statementCost(statement);
+            if (!chunk.isEmpty() && estimate + cost > CHUNK) {
+                writeTxnSql(txnId, chunk);
+                chunk.clear();
+                estimate = 12;
+            }
+            chunk.add(statement);
+            estimate += cost;
+        }
+        if (!chunk.isEmpty()) {
+            writeTxnSql(txnId, chunk);
+        }
+    }
+
+    private void writeTxnSql(long txnId, List<Applied> statements) {
+        ByteWriter payload = new ByteWriter();
+        payload.u64(txnId);
+        payload.u32(statements.size());
+        for (Applied statement : statements) {
+            payload.utf(statement.schema);
+            payload.utf(statement.sql);
+            Object[] params = statement.params == null ? new Object[0] : statement.params;
+            payload.u32(params.length);
+            for (Object param : params) {
+                writeParam(payload, param);
+            }
+        }
+        append(Format.RECORD_TXN_SQL, payload.toArray());
+    }
+
+    private void writeTransaction(List<Applied> statements) {
         ByteWriter payload = new ByteWriter();
         payload.u32(statements.size());
         for (Applied statement : statements) {
@@ -332,6 +507,25 @@ final class TransactionLog implements AutoCloseable {
             }
         }
         append(Format.RECORD_TRANSACTION, payload.toArray());
+    }
+
+    private static int statementCost(Applied statement) {
+        int cost = 4 + utfCost(statement.schema) + utfCost(statement.sql);
+        Object[] params = statement.params == null ? new Object[0] : statement.params;
+        cost += 4;
+        for (Object param : params) {
+            cost += 16;
+            if (param instanceof byte[] bytes) {
+                cost += bytes.length;
+            } else if (param instanceof String text) {
+                cost += utfCost(text);
+            }
+        }
+        return cost;
+    }
+
+    private static int utfCost(String text) {
+        return 4 + (text == null ? 0 : text.length() * 3);
     }
 
     /**
@@ -366,6 +560,9 @@ final class TransactionLog implements AutoCloseable {
         if (size < Format.LOG_HEADER_SIZE) {
             throw new NexException("transaction log is corrupt");
         }
+        List<Batch> held = new ArrayList<>();
+        List<Long> heldAt = new ArrayList<>();
+        Map<Long, List<Long>> openSql = new LinkedHashMap<>();
         long at = Format.LOG_HEADER_SIZE;
         while (at + 4 <= size) {
             int recordLength = readInt(at);
@@ -386,13 +583,23 @@ final class TransactionLog implements AutoCloseable {
             if (lsn != at) {
                 throw new NexException("transaction log is corrupt");
             }
-            if (at >= from && type == Format.RECORD_TRANSACTION) {
-                Batch batch = new Batch(at + recordLength, decodeTransaction(readable(record)));
-                if (consumer != null) {
-                    consumer.accept(batch, at);
-                }
-            } else if (type != Format.RECORD_REDO && type != Format.RECORD_CHECKPOINT && type != Format.RECORD_TRANSACTION) {
+            if (!Format.knownLogRecord(type)) {
                 throw new NexException("transaction log is corrupt");
+            }
+            if (type == Format.RECORD_TRANSACTION && at >= from) {
+                held.add(new Batch(at + recordLength, decodeTransaction(readable(record))));
+                heldAt.add(at);
+            } else if (type == Format.RECORD_TXN_SQL && at >= from) {
+                long id = txnSqlId(readable(record));
+                openSql.computeIfAbsent(id, key -> new ArrayList<>()).add(at);
+            } else if (type == Format.RECORD_COMMIT) {
+                long id = readTxnId(readable(record));
+                emitTxn(consumer, openSql.remove(id));
+            } else if (type == Format.RECORD_ROLLBACK) {
+                long id = readTxnId(readable(record));
+                openSql.remove(id);
+            } else if (type == Format.RECORD_REDO) {
+                emitHeld(consumer, held, heldAt);
             }
             at += recordLength;
             if (seen != null) {
@@ -402,6 +609,87 @@ final class TransactionLog implements AutoCloseable {
         if (seen != null) {
             seen.accept(size);
         }
+    }
+
+    private static void emitHeld(TransactionConsumer consumer, List<Batch> held, List<Long> heldAt) throws IOException {
+        if (consumer != null) {
+            for (int i = 0; i < held.size(); i++) {
+                consumer.accept(held.get(i), heldAt.get(i));
+            }
+        }
+        held.clear();
+        heldAt.clear();
+    }
+
+    private void emitTxn(TransactionConsumer consumer, List<Long> starts) throws IOException {
+        if (consumer == null || starts == null) {
+            return;
+        }
+        for (long start : starts) {
+            int recordLength = readInt(start);
+            byte[] record = Format.readFully(channel, start, recordLength);
+            consumer.accept(new Batch(start + recordLength, decodeTxnSql(readable(record))), start);
+        }
+    }
+
+    /**
+     * SQL of a commit that has no page redo after it. The pages are still only in memory,
+     * so opening runs these statements. A redo record means the pages were already stored.
+     */
+    List<Batch> sqlToReplay(long from) {
+        List<Batch> replay = new ArrayList<>();
+        Map<Long, List<Long>> openSql = new LinkedHashMap<>();
+        List<Long> staged = new ArrayList<>();
+        long size = size();
+        if (size < Format.LOG_HEADER_SIZE) {
+            throw new NexException("transaction log is corrupt");
+        }
+        long at = Format.LOG_HEADER_SIZE;
+        while (at + 4 <= size) {
+            int recordLength = readInt(at);
+            if (recordLength < 20 || at + recordLength > size) {
+                break;
+            }
+            byte[] record = Format.readFully(channel, at, recordLength);
+            int stored = ByteBuffer.wrap(record, recordLength - 4, 4).order(Format.ORDER).getInt();
+            int expected = Format.crc(record, 4, recordLength - 8);
+            if (stored != expected) {
+                if (at + recordLength < size) {
+                    throw new NexException("transaction log is corrupt");
+                }
+                break;
+            }
+            int type = ByteBuffer.wrap(record, 4, 4).order(Format.ORDER).getInt();
+            long lsn = ByteBuffer.wrap(record, 8, 8).order(Format.ORDER).getLong();
+            if (lsn != at) {
+                throw new NexException("transaction log is corrupt");
+            }
+            if (!Format.knownLogRecord(type)) {
+                throw new NexException("transaction log is corrupt");
+            }
+            if (type == Format.RECORD_TXN_SQL && at >= from) {
+                long id = txnSqlId(readable(record));
+                openSql.computeIfAbsent(id, key -> new ArrayList<>()).add(at);
+            } else if (type == Format.RECORD_COMMIT && at >= from) {
+                long id = readTxnId(readable(record));
+                List<Long> mine = openSql.remove(id);
+                if (mine != null) {
+                    staged.addAll(mine);
+                }
+            } else if (type == Format.RECORD_ROLLBACK && at >= from) {
+                long id = readTxnId(readable(record));
+                openSql.remove(id);
+            } else if (type == Format.RECORD_REDO && at >= from) {
+                staged.clear();
+            }
+            at += recordLength;
+        }
+        for (long start : staged) {
+            int recordLength = readInt(start);
+            byte[] record = Format.readFully(channel, start, recordLength);
+            replay.add(new Batch(start + recordLength, decodeTxnSql(readable(record))));
+        }
+        return replay;
     }
 
     /**
@@ -441,7 +729,7 @@ final class TransactionLog implements AutoCloseable {
                 byte[] plain = readable(record);
                 redo.accept(fileSizeOf(plain), spansOf(plain));
                 applied = true;
-            } else if (type != Format.RECORD_REDO && type != Format.RECORD_CHECKPOINT && type != Format.RECORD_TRANSACTION) {
+            } else if (!Format.knownLogRecord(type)) {
                 throw new NexException("transaction log is corrupt");
             }
             at += recordLength;
@@ -505,6 +793,8 @@ final class TransactionLog implements AutoCloseable {
     }
 
     private static final int MAX_PLAIN = 256 * 1024 * 1024;
+    /** One log record stays under this so a bulk commit does not build a single byte array. */
+    private static final int CHUNK = 32 * 1024 * 1024;
 
     /** Compresses the record body and scrambles the bytes so the file does not expose the text. */
     private static byte[] pack(byte[] payload) {
@@ -537,6 +827,9 @@ final class TransactionLog implements AutoCloseable {
         int rawLength = ByteBuffer.wrap(copy, 0, 4).order(Format.ORDER).getInt();
         if (rawLength < 0 || rawLength > MAX_PLAIN) {
             throw new NexException("transaction log is corrupt");
+        }
+        if (rawLength == 0) {
+            return new byte[0];
         }
         try {
             byte[] plain = inflate(Arrays.copyOfRange(copy, 4, copy.length), rawLength);
@@ -839,6 +1132,205 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
+    /** One row as it was before the transaction changed it. */
+    static final class RowImage {
+        final long id;
+        final Object[] values;
+
+        RowImage(long id, Object[] values) {
+            this.id = id;
+            this.values = values == null ? new Object[0] : values;
+        }
+    }
+
+    /** Net undo of one table: inserted ids disappear, and the other rows return to these values. */
+    static final class TableUndo {
+        final String schema;
+        final String table;
+        final long[] inserted;
+        final List<RowImage> updated;
+        final List<RowImage> deleted;
+
+        TableUndo(String schema, String table, long[] inserted, List<RowImage> updated, List<RowImage> deleted) {
+            this.schema = schema;
+            this.table = table;
+            this.inserted = inserted == null ? new long[0] : inserted;
+            this.updated = updated == null ? List.of() : updated;
+            this.deleted = deleted == null ? List.of() : deleted;
+        }
+
+        boolean empty() {
+            return inserted.length == 0 && updated.isEmpty() && deleted.isEmpty();
+        }
+    }
+
+    /** Undo image of one transaction, including tables it created. */
+    static final class TxnUndo {
+        final long id;
+        final List<String[]> created;
+        final List<TableUndo> tables;
+
+        TxnUndo(long id, List<String[]> created, List<TableUndo> tables) {
+            this.id = id;
+            this.created = created == null ? List.of() : created;
+            this.tables = tables == null ? List.of() : tables;
+        }
+
+        boolean empty() {
+            if (!created.isEmpty()) {
+                return false;
+            }
+            for (TableUndo table : tables) {
+                if (!table.empty()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static byte[] encodeActive(List<TxnUndo> active) {
+        ByteWriter payload = new ByteWriter();
+        payload.u32(active.size());
+        for (TxnUndo undo : active) {
+            writeUndo(payload, undo);
+        }
+        return payload.toArray();
+    }
+
+    private static byte[] encodeUndo(TxnUndo undo) {
+        ByteWriter payload = new ByteWriter();
+        writeUndo(payload, undo);
+        return payload.toArray();
+    }
+
+    private static void writeUndo(ByteWriter payload, TxnUndo undo) {
+        payload.u64(undo.id);
+        payload.u32(undo.created.size());
+        for (String[] created : undo.created) {
+            payload.utf(created[0]);
+            payload.utf(created[1]);
+        }
+        payload.u32(undo.tables.size());
+        for (TableUndo table : undo.tables) {
+            payload.utf(table.schema);
+            payload.utf(table.table);
+            payload.u32(table.inserted.length);
+            for (long id : table.inserted) {
+                payload.u64(id);
+            }
+            writeRows(payload, table.updated);
+            writeRows(payload, table.deleted);
+        }
+    }
+
+    private static void writeRows(ByteWriter payload, List<RowImage> rows) {
+        payload.u32(rows.size());
+        for (RowImage row : rows) {
+            payload.u64(row.id);
+            payload.u32(row.values.length);
+            for (Object value : row.values) {
+                writeParam(payload, value);
+            }
+        }
+    }
+
+    private static List<TxnUndo> decodeActive(byte[] record) {
+        ByteBuffer buffer = payload(record);
+        if (buffer.remaining() == 0) {
+            return List.of();
+        }
+        int count = readInt(buffer);
+        if (count < 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        List<TxnUndo> undos = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            undos.add(readUndo(buffer));
+        }
+        if (buffer.remaining() != 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        return undos;
+    }
+
+    private static TxnUndo decodeUndo(byte[] record) {
+        ByteBuffer buffer = payload(record);
+        TxnUndo undo = readUndo(buffer);
+        if (buffer.remaining() != 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        return undo;
+    }
+
+    private static long readTxnId(byte[] record) {
+        ByteBuffer buffer = payload(record);
+        long id = readLong(buffer);
+        if (buffer.remaining() != 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        return id;
+    }
+
+    private static ByteBuffer payload(byte[] record) {
+        if (record.length < 20) {
+            throw new NexException("transaction log is corrupt");
+        }
+        return ByteBuffer.wrap(record, 16, record.length - 20).order(Format.ORDER);
+    }
+
+    private static TxnUndo readUndo(ByteBuffer buffer) {
+        long id = readLong(buffer);
+        int createdCount = readInt(buffer);
+        if (createdCount < 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        List<String[]> created = new ArrayList<>(createdCount);
+        for (int i = 0; i < createdCount; i++) {
+            created.add(new String[]{readUtf(buffer), readUtf(buffer)});
+        }
+        int tableCount = readInt(buffer);
+        if (tableCount < 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        List<TableUndo> tables = new ArrayList<>(tableCount);
+        for (int i = 0; i < tableCount; i++) {
+            String schema = readUtf(buffer);
+            String table = readUtf(buffer);
+            int insertedCount = readInt(buffer);
+            if (insertedCount < 0) {
+                throw new NexException("transaction log is corrupt");
+            }
+            long[] inserted = new long[insertedCount];
+            for (int n = 0; n < insertedCount; n++) {
+                inserted[n] = readLong(buffer);
+            }
+            tables.add(new TableUndo(schema, table, inserted, readRows(buffer), readRows(buffer)));
+        }
+        return new TxnUndo(id, created, tables);
+    }
+
+    private static List<RowImage> readRows(ByteBuffer buffer) {
+        int count = readInt(buffer);
+        if (count < 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        List<RowImage> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            long id = readLong(buffer);
+            int columns = readInt(buffer);
+            if (columns < 0) {
+                throw new NexException("transaction log is corrupt");
+            }
+            Object[] values = new Object[columns];
+            for (int c = 0; c < columns; c++) {
+                values[c] = readParam(buffer);
+            }
+            rows.add(new RowImage(id, values));
+        }
+        return rows;
+    }
+
     /** A committed SQL statement, with the session schema and the parameters. */
     static final class Applied {
         final String schema;
@@ -929,8 +1421,30 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
+    private static long txnSqlId(byte[] logical) {
+        return readLong(payload(logical));
+    }
+
+    private static List<Applied> decodeTxnSql(byte[] logical) {
+        ByteBuffer buffer = payload(logical);
+        readLong(buffer);
+        List<Applied> statements = readApplied(buffer);
+        if (buffer.remaining() != 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        return statements;
+    }
+
     private static List<Applied> decodeTransaction(byte[] record) {
         ByteBuffer buffer = ByteBuffer.wrap(record, 16, record.length - 20).order(Format.ORDER);
+        List<Applied> statements = readApplied(buffer);
+        if (buffer.remaining() != 0) {
+            throw new NexException("transaction log is corrupt");
+        }
+        return statements;
+    }
+
+    private static List<Applied> readApplied(ByteBuffer buffer) {
         if (buffer.remaining() < 4) {
             throw new NexException("transaction log is corrupt");
         }
@@ -954,9 +1468,6 @@ final class TransactionLog implements AutoCloseable {
                 values[p] = readParam(buffer);
             }
             statements.add(new Applied(schema, sql, values));
-        }
-        if (buffer.remaining() != 0) {
-            throw new NexException("transaction log is corrupt");
         }
         return statements;
     }
