@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -223,6 +224,75 @@ class CheckpointRecoveryTest {
             assertThrows(NexException.class, () -> deNovo.execute("INSERT INTO item VALUES (4, 'ana')"));
             deNovo.execute("INSERT INTO item VALUES (4, 'bia')");
             assertEquals(1, deNovo.query("SELECT id FROM item WHERE nome = 'bia'").size());
+        }
+    }
+
+    @Test
+    void commitGravaPaginasECheckpointAntesDeFechar() throws Exception {
+        Path file = database();
+        Database db = open(file);
+        try {
+            db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY, foto BLOB)");
+            long afterCreate = Files.size(file);
+            byte[] photo = new byte[100_000];
+            photo[0] = 7;
+            photo[photo.length - 1] = 9;
+            db.execute("BEGIN");
+            db.execute("INSERT INTO item VALUES (1, ?)", photo);
+            db.execute("COMMIT");
+            assertEquals(db.logLength(), db.checkpointLsn());
+            assertTrue(Files.size(file) > afterCreate);
+            db.crash();
+        } finally {
+            db.close();
+        }
+        try (Database again = open(file)) {
+            byte[] stored = again.query("SELECT foto FROM item WHERE id = 1").rows().get(0).getBytes("foto");
+            assertArrayEquals(new byte[]{7}, new byte[]{stored[0]});
+            assertEquals(9, stored[stored.length - 1] & 0xFF);
+            assertEquals(100_000, stored.length);
+        }
+    }
+
+    @Test
+    void commitSemFecharNaoRecriaTabela() {
+        Path file = database();
+        Database db = open(file);
+        try {
+            db.execute("BEGIN");
+            db.execute("CREATE TABLE negociacao_contas (id INTEGER PRIMARY KEY)");
+            db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY)");
+            db.execute("COMMIT");
+            db.crash();
+        } finally {
+            db.close();
+        }
+        try (Database again = open(file)) {
+            again.execute("INSERT INTO negociacao_contas VALUES (1)");
+            again.execute("INSERT INTO item VALUES (1)");
+            assertEquals(1L, count(again, "negociacao_contas"));
+            assertEquals(1L, count(again, "item"));
+        }
+    }
+
+    @Test
+    void insertAntesDeCriarTabelaSobreviveAoCommitSemFechar() {
+        Path file = database();
+        Database db = open(file);
+        try {
+            db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY, nome VARCHAR(40))");
+            db.execute("BEGIN");
+            db.execute("INSERT INTO item VALUES (1, 'ana')");
+            db.execute("CREATE TABLE negociacao_contas (id INTEGER PRIMARY KEY)");
+            db.execute("COMMIT");
+            db.crash();
+        } finally {
+            db.close();
+        }
+        try (Database again = open(file)) {
+            assertEquals("ana", again.query("SELECT nome FROM item WHERE id = 1").rows().get(0).getString("nome"));
+            again.execute("INSERT INTO negociacao_contas VALUES (1)");
+            assertEquals(1L, count(again, "negociacao_contas"));
         }
     }
 

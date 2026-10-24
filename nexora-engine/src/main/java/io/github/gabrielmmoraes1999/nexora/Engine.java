@@ -906,12 +906,20 @@ final class Engine implements AutoCloseable {
                     .withForeignKey(foreign);
         }
         ensureIndexesFree(rel.schema(), schema);
+        // Earlier statements of this transaction are already in the log. Their pages
+        // have to be stored before the catalog checkpoint moves past that SQL.
+        if (currentTxn() != null && !suppressCapture && !storage.leaveForRecovery()) {
+            checkpoint(true);
+        }
         createStored(schema, rel.schema());
         OpenTxn txn = currentTxn();
         if (txn != null) {
             txn.created.put(require(statement.name()), Boolean.TRUE);
         }
         recordOwner(Relation.catalogName(rel.schema(), schema.name));
+        // The owner row is written after the catalog. Store it now so a commit
+        // survives the process ending without closing the connection.
+        flushMatching(table -> Names.same(table.schema().name, SystemTables.PRIVILEGES));
     }
 
     private void drop(DropTable statement) {
@@ -4347,6 +4355,9 @@ final class Engine implements AutoCloseable {
     }
 
     private void createStored(Schema schema, String namespace) {
+        // pending already holds this CREATE. It has to be in the log before the
+        // catalog checkpoint, or the next open replays a table these pages already have.
+        spillPending(transactionSession != null ? transactionSession : actor);
         storage.ensureScrubbed();
         storage.beginCommit();
         try {
@@ -6714,6 +6725,7 @@ final class Engine implements AutoCloseable {
                 park(session);
             }
             applyUndo(txn.hardenedImage);
+            undoCatalogBeyond(txn, txn.hardenedImage);
             refreshActiveUndo();
             rollbackMarker = txn.id;
             try {
@@ -6965,7 +6977,16 @@ final class Engine implements AutoCloseable {
                         continue;
                     }
                     replay.schema(statement.schema);
-                    execute(replay, statement.sql, statement.params);
+                    try {
+                        execute(replay, statement.sql, statement.params);
+                    } catch (NexException exception) {
+                        // A commit that did not close still checkpointed the CREATE.
+                        // The statement text sits after that checkpoint and would
+                        // create the table a second time.
+                        if (!alreadyStored(exception)) {
+                            throw exception;
+                        }
+                    }
                     if (!transactions.containsKey(replay)) {
                         execute(replay, "BEGIN", new Object[0]);
                     }
@@ -6979,6 +7000,17 @@ final class Engine implements AutoCloseable {
             bypass = previousBypass;
             suppressCapture = previousSuppress;
         }
+    }
+
+    private static boolean alreadyStored(NexException exception) {
+        String message = exception.getMessage();
+        if (message == null) {
+            return false;
+        }
+        return message.startsWith("table already exists:")
+                || message.startsWith("index already exists:")
+                || message.startsWith("constraint already exists:")
+                || message.startsWith("view already exists:");
     }
 
     private void flushCommitted() {
@@ -7322,11 +7354,21 @@ final class Engine implements AutoCloseable {
             if (!suppressCapture && !storage.leaveForRecovery()) {
                 spillPending(owner);
                 storage.logCommit(txn.id);
+                commitMarker = null;
+                for (TableStore table : txn.dropped.values()) {
+                    discardTable(table);
+                }
+                // The commit record is already durable. Writing the pages and a
+                // checkpoint puts those rows in the database file before close.
+                flush();
+                if (storage.logLength() > storage.checkpointLsn()) {
+                    storage.writeCheckpoint();
+                }
             } else {
                 pending.clear();
-            }
-            for (TableStore table : txn.dropped.values()) {
-                discardTable(table);
+                for (TableStore table : txn.dropped.values()) {
+                    discardTable(table);
+                }
             }
         } catch (RuntimeException exception) {
             transactions.clear();
@@ -7359,14 +7401,33 @@ final class Engine implements AutoCloseable {
     }
 
     private void undoCatalog(OpenTxn txn) {
+        undoCatalogBeyond(txn, null);
+    }
+
+    /** Drops tables created after {@code covered}, and puts back tables dropped after it. */
+    private void undoCatalogBeyond(OpenTxn txn, TransactionLog.TxnUndo covered) {
         for (Map.Entry<String, TableStore> entry : txn.dropped.entrySet()) {
-            if (!txn.created.containsKey(entry.getValue())) {
+            if (!txn.created.containsKey(entry.getValue()) && !tables.containsKey(entry.getKey())) {
                 tables.put(entry.getKey(), entry.getValue());
             }
         }
         for (TableStore table : List.copyOf(txn.created.keySet())) {
-            discardTable(table);
+            if (covered != null && catalogCovers(covered, table)) {
+                continue;
+            }
+            if (tables.containsKey(Relation.key(table.namespace(), table.schema().name))) {
+                discardTable(table);
+            }
         }
+    }
+
+    private static boolean catalogCovers(TransactionLog.TxnUndo undo, TableStore table) {
+        for (String[] created : undo.created) {
+            if (Names.same(created[0], table.namespace()) && Names.same(created[1], table.schema().name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void discardTable(TableStore table) {
