@@ -27,7 +27,7 @@ final class TableStore implements AutoCloseable {
     private long capacity;
     private Schema schema;
     private String namespace = Relation.PUBLIC;
-    private TreeMap<Long, StoredRow> rows = new TreeMap<>();
+    private RowMap rows = new RowMap();
     private List<Extent> freeExtents = new ArrayList<>();
     private List<Extent> pendingFree = new ArrayList<>();
     private long fileSize;
@@ -42,6 +42,24 @@ final class TableStore implements AutoCloseable {
      * The next change copies the map before modifying it.
      */
     private boolean shared;
+    private long[] insertedIds = new long[16];
+    private int insertedCount;
+    private int structureEpoch;
+    private RowMap encodingRows;
+    private RowMap encodingLive;
+    private TreeMap<Long, StoredRow> encodingFlat;
+    private List<IndexTree.DiskIndex> encodingIndexes;
+    private List<Extent> encodingFree;
+    private List<Extent> encodingPending;
+    private long encodingFileSize;
+    private long encodingMetaOffset;
+    private int encodingMetaLength;
+    private long encodingGeneration;
+    private int encodingActiveSlot;
+    private long encodingNextRowId;
+    private boolean encoding;
+    private Plan preparedPlan;
+    private boolean encodeMerged;
     /**
      * Savepoint that still points at the live map. Ids inserted in it
      * are undone if that savepoint is restored.
@@ -80,6 +98,18 @@ final class TableStore implements AutoCloseable {
         return fileSize;
     }
 
+    /** Bytes still occupied by rows, indexes, and metadata. Free holes are not counted. */
+    long occupiedBytes() {
+        long free = 0;
+        for (Extent extent : freeExtents) {
+            free += extent.length;
+        }
+        for (Extent extent : pendingFree) {
+            free += extent.length;
+        }
+        return free >= fileSize ? 0 : fileSize - free;
+    }
+
     long nextRowId() {
         return nextRowId;
     }
@@ -109,6 +139,10 @@ final class TableStore implements AutoCloseable {
         return new ArrayList<>(rows.values());
     }
 
+    RowMap rowMap() {
+        return rows;
+    }
+
     /** Column values of a row, including bytes that still live in the table region. */
     Object[] copyValues(Schema shape, StoredRow row) {
         Object[] values = new Object[shape.columns.size()];
@@ -136,6 +170,7 @@ final class TableStore implements AutoCloseable {
         unshare();
         StoredRow row = new StoredRow(id, cells, -1, 0, true);
         rows.put(id, row);
+        noteInsert(id);
         if (id >= nextRowId) {
             nextRowId = id + 1;
         }
@@ -376,6 +411,7 @@ final class TableStore implements AutoCloseable {
             StoredRow row = new StoredRow(id, cells, -1, 0, true);
             unshare();
             rows.put(id, row);
+            noteInsert(id);
             if (undo != null && undo.rows == rows) {
                 undo.inserted.add(id);
             }
@@ -390,9 +426,10 @@ final class TableStore implements AutoCloseable {
         if (replacements.isEmpty()) {
             return;
         }
+        noteStructure();
         unshare();
         Schema nextSchema = schema;
-        TreeMap<Long, StoredRow> next = new TreeMap<>(rows);
+        TreeMap<Long, StoredRow> next = rows.tree();
         List<Extent> freed = new ArrayList<>();
         List<Extent> extra = new ArrayList<>();
         for (Map.Entry<Long, Cell[]> entry : replacements.entrySet()) {
@@ -420,7 +457,7 @@ final class TableStore implements AutoCloseable {
             next.put(current.id, replacement);
         }
         schema = nextSchema;
-        rows = next;
+        rows = RowMap.adopt(next);
         pendingFree.addAll(freed);
         pendingFree.addAll(extra);
         dirty = true;
@@ -430,8 +467,9 @@ final class TableStore implements AutoCloseable {
         if (ids.isEmpty()) {
             return 0;
         }
+        noteStructure();
         unshare();
-        TreeMap<Long, StoredRow> next = new TreeMap<>(rows);
+        TreeMap<Long, StoredRow> next = rows.tree();
         List<Extent> freed = new ArrayList<>();
         List<Extent> extra = new ArrayList<>();
         int count = 0;
@@ -444,7 +482,7 @@ final class TableStore implements AutoCloseable {
             freed.addAll(freedExtents(current, null));
             count++;
         }
-        rows = next;
+        rows = RowMap.adopt(next);
         pendingFree.addAll(freed);
         pendingFree.addAll(extra);
         dirty = true;
@@ -452,6 +490,7 @@ final class TableStore implements AutoCloseable {
     }
 
     void addColumn(Column column, boolean primary, String uniqueName) {
+        noteStructure();
         if (schema.indexOf(column.name) >= 0) {
             throw new NexException("column already exists: " + column.name);
         }
@@ -488,7 +527,7 @@ final class TableStore implements AutoCloseable {
         validate(nextSchema);
         indexes = indexesAfterAdd(nextSchema, next, primary);
         schema = nextSchema;
-        rows = next;
+        rows = RowMap.adopt(next);
         pendingFree.addAll(freed);
         dirty = true;
     }
@@ -528,6 +567,7 @@ final class TableStore implements AutoCloseable {
     }
 
     void moveColumn(String name, int position, Runnable beforeMove) {
+        noteStructure();
         int from = schema.indexOf(name);
         if (from < 0) {
             throw new NexException("column not found: " + name);
@@ -557,12 +597,13 @@ final class TableStore implements AutoCloseable {
         }
         indexes = adapt(schema, nextSchema, next.values());
         schema = nextSchema;
-        rows = next;
+        rows = RowMap.adopt(next);
         pendingFree.addAll(freed);
         dirty = true;
     }
 
     void dropColumn(String name) {
+        noteStructure();
         int index = schema.indexOf(name);
         if (index < 0) {
             throw new NexException("column not found: " + name);
@@ -586,7 +627,7 @@ final class TableStore implements AutoCloseable {
         validate(nextSchema);
         indexes = adapt(schema, nextSchema, next.values());
         schema = nextSchema;
-        rows = next;
+        rows = RowMap.adopt(next);
         pendingFree.addAll(freed);
         dirty = true;
     }
@@ -658,15 +699,36 @@ final class TableStore implements AutoCloseable {
     }
 
     void fork() {
-        rows = new TreeMap<>(rows);
+        rows = rows.copy();
         shared = false;
+        insertedCount = 0;
+        structureEpoch = 0;
+    }
+
+    int structureEpoch() {
+        return structureEpoch;
+    }
+
+    long[] copyInsertedIds() {
+        return Arrays.copyOf(insertedIds, insertedCount);
+    }
+
+    private void noteInsert(long id) {
+        if (insertedCount == insertedIds.length) {
+            insertedIds = Arrays.copyOf(insertedIds, insertedIds.length * 2);
+        }
+        insertedIds[insertedCount++] = id;
+    }
+
+    private void noteStructure() {
+        structureEpoch++;
     }
 
     private void unshare() {
         if (!shared) {
             return;
         }
-        rows = new TreeMap<>(rows);
+        rows = rows.copy();
         shared = false;
     }
 
@@ -772,7 +834,7 @@ final class TableStore implements AutoCloseable {
         if (inserted.isEmpty() && updated.isEmpty() && deleted.isEmpty()) {
             return;
         }
-        rows = new TreeMap<>(rows);
+        rows = rows.copy();
         shared = false;
         if (!deleted.isEmpty()) {
             delete(deleted);
@@ -884,14 +946,121 @@ final class TableStore implements AutoCloseable {
         writeAt(0, FileHeader.fresh(Format.HEADER_SIZE, 1));
     }
 
+    /** Freezes the current rows so page bytes can be built while inserts continue. */
+    void beginEncode() {
+        encodingRows = rows;
+        rows = rows.sprout();
+        encodingLive = rows;
+        encodingFlat = null;
+        encodingIndexes = List.copyOf(indexes);
+        encodingFree = new ArrayList<>(freeExtents);
+        encodingPending = new ArrayList<>(pendingFree);
+        encodingFileSize = fileSize;
+        encodingMetaOffset = metaOffset;
+        encodingMetaLength = metaLength;
+        encodingGeneration = generation;
+        encodingActiveSlot = activeSlot;
+        encodingNextRowId = nextRowId;
+        encoding = true;
+        preparedPlan = null;
+        encodeMerged = false;
+    }
+
+    /** Builds the page image from the snapshot taken by {@link #beginEncode()}. */
+    void encodePrepared() {
+        encodingFlat = encodingRows.tree();
+        preparedPlan = prepare(false);
+        preparedPlan.packed = pack(preparedPlan.writes);
+        encoding = false;
+        encodingRows = null;
+    }
+
+    Plan takePrepared() {
+        Plan plan = preparedPlan;
+        preparedPlan = null;
+        return plan;
+    }
+
+    /**
+     * Installs a snapshot image. Returns false when a row changed after the snapshot;
+     * the caller then builds a fresh image from the live table.
+     */
+    boolean finishEncode(Plan plan) {
+        encodeMerged = false;
+        if (encodingLive == null || rows != encodingLive) {
+            encodingFlat = null;
+            encodingLive = null;
+            encoding = false;
+            return false;
+        }
+        boolean sameIndex = indexes.size() == encodingIndexes.size();
+        for (int i = 0; sameIndex && i < indexes.size(); i++) {
+            if (indexes.get(i) != encodingIndexes.get(i)) {
+                sameIndex = false;
+            }
+        }
+        if (encodingFlat != null) {
+            encodingFlat = null;
+        }
+        if (!rows.reparentClean(RowMap.adoptClean(plan.rows))) {
+            encodingLive = null;
+            encoding = false;
+            return false;
+        }
+        freeExtents = new ArrayList<>(plan.free);
+        pendingFree = new ArrayList<>();
+        fileSize = plan.fileSize;
+        metaOffset = plan.metaOffset;
+        metaLength = plan.metaLength;
+        generation = plan.generation;
+        activeSlot = plan.targetSlot;
+        nextRowId = Math.max(nextRowId, plan.nextRowId);
+        if (sameIndex) {
+            indexes = IndexTree.attach(schema, plan.indexRoots);
+        }
+        dirty = rows.dirtyCount() > 0;
+        encodingLive = null;
+        encodingIndexes = null;
+        encoding = false;
+        encodeMerged = true;
+        return true;
+    }
+
+    boolean consumeMerged() {
+        boolean merged = encodeMerged;
+        encodeMerged = false;
+        return merged;
+    }
+
+    void abortEncode() {
+        encodingRows = null;
+        encodingLive = null;
+        encodingFlat = null;
+        encodingIndexes = null;
+        encodingFree = null;
+        encodingPending = null;
+        encoding = false;
+        preparedPlan = null;
+        encodeMerged = false;
+    }
+
     private Plan prepare(boolean pack) {
-        Space space = pack ? new Space(List.of(), Format.HEADER_SIZE) : new Space(freeExtents, fileSize);
+        List<IndexTree.DiskIndex> sourceIndexes = encoding ? encodingIndexes : indexes;
+        List<Extent> sourceFree = encoding ? encodingFree : freeExtents;
+        List<Extent> sourcePending = encoding ? encodingPending : pendingFree;
+        long sourceFileSize = encoding ? encodingFileSize : fileSize;
+        long sourceMetaOffset = encoding ? encodingMetaOffset : metaOffset;
+        int sourceMetaLength = encoding ? encodingMetaLength : metaLength;
+        long sourceGeneration = encoding ? encodingGeneration : generation;
+        int sourceActive = encoding ? encodingActiveSlot : activeSlot;
+        long sourceNext = encoding ? encodingNextRowId : nextRowId;
+        Space space = pack ? new Space(List.of(), Format.HEADER_SIZE) : new Space(sourceFree, sourceFileSize);
         List<Write> writes = new ArrayList<>();
-        TreeMap<Long, StoredRow> committed = new TreeMap<>();
+        List<StoredRow> changed = new ArrayList<>();
+        TreeMap<Long, StoredRow> committed = encoding && encodingFlat != null ? new TreeMap<>(encodingFlat) : rows.tree();
         List<LiveSlot> lives = new ArrayList<>();
-        for (StoredRow row : rows.values()) {
+        for (StoredRow row : List.copyOf(committed.values())) {
             if (!pack && !row.dirty) {
-                committed.put(row.id, row);
                 lives.add(new LiveSlot(row.id, row.slotOffset, row.slotSize));
                 continue;
             }
@@ -922,18 +1091,19 @@ final class TableStore implements AutoCloseable {
             writes.add(new Write(slotOffset, slotBlock(row.id, payloadBytes, slotSize)));
             StoredRow stored = new StoredRow(row.id, cells, slotOffset, slotSize, false);
             committed.put(row.id, stored);
+            changed.add(stored);
             lives.add(new LiveSlot(row.id, slotOffset, slotSize));
         }
-        long[] roots = IndexTree.persist(indexes, space, writes, pages(), pack);
-        List<Extent> reusable = freeForMeta(space, pack);
-        byte[] natural = MetaCodec.encode(schema, nextRowId, 0, lives, reusable, roots);
+        long[] roots = IndexTree.persist(sourceIndexes, space, writes, pages(), pack);
+        List<Extent> reusable = freeForMeta(space, pack, sourcePending, sourceMetaOffset, sourceMetaLength);
+        byte[] natural = MetaCodec.encode(schema, sourceNext, 0, lives, reusable, roots);
         long exact = Format.align8(natural.length);
         long slack = Math.min(60000L, Math.max(256L, exact / 4));
         long wanted = Format.align8(exact + slack);
         Extent hole = smallestFit(space.remaining(), wanted);
         long reserved = hole == null ? wanted : Math.min(hole.length, wanted);
         long metaAt = space.allocate(reserved);
-        reusable = freeForMeta(space, pack);
+        reusable = freeForMeta(space, pack, sourcePending, sourceMetaOffset, sourceMetaLength);
         long finalSize = space.fileSize();
         byte[] meta = MetaCodec.encode(schema, nextRowId, finalSize, lives, reusable, roots, (int) reserved);
         if (meta.length != reserved) {
@@ -941,16 +1111,16 @@ final class TableStore implements AutoCloseable {
         }
         writes.add(new Write(metaAt, meta));
         ensureDisjoint(writes, finalSize);
-        return new Plan(writes, committed, reusable, finalSize, metaAt, meta.length,
-                generation + 1, activeSlot == 0 ? 1 : 0, schema, nextRowId, roots);
+        return new Plan(writes, committed, changed, reusable, finalSize, metaAt, meta.length,
+                sourceGeneration + 1, sourceActive == 0 ? 1 : 0, schema, sourceNext, roots);
     }
 
-    private List<Extent> freeForMeta(Space space, boolean pack) {
+    private List<Extent> freeForMeta(Space space, boolean pack, List<Extent> pending, long metaAt, int metaBytes) {
         List<Extent> reusable = new ArrayList<>(space.remaining());
         if (!pack) {
-            reusable.addAll(pendingFree);
-            if (metaLength > 0) {
-                reusable.add(new Extent(metaOffset, Format.align8(metaLength)));
+            reusable.addAll(pending);
+            if (metaBytes > 0) {
+                reusable.add(new Extent(metaAt, Format.align8(metaBytes)));
             }
             reusable = Extent.coalesce(reusable);
         }
@@ -996,10 +1166,50 @@ final class TableStore implements AutoCloseable {
     }
 
     void writePayload(Plan plan) {
-        for (Write write : plan.writes) {
+        List<Write> writes = plan.packed != null ? plan.packed : plan.writes;
+        for (Write write : writes) {
             writeAt(write.offset, write.bytes);
         }
         force();
+    }
+
+    /** Joins adjacent page images so the checkpoint lock writes a few runs, not one run per row. */
+    private static List<Write> pack(List<Write> writes) {
+        if (writes.size() < 2) {
+            return writes;
+        }
+        List<Write> ordered = new ArrayList<>(writes);
+        ordered.sort((left, right) -> Long.compare(left.offset, right.offset));
+        List<Write> packed = new ArrayList<>();
+        int index = 0;
+        while (index < ordered.size()) {
+            Write start = ordered.get(index);
+            int next = index + 1;
+            long end = start.offset + start.bytes.length;
+            long total = start.bytes.length;
+            while (next < ordered.size() && ordered.get(next).offset == end) {
+                total += ordered.get(next).bytes.length;
+                end += ordered.get(next).bytes.length;
+                next++;
+            }
+            if (next == index + 1 || total > Integer.MAX_VALUE) {
+                packed.add(start);
+                if (total > Integer.MAX_VALUE) {
+                    next = index + 1;
+                }
+            } else {
+                byte[] run = new byte[(int) total];
+                int at = 0;
+                for (int piece = index; piece < next; piece++) {
+                    byte[] bytes = ordered.get(piece).bytes;
+                    System.arraycopy(bytes, 0, run, at, bytes.length);
+                    at += bytes.length;
+                }
+                packed.add(new Write(start.offset, run));
+            }
+            index = next;
+        }
+        return packed;
     }
 
     void flip(Plan plan) {
@@ -1014,7 +1224,7 @@ final class TableStore implements AutoCloseable {
 
     void install(Plan plan) {
         schema = plan.schema;
-        rows = plan.rows;
+        rows = RowMap.adopt(plan.rows);
         freeExtents = new ArrayList<>(plan.free);
         pendingFree = new ArrayList<>();
         fileSize = plan.fileSize;
@@ -1056,7 +1266,7 @@ final class TableStore implements AutoCloseable {
         }
         freeExtents = Extent.coalesce(freeExtents);
         pendingFree = new ArrayList<>();
-        rows = new TreeMap<>();
+        rows = new RowMap();
         shared = false;
         boolean droppedConnection = false;
         for (LiveSlot slot : image.rows) {
@@ -1532,7 +1742,7 @@ final class TableStore implements AutoCloseable {
 
     static final class Snapshot {
         final Schema schema;
-        final TreeMap<Long, StoredRow> rows;
+        final RowMap rows;
         final List<IndexTree.DiskIndex> indexes;
         final List<Extent> freeExtents;
         final List<Extent> pendingFree;
@@ -1546,7 +1756,7 @@ final class TableStore implements AutoCloseable {
         final boolean shared;
         final List<Long> inserted = new ArrayList<>();
 
-        Snapshot(Schema schema, TreeMap<Long, StoredRow> rows, List<IndexTree.DiskIndex> indexes, List<Extent> freeExtents,
+        Snapshot(Schema schema, RowMap rows, List<IndexTree.DiskIndex> indexes, List<Extent> freeExtents,
                  List<Extent> pendingFree, long fileSize, long nextRowId, long metaOffset, int metaLength, long generation,
                  int activeSlot, boolean dirty, boolean shared) {
             this.schema = schema;
@@ -1578,6 +1788,7 @@ final class TableStore implements AutoCloseable {
     static final class Plan {
         final List<Write> writes;
         final TreeMap<Long, StoredRow> rows;
+        final List<StoredRow> changed;
         final List<Extent> free;
         final long fileSize;
         final long metaOffset;
@@ -1587,11 +1798,14 @@ final class TableStore implements AutoCloseable {
         final Schema schema;
         final long nextRowId;
         final long[] indexRoots;
+        List<Write> packed;
 
-        Plan(List<Write> writes, TreeMap<Long, StoredRow> rows, List<Extent> free, long fileSize, long metaOffset,
-             int metaLength, long generation, int targetSlot, Schema schema, long nextRowId, long[] indexRoots) {
+        Plan(List<Write> writes, TreeMap<Long, StoredRow> rows, List<StoredRow> changed, List<Extent> free, long fileSize,
+             long metaOffset, int metaLength, long generation, int targetSlot, Schema schema, long nextRowId,
+             long[] indexRoots) {
             this.writes = writes;
             this.rows = rows;
+            this.changed = changed;
             this.free = free;
             this.fileSize = fileSize;
             this.metaOffset = metaOffset;

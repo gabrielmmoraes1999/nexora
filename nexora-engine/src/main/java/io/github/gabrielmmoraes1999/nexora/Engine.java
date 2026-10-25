@@ -68,6 +68,9 @@ final class Engine implements AutoCloseable {
     private CheckpointPolicy policy = CheckpointPolicy.defaults();
     private volatile boolean stopping;
     private Thread checkpointThread;
+    private Thread pageSync;
+    private volatile boolean forcing;
+    private boolean snapshotLsn;
     private boolean checkpointRunning;
     private long lastCheckpointNanos = System.nanoTime();
     private Long commitMarker;
@@ -551,6 +554,7 @@ final class Engine implements AutoCloseable {
         if (checkpointThread != null) {
             checkpointThread.interrupt();
         }
+        awaitPageForce();
         try {
             try {
                 discardAll();
@@ -568,6 +572,7 @@ final class Engine implements AutoCloseable {
                 table.close();
             }
             tables.clear();
+            storage.dropDeferredCheckpoint();
             storage.close();
         }
     }
@@ -3802,6 +3807,9 @@ final class Engine implements AutoCloseable {
         Map<TableStore, TableStore.Plan> plans = new HashMap<>();
         Set<TableStore> relocated = new HashSet<>();
         DatabaseFile.Allocator draft = storage.draft();
+        // The catalog sits at the end of the file. Releasing it first lets a
+        // growing table extend in place instead of copying every page.
+        draft.free(storage.catalogOffset(), storage.catalogSpan());
         List<DatabaseFile.StoredTable> entries = new ArrayList<>();
         boolean published = false;
         boolean reclaimed = false;
@@ -3814,7 +3822,19 @@ final class Engine implements AutoCloseable {
                     continue;
                 }
                 boolean shrink = shouldShrink(table);
-                TableStore.Plan plan = shrink ? table.preparePacked() : table.prepare();
+                long storedSize = table.logicalSize();
+                TableStore.Plan prepared = shrink ? null : table.takePrepared();
+                boolean merged = prepared != null && table.finishEncode(prepared);
+                if (prepared != null && !merged) {
+                    snapshotLsn = false;
+                }
+                // Rebuilding the table here holds the insert. An open transaction
+                // leaves the rows dirty and tries again; commit still writes them.
+                TableStore.Plan plan = merged ? prepared : (pagesOnly ? null : (shrink ? table.preparePacked() : table.prepare()));
+                if (plan == null) {
+                    entries.add(stored(table, null));
+                    continue;
+                }
                 long wanted = DatabaseFile.capacityFor(plan.fileSize, storage.pageSize());
                 if (shrink && wanted >= table.capacity()) {
                     shrink = false;
@@ -3842,7 +3862,7 @@ final class Engine implements AutoCloseable {
                     long previousBase = table.base();
                     long previousCapacity = table.capacity();
                     if (grow) {
-                        storage.copy(previousBase, base, table.logicalSize());
+                        storage.copy(previousBase, base, storedSize);
                     }
                     storage.retire(previousBase, previousCapacity);
                     draft.free(previousBase, previousCapacity);
@@ -3862,16 +3882,20 @@ final class Engine implements AutoCloseable {
                             plan.generation, plan.metaOffset, plan.metaLength, plan.targetSlot)));
                 }
             }
-            draft.free(storage.catalogOffset(), storage.catalogSpan());
             storage.publish(entries, draft);
             storage.scrubPending();
             for (TableStore table : dirty) {
                 TableStore.Plan plan = plans.get(table);
+                if (plan == null) {
+                    continue;
+                }
                 if (!relocated.contains(table)) {
                     table.flip(plan);
                 }
                 table.scrub(plan);
-                table.install(plan);
+                if (!table.consumeMerged()) {
+                    table.install(plan);
+                }
             }
             DatabaseFile.Allocator clean = storage.draft();
             clean.free(storage.catalogOffset(), storage.catalogSpan());
@@ -3931,6 +3955,11 @@ final class Engine implements AutoCloseable {
     }
 
     private boolean shouldShrink(TableStore table) {
+        // A rewrite is smaller than half the file only when free space is most of it.
+        // That check uses the free list, so a checkpoint does not copy every row.
+        if (table.occupiedBytes() * 2 >= table.logicalSize()) {
+            return false;
+        }
         long wanted = DatabaseFile.capacityFor(table.packedBytes(), storage.pageSize());
         // An exact half remains: the next insert fills that page and packing would return the same split.
         return wanted < table.capacity() && wanted * 2 < table.capacity();
@@ -6724,6 +6753,7 @@ final class Engine implements AutoCloseable {
             if (installed == session) {
                 park(session);
             }
+            awaitPageForce();
             applyUndo(txn.hardenedImage);
             undoCatalogBeyond(txn, txn.hardenedImage);
             refreshActiveUndo();
@@ -6739,6 +6769,7 @@ final class Engine implements AutoCloseable {
         restoreTxnMemory(session, txn);
         undoCatalog(txn);
         if (!suppressCapture && !storage.leaveForRecovery()) {
+            awaitPageForce();
             storage.logRollback(txn.id);
         }
         clearTxnFlags(session);
@@ -6790,7 +6821,9 @@ final class Engine implements AutoCloseable {
         if (checkpointThread != null) {
             checkpointThread.interrupt();
         }
+        awaitPageForce();
         closed = true;
+        storage.dropDeferredCheckpoint();
         storage.abandon();
     }
 
@@ -6837,9 +6870,169 @@ final class Engine implements AutoCloseable {
         if (checkpointRunning || closed || stopping || storage.leaveForRecovery() || !policyDue()) {
             return;
         }
-        // Pages of an open transaction are written here, between statements. Commit
-        // only appends its record. Rollback uses the undo stored by this checkpoint.
+        // Pages of an open transaction are written between statements. The file sync
+        // runs on another thread so the insert does not wait for it. Commit still
+        // syncs whatever that thread has not published yet.
+        if (!transactions.isEmpty()) {
+            requestPageSync();
+            return;
+        }
         checkpoint(true);
+    }
+
+    private void requestPageSync() {
+        Thread running = pageSync;
+        if (running != null && running.isAlive() && running != Thread.currentThread()) {
+            return;
+        }
+        Thread worker = new Thread(this::runPageSync, "nexora-sync");
+        worker.setDaemon(true);
+        pageSync = worker;
+        worker.start();
+    }
+
+    private void runPageSync() {
+        List<TableStore> frozen = List.of();
+        List<TransactionLog.TxnUndo> frozenUndo = List.of();
+        long mark = -1;
+        synchronized (this) {
+            if (closed || stopping || transactions.isEmpty() || !policyDue()) {
+                return;
+            }
+            mark = storage.logLength();
+            frozen = freezeDirty();
+            if (!frozen.isEmpty()) {
+                frozenUndo = snapshotFrozenUndo();
+            }
+        }
+        boolean encoded = true;
+        for (TableStore table : frozen) {
+            try {
+                table.encodePrepared();
+            } catch (RuntimeException exception) {
+                table.abortEncode();
+                encoded = false;
+            }
+        }
+        List<byte[]> packedUndos = null;
+        byte[] packedCheckpoint = null;
+        if (encoded && frozenUndo != null && !frozenUndo.isEmpty()) {
+            packedUndos = new ArrayList<>();
+            for (TransactionLog.TxnUndo undo : frozenUndo) {
+                packedUndos.add(storage.packUndo(undo));
+            }
+            packedCheckpoint = storage.packActive(frozenUndo);
+        }
+        boolean sync = false;
+        synchronized (this) {
+            try {
+                if (!closed && !stopping && !transactions.isEmpty()) {
+                    snapshotLsn = encoded && !frozen.isEmpty();
+                    if (packedUndos != null) {
+                        storage.armPackedCheckpoint(packedUndos, packedCheckpoint);
+                    }
+                    storage.beginDeferredSync();
+                    try {
+                        checkpoint(true);
+                    } finally {
+                        storage.endDeferredSync();
+                        storage.disarmPackedCheckpoint();
+                    }
+                    if (snapshotLsn) {
+                        storage.limitDeferredCheckpoint(mark);
+                    }
+                }
+            } catch (RuntimeException exception) {
+                storage.dropDeferredCheckpoint();
+            } finally {
+                for (TableStore table : frozen) {
+                    table.abortEncode();
+                }
+            }
+            if (storage.deferredCheckpointLsn() >= 0 || storage.hasDeferredIo()) {
+                forcing = true;
+                sync = true;
+            }
+        }
+        if (!sync) {
+            return;
+        }
+        try {
+            storage.forceLog();
+            storage.flushDeferredIo();
+            if (storage.deferredCheckpointLsn() >= 0) {
+                storage.forceDurable();
+                if (storage.publishDeferredCheckpoint()) {
+                    storage.forceDurable();
+                }
+            }
+        } catch (RuntimeException exception) {
+            storage.dropDeferredCheckpoint();
+        } finally {
+            forcing = false;
+        }
+        synchronized (this) {
+            if (!closed && !stopping && !transactions.isEmpty() && policyDue()) {
+                requestPageSync();
+            }
+        }
+    }
+
+    private List<TableStore> freezeDirty() {
+        List<TableStore> frozen = new ArrayList<>();
+        for (Session session : new ArrayList<>(transactions.keySet())) {
+            activate(session);
+            OpenTxn txn = transactions.get(session);
+            if (txn != null) {
+                for (TableStore table : txn.tables.keySet()) {
+                    if (table.isDirty() && !frozen.contains(table)) {
+                        table.beginEncode();
+                        frozen.add(table);
+                    }
+                }
+            }
+            park(session);
+        }
+        return frozen;
+    }
+
+    /**
+     * Insert-only undo as of the frozen pages. Compressed after this lock is
+     * released. A structure change returns null so the checkpoint encodes live.
+     */
+    private List<TransactionLog.TxnUndo> snapshotFrozenUndo() {
+        List<TransactionLog.TxnUndo> images = new ArrayList<>();
+        for (OpenTxn txn : transactions.values()) {
+            if (!txn.created.isEmpty() || !txn.dropped.isEmpty()) {
+                return null;
+            }
+            List<TransactionLog.TableUndo> tables = new ArrayList<>();
+            for (TableStore table : txn.tables.keySet()) {
+                if (table.structureEpoch() != 0) {
+                    return null;
+                }
+                long[] ids = table.copyInsertedIds();
+                if (ids.length == 0) {
+                    continue;
+                }
+                tables.add(new TransactionLog.TableUndo(table.namespace(), table.schema().name, ids, List.of(), List.of()));
+            }
+            if (!tables.isEmpty()) {
+                images.add(new TransactionLog.TxnUndo(txn.id, List.of(), tables));
+            }
+        }
+        return images;
+    }
+
+    private void awaitPageForce() {
+        while (forcing) {
+            try {
+                Thread.sleep(2);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     private boolean policyDue() {
@@ -6916,6 +7109,8 @@ final class Engine implements AutoCloseable {
                     txn.hardenedImage = writing.get(i);
                     park(session);
                 }
+            } else {
+                storage.disarmPackedCheckpoint();
             }
             refreshActiveUndo();
             boolean catalogOpen = openCatalogChange();
@@ -7127,10 +7322,10 @@ final class Engine implements AutoCloseable {
             return null;
         }
         Schema afterSchema;
-        Collection<StoredRow> afterRows;
+        RowMap afterRows;
         if (installed == session) {
             afterSchema = table.schema();
-            afterRows = table.scan();
+            afterRows = table.rowMap();
         } else {
             TableStore.Snapshot after = txn.workspace.get(table);
             if (after == null) {
@@ -7140,25 +7335,31 @@ final class Engine implements AutoCloseable {
                 return null;
             }
             afterSchema = after.schema;
-            afterRows = after.rows.values();
+            afterRows = after.rows;
         }
         if (!sameColumns(before.schema, afterSchema)) {
             throw new NexException("checkpoint cannot store a structure change of " + table.schema().name);
         }
+        if (table.structureEpoch() == 0) {
+            long[] ids = table.copyInsertedIds();
+            if (ids.length == 0) {
+                return null;
+            }
+            return new TransactionLog.TableUndo(table.namespace(), table.schema().name, ids, List.of(), List.of());
+        }
         TransactionLog.TableUndo previous = previousUndo(txn, table);
-        List<Long> inserted = new ArrayList<>();
+        long[] inserted = new long[afterRows.size()];
+        int[] used = new int[1];
         List<TransactionLog.RowImage> updated = new ArrayList<>();
         List<TransactionLog.RowImage> deleted = new ArrayList<>();
-        Set<Long> seen = new HashSet<>();
-        for (StoredRow row : afterRows) {
-            seen.add(row.id);
+        afterRows.forEach(row -> {
             StoredRow original = before.rows.get(row.id);
             if (original == null) {
-                inserted.add(row.id);
-                continue;
+                inserted[used[0]++] = row.id;
+                return;
             }
             if (original == row) {
-                continue;
+                return;
             }
             Object[] oldValues = previousValues(previous, row.id);
             if (oldValues == null) {
@@ -7168,24 +7369,21 @@ final class Engine implements AutoCloseable {
             if (!Arrays.deepEquals(oldValues, newValues)) {
                 updated.add(new TransactionLog.RowImage(row.id, oldValues));
             }
-        }
-        for (StoredRow row : before.rows.values()) {
-            if (seen.contains(row.id)) {
-                continue;
+        });
+        before.rows.forEach(row -> {
+            if (afterRows.containsKey(row.id)) {
+                return;
             }
             Object[] oldValues = previousValues(previous, row.id);
             if (oldValues == null) {
                 oldValues = table.copyValues(before.schema, row);
             }
             deleted.add(new TransactionLog.RowImage(row.id, oldValues));
-        }
-        if (inserted.isEmpty() && updated.isEmpty() && deleted.isEmpty()) {
+        });
+        if (used[0] == 0 && updated.isEmpty() && deleted.isEmpty()) {
             return null;
         }
-        long[] ids = new long[inserted.size()];
-        for (int i = 0; i < ids.length; i++) {
-            ids[i] = inserted.get(i);
-        }
+        long[] ids = used[0] == inserted.length ? inserted : Arrays.copyOf(inserted, used[0]);
         return new TransactionLog.TableUndo(table.namespace(), table.schema().name, ids, updated, deleted);
     }
 
@@ -7325,6 +7523,7 @@ final class Engine implements AutoCloseable {
     }
 
     private void commitTxn(Session owner, OpenTxn txn) {
+        awaitPageForce();
         Map<TableStore, TableStore.Snapshot> safety = new IdentityHashMap<>();
         for (TableStore table : txn.tables.keySet()) {
             safety.put(table, table.savepoint());
@@ -7352,6 +7551,9 @@ final class Engine implements AutoCloseable {
         refreshActiveUndo();
         try {
             if (!suppressCapture && !storage.leaveForRecovery()) {
+                // The sync thread publishes its checkpoint before the commit record,
+                // so a crash cannot replay rows that are already in the pages.
+                awaitPageForce();
                 spillPending(owner);
                 storage.logCommit(txn.id);
                 commitMarker = null;

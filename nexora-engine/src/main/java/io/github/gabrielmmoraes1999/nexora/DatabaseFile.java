@@ -41,7 +41,13 @@ final class DatabaseFile implements AutoCloseable {
     private long logId;
     private long epoch = 1;
     private long appliedOffset;
-    private long checkpointLsn = Format.LOG_HEADER_SIZE;
+    private final Object durableLock = new Object();
+    private volatile long checkpointLsn = Format.LOG_HEADER_SIZE;
+    private volatile long deferredCheckpointLsn = -1;
+    private boolean undoForceDeferred;
+    private boolean deferDbSync;
+    private ArrayList<DeferredIo> capturing;
+    private volatile List<DeferredIo> deferredView = List.of();
     private boolean stable;
     /** Undo of transactions whose uncommitted pages were stored by the last checkpoint. */
     private List<TransactionLog.TxnUndo> activeUndo = List.of();
@@ -49,7 +55,9 @@ final class DatabaseFile implements AutoCloseable {
     private List<TransactionLog.TxnUndo> pendingUndos = List.of();
     /** Committed SQL whose pages were not stored. Opening runs it once. */
     private List<TransactionLog.Batch> sqlReplay = List.of();
-    private long spilledSinceForce;
+    /** Undo and checkpoint bodies compressed while inserts were still running. */
+    private List<byte[]> packedUndos;
+    private byte[] packedCheckpoint;
     private CommitBuffer commit;
     private boolean crashed;
     private boolean recoveryPending;
@@ -275,7 +283,11 @@ final class DatabaseFile implements AutoCloseable {
             return;
         }
         if (commit != null) {
-            commit.write(offset, data);
+            if (deferDbSync) {
+                commit.writeBorrowed(offset, data);
+            } else {
+                commit.write(offset, data);
+            }
             return;
         }
         diskWrite(offset, data);
@@ -289,6 +301,13 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private void diskWrite(long offset, byte[] data) {
+        if (deferDbSync) {
+            capturing.add(new DeferredIo(DeferredIo.WRITE, offset, data.length, data));
+            if (pageSize > 0) {
+                cache.forget(path, pageSize, offset, data.length);
+            }
+            return;
+        }
         Format.writeFully(channel, offset, data);
         if (pageSize > 0) {
             cache.forget(path, pageSize, offset, data.length);
@@ -296,6 +315,13 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private void diskZero(long offset, long length) {
+        if (deferDbSync) {
+            capturing.add(new DeferredIo(DeferredIo.ZERO, offset, length, null));
+            if (pageSize > 0) {
+                cache.forget(path, pageSize, offset, length);
+            }
+            return;
+        }
         Format.zero(channel, offset, length);
         if (pageSize > 0) {
             cache.forget(path, pageSize, offset, length);
@@ -303,10 +329,44 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private byte[] readPhysical(long offset, int length) {
+        List<DeferredIo> pending = deferDbSync ? capturing : deferredView;
+        if (pending != null && !pending.isEmpty()) {
+            return readDeferred(pending, offset, length);
+        }
         if (pageSize > 0) {
             return cache.read(path, channel, pageSize, offset, length);
         }
         return Format.readFully(channel, offset, length);
+    }
+
+    private byte[] readDeferred(List<DeferredIo> pending, long offset, int length) {
+        byte[] raw;
+        try {
+            raw = Format.readFully(channel, offset, length);
+        } catch (NexException exception) {
+            if (exception.getMessage() == null || !exception.getMessage().contains("truncated")) {
+                throw exception;
+            }
+            raw = new byte[length];
+        }
+        for (DeferredIo op : pending) {
+            if (op.kind == DeferredIo.TRUNCATE) {
+                continue;
+            }
+            long start = Math.max(offset, op.offset);
+            long end = Math.min(offset + length, op.offset + op.length);
+            if (start >= end) {
+                continue;
+            }
+            int at = (int) (start - offset);
+            int count = (int) (end - start);
+            if (op.kind == DeferredIo.ZERO) {
+                Arrays.fill(raw, at, at + count, (byte) 0);
+            } else {
+                System.arraycopy(op.data, (int) (start - op.offset), raw, at, count);
+            }
+        }
+        return raw;
     }
 
     long cacheMaximum() {
@@ -427,10 +487,109 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     void force() {
-        if (commit != null || crashed) {
+        if (commit != null || crashed || deferDbSync) {
             return;
         }
         forceChannel();
+    }
+
+    /** Page writes of an open transaction stay in memory until {@link #flushDeferredIo()}. */
+    void beginDeferredSync() {
+        deferDbSync = true;
+        deferredCheckpointLsn = -1;
+        capturing = new ArrayList<>();
+        deferredView = List.of();
+    }
+
+    void endDeferredSync() {
+        deferDbSync = false;
+        if (capturing != null && !capturing.isEmpty()) {
+            deferredView = List.copyOf(capturing);
+        }
+        capturing = null;
+    }
+
+    boolean hasDeferredIo() {
+        return !deferredView.isEmpty();
+    }
+
+    /** Keeps SQL appended after {@code mark} replayable. The pages belong to the earlier snapshot. */
+    void limitDeferredCheckpoint(long mark) {
+        if (mark >= Format.LOG_HEADER_SIZE && deferredCheckpointLsn > mark) {
+            deferredCheckpointLsn = mark;
+        }
+    }
+
+    /** Writes the pages captured by the last checkpoint. Does not sync and does not move the header. */
+    void flushDeferredIo() {
+        List<DeferredIo> pending = deferredView;
+        if (pending.isEmpty()) {
+            return;
+        }
+        for (DeferredIo op : pending) {
+            if (op.kind == DeferredIo.WRITE) {
+                Format.writeFully(channel, op.offset, op.data);
+            } else if (op.kind == DeferredIo.ZERO) {
+                Format.zero(channel, op.offset, op.length);
+            } else {
+                resizeNow(op.length);
+            }
+        }
+        if (pageSize > 0) {
+            cache.release(path);
+        }
+        deferredView = List.of();
+    }
+
+    long deferredCheckpointLsn() {
+        return deferredCheckpointLsn;
+    }
+
+    void dropDeferredCheckpoint() {
+        deferredCheckpointLsn = -1;
+    }
+
+    /** Syncs the log after a deferred checkpoint, before the pages reach disk. */
+    void forceLog() {
+        if (log != null && !crashed) {
+            log.force();
+        }
+        if (!undoForceDeferred) {
+            return;
+        }
+        undoForceDeferred = false;
+        if (TransactionLog.crashAfterUndo) {
+            crashed = true;
+            throw new NexException("simulated crash after the undo record");
+        }
+    }
+
+    void forceDurable() {
+        if (crashed) {
+            return;
+        }
+        forceChannel();
+    }
+
+    /**
+     * Publishes a checkpoint captured before the file sync.
+     * A newer checkpoint wins. Returns whether this call moved the header.
+     */
+    boolean publishDeferredCheckpoint() {
+        synchronized (durableLock) {
+            long lsn = deferredCheckpointLsn;
+            deferredCheckpointLsn = -1;
+            if (lsn <= checkpointLsn || crashed || log == null || lsn > log.size()) {
+                return false;
+            }
+            ByteBuffer buffer = ByteBuffer.allocate(8).order(Format.ORDER);
+            buffer.putLong(lsn);
+            diskWrite(Format.CHECKPOINT_LSN_OFFSET, buffer.array());
+            checkpointLsn = lsn;
+            diskWrite(Format.CHECKPOINT_STABLE_OFFSET, new byte[]{0});
+            stable = false;
+            return true;
+        }
     }
 
     @Override
@@ -701,6 +860,17 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private void truncatePhysical(long size) {
+        if (deferDbSync) {
+            capturing.add(new DeferredIo(DeferredIo.TRUNCATE, 0, size, null));
+            if (pageSize > 0) {
+                cache.release(path);
+            }
+            return;
+        }
+        resizeNow(size);
+    }
+
+    private void resizeNow(long size) {
         try {
             long current = channel.size();
             if (current > size) {
@@ -716,6 +886,24 @@ final class DatabaseFile implements AutoCloseable {
             throw exception;
         } catch (IOException exception) {
             throw new NexException("failed to resize the database file: " + exception.getMessage(), exception);
+        }
+    }
+
+    private static final class DeferredIo {
+        static final int WRITE = 1;
+        static final int ZERO = 2;
+        static final int TRUNCATE = 3;
+
+        final int kind;
+        final long offset;
+        final long length;
+        final byte[] data;
+
+        DeferredIo(int kind, long offset, long length, byte[] data) {
+            this.kind = kind;
+            this.offset = offset;
+            this.length = length;
+            this.data = data;
         }
     }
 
@@ -795,7 +983,9 @@ final class DatabaseFile implements AutoCloseable {
             buffer.apply(this);
             truncatePhysical(buffer.fileSize());
             fileSize = buffer.fileSize();
-            forceChannel();
+            if (!deferDbSync) {
+                forceChannel();
+            }
         }
         if (TransactionLog.crashAfterCheckpointPages) {
             crashed = true;
@@ -809,21 +999,15 @@ final class DatabaseFile implements AutoCloseable {
         return replay == null ? List.of() : replay;
     }
 
-    /** Writes the statement text of an open transaction. Syncs every 32 MB so commit only syncs the tail. */
+    /**
+     * Writes the statement text of an open transaction. The file sync stays on the
+     * checkpoint thread and on commit, so an insert does not wait for the disk.
+     */
     void logStatements(long txnId, List<TransactionLog.Applied> statements) {
         if (log == null || statements == null || statements.isEmpty()) {
             return;
         }
         log.appendTxnSql(txnId, statements);
-        long bytes = 0;
-        for (TransactionLog.Applied statement : statements) {
-            bytes += statement.sql == null ? 0 : statement.sql.length();
-        }
-        spilledSinceForce += bytes;
-        if (spilledSinceForce >= 32L * 1024 * 1024) {
-            log.force();
-            spilledSinceForce = 0;
-        }
     }
 
     /** The commit record. Pages stay in memory until a later flush. */
@@ -833,7 +1017,6 @@ final class DatabaseFile implements AutoCloseable {
         }
         log.appendCommit(txnId);
         log.force();
-        spilledSinceForce = 0;
     }
 
     /** Drops SQL that was written while the transaction was open. */
@@ -843,7 +1026,25 @@ final class DatabaseFile implements AutoCloseable {
         }
         log.appendRollback(txnId);
         log.force();
-        spilledSinceForce = 0;
+    }
+
+    /** Remembers undo bytes already compressed off the insert thread. */
+    void armPackedCheckpoint(List<byte[]> undos, byte[] checkpoint) {
+        packedUndos = undos;
+        packedCheckpoint = checkpoint;
+    }
+
+    void disarmPackedCheckpoint() {
+        packedUndos = null;
+        packedCheckpoint = null;
+    }
+
+    byte[] packUndo(TransactionLog.TxnUndo undo) {
+        return log.packedUndo(undo);
+    }
+
+    byte[] packActive(List<TransactionLog.TxnUndo> active) {
+        return log.packedActive(active);
     }
 
     /** Forces the undo images. Pages that depend on them must be written only after this returns. */
@@ -851,10 +1052,19 @@ final class DatabaseFile implements AutoCloseable {
         if (log == null) {
             throw new NexException("transaction log is required");
         }
-        if (undos != null) {
+        if (packedUndos != null) {
+            for (byte[] packed : packedUndos) {
+                log.appendPacked(Format.RECORD_UNDO, packed);
+            }
+            packedUndos = null;
+        } else if (undos != null) {
             for (TransactionLog.TxnUndo undo : undos) {
                 log.appendUndo(undo);
             }
+        }
+        if (deferDbSync) {
+            undoForceDeferred = true;
+            return;
         }
         log.force();
         if (TransactionLog.crashAfterUndo) {
@@ -918,7 +1128,7 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     long logLength() {
-        return log.size();
+        return log.logicalLength();
     }
 
     private void saveCheckpoint(boolean boundary) {
@@ -940,10 +1150,27 @@ final class DatabaseFile implements AutoCloseable {
         if (applying) {
             return;
         }
-        forceChannel();
-        if (boundary || log.size() > checkpointLsn || !activeUndo.isEmpty()) {
-            log.appendCheckpoint(activeUndo);
-            log.force();
+        if (!deferDbSync) {
+            forceChannel();
+        }
+        if (packedCheckpoint != null || boundary || log.size() > checkpointLsn || !activeUndo.isEmpty()) {
+            if (packedCheckpoint != null) {
+                log.appendPacked(Format.RECORD_CHECKPOINT, packedCheckpoint);
+                packedCheckpoint = null;
+            } else {
+                log.appendCheckpoint(activeUndo);
+            }
+            if (!deferDbSync) {
+                log.force();
+            }
+        }
+        if (deferDbSync) {
+            // Header moves only after the database file is synced, and only to this
+            // offset. SQL appended during the sync stays after it and can be replayed.
+            deferredCheckpointLsn = log.logicalLength();
+            recoveryPending = false;
+            appliedToDisk = false;
+            return;
         }
         writeCheckpointLsn(log.size());
         writeStable(false);
@@ -1297,10 +1524,13 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private void writeCheckpointLsn(long lsn) {
-        ByteBuffer buffer = ByteBuffer.allocate(8).order(Format.ORDER);
-        buffer.putLong(lsn);
-        diskWrite(Format.CHECKPOINT_LSN_OFFSET, buffer.array());
-        checkpointLsn = lsn;
+        synchronized (durableLock) {
+            deferredCheckpointLsn = -1;
+            ByteBuffer buffer = ByteBuffer.allocate(8).order(Format.ORDER);
+            buffer.putLong(lsn);
+            diskWrite(Format.CHECKPOINT_LSN_OFFSET, buffer.array());
+            checkpointLsn = lsn;
+        }
     }
 
     private void writeStable(boolean value) {
@@ -1637,6 +1867,10 @@ final class DatabaseFile implements AutoCloseable {
 
         void write(long offset, byte[] data) {
             put(new TransactionLog.Span(offset, data.length, data.clone()));
+        }
+
+        void writeBorrowed(long offset, byte[] data) {
+            put(new TransactionLog.Span(offset, data.length, data));
         }
 
         void zero(long offset, long length) {

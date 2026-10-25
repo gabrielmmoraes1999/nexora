@@ -57,10 +57,21 @@ final class TransactionLog implements AutoCloseable {
      * End of the intact prefix. A torn record at the end is not included here.
      */
     private long consistentEnd;
+    /** Next record offset, including bytes still sitting in {@link #pending}. */
+    private volatile long logicalEnd;
+    private final Object spillLock = new Object();
+    private final Object drainLock = new Object();
+    private byte[] pending = new byte[8192];
+    private int pendingLength;
 
     private TransactionLog(Path path, FileChannel channel) {
         this.path = path;
         this.channel = channel;
+        try {
+            logicalEnd = channel.size();
+        } catch (IOException exception) {
+            throw new NexException("failed to read the transaction log: " + exception.getMessage(), exception);
+        }
     }
 
     static Path beside(Path database) {
@@ -93,6 +104,7 @@ final class TransactionLog implements AutoCloseable {
                 log.pageSize = pageSize;
                 log.epoch = epoch;
                 log.writeHeader();
+                log.logicalEnd = Format.LOG_HEADER_SIZE;
                 log.force();
                 log.consistentEnd = Format.LOG_HEADER_SIZE;
                 return log;
@@ -206,6 +218,8 @@ final class TransactionLog implements AutoCloseable {
             installPending(pending);
             deleteQuiet(pending);
             consistentEnd = size();
+            logicalEnd = consistentEnd;
+            pendingLength = 0;
         } catch (IOException exception) {
             throw new NexException("failed to copy the transaction log: " + exception.getMessage(), exception);
         }
@@ -241,6 +255,11 @@ final class TransactionLog implements AutoCloseable {
         } catch (IOException exception) {
             throw new NexException("failed to read the transaction log: " + exception.getMessage(), exception);
         }
+    }
+
+    /** File size plus records accepted from inserts and not yet written. */
+    long logicalLength() {
+        return logicalEnd;
     }
 
     byte[] readAt(long offset, int length) {
@@ -739,6 +758,7 @@ final class TransactionLog implements AutoCloseable {
     }
 
     void force() {
+        drain();
         try {
             channel.force(true);
         } catch (IOException exception) {
@@ -746,19 +766,53 @@ final class TransactionLog implements AutoCloseable {
         }
     }
 
-    void truncate(long size) {
-        try {
-            if (channel.size() != size) {
-                channel.truncate(size);
+    /**
+     * Writes buffered records. An insert only copies into the buffer, so it does
+     * not wait while this syncs the file.
+     */
+    void drain() {
+        synchronized (drainLock) {
+            byte[] batch;
+            int length;
+            long at;
+            synchronized (spillLock) {
+                if (pendingLength == 0) {
+                    return;
+                }
+                batch = pending;
+                length = pendingLength;
+                at = logicalEnd - length;
+                pending = new byte[Math.max(8192, Math.min(length, 1024 * 1024))];
+                pendingLength = 0;
             }
-            consistentEnd = size;
-        } catch (IOException exception) {
-            throw new NexException("failed to resize the transaction log: " + exception.getMessage(), exception);
+            Format.writeFully(channel, at, length == batch.length ? batch : Arrays.copyOf(batch, length));
+        }
+    }
+
+    void truncate(long size) {
+        synchronized (drainLock) {
+            synchronized (spillLock) {
+                pendingLength = 0;
+                logicalEnd = size;
+            }
+            try {
+                if (channel.size() != size) {
+                    channel.truncate(size);
+                }
+                consistentEnd = size;
+            } catch (IOException exception) {
+                throw new NexException("failed to resize the transaction log: " + exception.getMessage(), exception);
+            }
         }
     }
 
     @Override
     public void close() {
+        try {
+            drain();
+        } catch (RuntimeException ignored) {
+            // a failed log still has to release the file
+        }
         try {
             if (lock != null) {
                 lock.release();
@@ -775,21 +829,40 @@ final class TransactionLog implements AutoCloseable {
     }
 
     private void append(int type, byte[] payload) {
-        byte[] stored = pack(payload);
-        long lsn = size();
-        byte[] body = new byte[12 + stored.length];
-        ByteBuffer buffer = ByteBuffer.wrap(body).order(Format.ORDER);
-        buffer.putInt(type);
-        buffer.putLong(lsn);
-        System.arraycopy(stored, 0, body, 12, stored.length);
-        int crc = Format.crc(body, 0, body.length);
-        byte[] record = new byte[4 + body.length + 4];
-        ByteBuffer frame = ByteBuffer.wrap(record).order(Format.ORDER);
-        frame.putInt(record.length);
-        frame.put(body);
-        frame.putInt(crc);
-        Format.writeFully(channel, lsn, record);
-        consistentEnd = lsn + record.length;
+        appendPacked(type, pack(payload));
+    }
+
+    /** Appends a payload already compressed by {@link #pack(byte[])}. The offset is filled in here. */
+    void appendPacked(int type, byte[] packed) {
+        synchronized (spillLock) {
+            long lsn = logicalEnd;
+            byte[] body = new byte[12 + packed.length];
+            ByteBuffer buffer = ByteBuffer.wrap(body).order(Format.ORDER);
+            buffer.putInt(type);
+            buffer.putLong(lsn);
+            System.arraycopy(packed, 0, body, 12, packed.length);
+            int crc = Format.crc(body, 0, body.length);
+            byte[] record = new byte[4 + body.length + 4];
+            ByteBuffer frame = ByteBuffer.wrap(record).order(Format.ORDER);
+            frame.putInt(record.length);
+            frame.put(body);
+            frame.putInt(crc);
+            int needed = pendingLength + record.length;
+            if (needed > pending.length) {
+                pending = Arrays.copyOf(pending, Math.max(needed, pending.length * 2));
+            }
+            System.arraycopy(record, 0, pending, pendingLength, record.length);
+            pendingLength = needed;
+            logicalEnd = lsn + record.length;
+        }
+    }
+
+    byte[] packedUndo(TxnUndo undo) {
+        return pack(encodeUndo(undo));
+    }
+
+    byte[] packedActive(List<TxnUndo> active) {
+        return pack(encodeActive(active));
     }
 
     private static final int MAX_PLAIN = 256 * 1024 * 1024;

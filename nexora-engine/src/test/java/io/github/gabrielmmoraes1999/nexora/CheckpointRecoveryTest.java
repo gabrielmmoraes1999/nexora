@@ -310,8 +310,14 @@ class CheckpointRecoveryTest {
                 db.execute("INSERT INTO item VALUES (?, ?)", id, photo);
             }
             long grown = Files.size(file);
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (grown <= initial + 1_000_000 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+                grown = Files.size(file);
+            }
             assertTrue(grown > initial + 1_000_000, "database file grew to " + grown);
             db.execute("COMMIT");
+            assertEquals(db.logLength(), db.checkpointLsn());
             db.crash();
         } finally {
             db.close();
@@ -336,6 +342,31 @@ class CheckpointRecoveryTest {
         }
         try (Database deNovo = open(file)) {
             assertEquals("ana", deNovo.query("SELECT nome FROM item WHERE id = 1").rows().get(0).getString("nome"));
+        }
+    }
+
+    @Test
+    void crescimentoNoMeioDoArquivoNaoCorrompeBlob() {
+        Path file = database();
+        Database db = open(file);
+        db.checkpointPolicy(new CheckpointPolicy(0, Integer.MAX_VALUE, Long.MAX_VALUE, 1024, 2));
+        byte[] photo = new byte[8192];
+        photo[0] = 4;
+        photo[photo.length - 1] = 11;
+        try {
+            db.execute("CREATE TABLE item (id INTEGER PRIMARY KEY, foto BLOB)");
+            db.execute("CREATE TABLE depois (id INTEGER PRIMARY KEY, nome VARCHAR(40))");
+            db.execute("INSERT INTO depois VALUES (1, 'fica')");
+            db.execute("BEGIN");
+            for (int id = 1; id <= 80; id++) {
+                db.execute("INSERT INTO item VALUES (?, ?)", id, photo);
+            }
+            db.execute("COMMIT");
+            assertArrayEquals(photo, db.query("SELECT foto FROM item WHERE id = 1").rows().get(0).getBytes("foto"));
+            assertArrayEquals(photo, db.query("SELECT foto FROM item WHERE id = 80").rows().get(0).getBytes("foto"));
+            assertEquals("fica", db.query("SELECT nome FROM depois WHERE id = 1").rows().get(0).getString("nome"));
+        } finally {
+            db.close();
         }
     }
 
