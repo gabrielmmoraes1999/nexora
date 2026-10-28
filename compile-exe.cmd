@@ -81,27 +81,40 @@ exit /b 1
 
 :resolve_jdk
 set "JLINK="
-where jlink >nul 2>&1
-if not errorlevel 1 (
-    for /f "delims=" %%P in ('where jlink') do (
-        if not defined JLINK set "JLINK=%%P"
-    )
-)
-if not defined JLINK if defined JAVA_HOME if exist "%JAVA_HOME%\bin\jlink.exe" set "JLINK=%JAVA_HOME%\bin\jlink.exe"
-if defined JLINK exit /b 0
+if defined JAVA_HOME call :try_jdk "%JAVA_HOME%"
+if defined JLINK goto :jdk_ready
 
-set "JAVA_HOME_DETECTED="
-for /f "tokens=1,* delims==" %%A in ('java -XshowSettings:properties -version 2^>^&1 ^| findstr /c:"java.home"') do (
-    if not defined JAVA_HOME_DETECTED set "JAVA_HOME_DETECTED=%%B"
+rem Search installed JDKs before using PATH; Oracle's java shortcut may hang.
+for %%R in ("%ProgramFiles%\Java" "%ProgramFiles%\Eclipse Adoptium" "%ProgramFiles%\Microsoft" "%ProgramFiles%\Amazon Corretto" "%USERPROFILE%\.jdks") do (
+    if exist "%%~R" for /d %%D in ("%%~R\*") do call :try_jdk "%%~D"
 )
-if defined JAVA_HOME_DETECTED for /f "tokens=* delims= " %%H in ("%JAVA_HOME_DETECTED%") do set "JAVA_HOME_DETECTED=%%H"
-if defined JAVA_HOME_DETECTED if exist "%JAVA_HOME_DETECTED%\bin\jlink.exe" set "JLINK=%JAVA_HOME_DETECTED%\bin\jlink.exe"
-if defined JLINK exit /b 0
+if defined JLINK goto :jdk_ready
+for /f "delims=" %%P in ('where jlink.exe 2^>nul') do for %%D in ("%%~dpP..") do call :try_jdk "%%~fD"
+if defined JLINK goto :jdk_ready
 
-echo JDK 21 is required. jlink was not found.
+echo JDK 21 or newer was not found.
 echo Install a JDK 21 and add its bin directory to PATH, or set JAVA_HOME.
-echo The java.exe shortcut on PATH is not enough: jlink ships only with the JDK.
 exit /b 1
+
+:try_jdk
+if defined JLINK exit /b 0
+if not exist "%~1\bin\jlink.exe" exit /b 0
+if not exist "%~1\bin\javac.exe" exit /b 0
+if not exist "%~1\bin\java.exe" exit /b 0
+if not exist "%~1\release" exit /b 0
+set "CANDIDATE_VERSION="
+for /f "tokens=1,* delims==" %%A in ('findstr /b "JAVA_VERSION=" "%~1\release"') do set "CANDIDATE_VERSION=%%~B"
+if not defined CANDIDATE_VERSION exit /b 0
+for /f "tokens=1 delims=.-+" %%V in ("%CANDIDATE_VERSION%") do set "CANDIDATE_VERSION=%%V"
+if %CANDIDATE_VERSION% LSS 21 exit /b 0
+set "JAVA_HOME=%~1"
+set "JLINK=%~1\bin\jlink.exe"
+exit /b 0
+
+:jdk_ready
+set "PATH=%JAVA_HOME%\bin;%PATH%"
+echo JAVA_HOME=%JAVA_HOME%
+exit /b 0
 
 :resolve_mvn
 set "MVN="
@@ -114,6 +127,15 @@ if not errorlevel 1 (
 if not defined MVN if defined MAVEN_HOME if exist "%MAVEN_HOME%\bin\mvn.cmd" set "MVN=%MAVEN_HOME%\bin\mvn.cmd"
 if not defined MVN if defined M2_HOME if exist "%M2_HOME%\bin\mvn.cmd" set "MVN=%M2_HOME%\bin\mvn.cmd"
 if not defined MVN if exist "%USERPROFILE%\.maven\bin\mvn.cmd" set "MVN=%USERPROFILE%\.maven\bin\mvn.cmd"
+if defined MVN exit /b 0
+
+rem IDE installations include a complete Maven distribution.
+for /d %%D in ("%ProgramFiles%\JetBrains\IntelliJ IDEA*") do (
+    if not defined MVN if exist "%%~D\plugins\maven-plugin\lib\maven3\bin\mvn.cmd" set "MVN=%%~D\plugins\maven-plugin\lib\maven3\bin\mvn.cmd"
+)
+for /d %%D in ("%ProgramFiles%\NetBeans*") do (
+    if not defined MVN if exist "%%~D\java\maven\bin\mvn.cmd" set "MVN=%%~D\java\maven\bin\mvn.cmd"
+)
 if defined MVN exit /b 0
 
 echo Maven was not found.
