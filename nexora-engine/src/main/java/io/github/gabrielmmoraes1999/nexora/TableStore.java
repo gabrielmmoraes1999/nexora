@@ -747,7 +747,7 @@ final class TableStore implements AutoCloseable {
         if (base == null || committed == null) {
             throw new NexException("failed internally to commit " + schema.name);
         }
-        // The statement already changed this table. Commit keeps those rows, as Sybase does,
+        // The statement already changed this table. Commit keeps those rows,
         // instead of copying every value back onto the previous image.
         if (base.rows == committed.rows && schema.sameStructure(committed.schema) && sameShape(schema, committed.schema)) {
             undo = null;

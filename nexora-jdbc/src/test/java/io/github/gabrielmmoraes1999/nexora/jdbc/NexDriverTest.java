@@ -46,7 +46,7 @@ class NexDriverTest {
         assertTrue(driver.acceptsURL("jdbc:nexora:C:/dados/loja.db"));
         assertTrue(driver.acceptsURL("jdbc:nexora:embedded:C:/dados/loja.db"));
         assertTrue(driver.acceptsURL("jdbc:nexora://127.0.0.1:4580/loja"));
-        assertFalse(driver.acceptsURL("jdbc:sqlite:dados"));
+        assertFalse(driver.acceptsURL("jdbc:unsupported:dados"));
         assertEquals("C:/dados/loja.db", NexDriver.file("jdbc:nexora://C:/dados/loja.db"));
         assertEquals("C:/dados/loja.db", NexDriver.file("jdbc:nexora:embedded:C:/dados/loja.db"));
         assertEquals("", NexDriver.file("jdbc:nexora://127.0.0.1:4580/loja"));
@@ -55,7 +55,7 @@ class NexDriverTest {
         assertEquals(4580, rede.port());
         assertEquals("loja", rede.database());
         assertFalse(rede.embedded());
-        assertNull(driver.connect("jdbc:sqlite:dados", null));
+        assertNull(driver.connect("jdbc:unsupported:dados", null));
         SQLException vazia = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:", null));
         assertTrue(vazia.getMessage().contains("file"));
         SQLException semArquivo = assertThrows(SQLException.class, () -> driver.connect("jdbc:nexora:embedded:", null));

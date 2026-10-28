@@ -120,7 +120,7 @@ final class IndexTree {
 
         /**
          * How many leading columns of this index are present in {@code equals}.
-         * A lookup can use that prefix the way PostgreSQL, MySQL, and Firebird do.
+         * A lookup can use the matching leading columns as an index prefix.
          */
         int prefixLength(Map<Integer, Object> equals) {
             int count = 0;
