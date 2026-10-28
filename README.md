@@ -152,6 +152,8 @@ The embedded connection opens the `.db` in this process. If the server already h
 
 Opening an embedded database loads the catalog, table metadata, and row locations. Clean row values are decoded on access through the bounded page cache; scanning a table does not retain every decoded row in the engine. Row locations still use memory proportional to the number of rows. Modified rows and transaction snapshots that must survive page reuse can also use additional memory. Large query results are materialized by the current query API.
 
+Recovery reads the transaction log ahead in 1 MiB blocks, keeping the existing checksum, record validation, and recovery rules while avoiding a disk read for every record header and body.
+
 
 
 ## Example

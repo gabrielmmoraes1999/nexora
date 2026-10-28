@@ -404,13 +404,14 @@ final class TransactionLog implements AutoCloseable {
             throw new NexException("transaction log is corrupt");
         }
         Map<Long, TxnUndo> active = new LinkedHashMap<>();
+        RecordReader reader = new RecordReader(size);
         long at = Format.LOG_HEADER_SIZE;
         while (at + 4 <= size) {
-            int recordLength = readInt(at);
+            int recordLength = reader.length(at);
             if (recordLength < 20 || at + recordLength > size) {
                 break;
             }
-            byte[] record = Format.readFully(channel, at, recordLength);
+            byte[] record = reader.read(at, recordLength);
             int stored = ByteBuffer.wrap(record, recordLength - 4, 4).order(Format.ORDER).getInt();
             int expected = Format.crc(record, 4, recordLength - 8);
             if (stored != expected) {
@@ -663,13 +664,14 @@ final class TransactionLog implements AutoCloseable {
         if (size < Format.LOG_HEADER_SIZE) {
             throw new NexException("transaction log is corrupt");
         }
+        RecordReader reader = new RecordReader(size);
         long at = Format.LOG_HEADER_SIZE;
         while (at + 4 <= size) {
-            int recordLength = readInt(at);
+            int recordLength = reader.length(at);
             if (recordLength < 20 || at + recordLength > size) {
                 break;
             }
-            byte[] record = Format.readFully(channel, at, recordLength);
+            byte[] record = reader.read(at, recordLength);
             int stored = ByteBuffer.wrap(record, recordLength - 4, 4).order(Format.ORDER).getInt();
             int expected = Format.crc(record, 4, recordLength - 8);
             if (stored != expected) {
@@ -721,15 +723,16 @@ final class TransactionLog implements AutoCloseable {
         if (size < Format.LOG_HEADER_SIZE) {
             throw new NexException("transaction log is corrupt");
         }
+        RecordReader reader = new RecordReader(size);
         long at = Format.LOG_HEADER_SIZE;
         boolean applied = false;
         while (at + 4 <= size) {
-            int recordLength = readInt(at);
+            int recordLength = reader.length(at);
             if (recordLength < 20 || at + recordLength > size) {
                 consistentEnd = at;
                 break;
             }
-            byte[] record = Format.readFully(channel, at, recordLength);
+            byte[] record = reader.read(at, recordLength);
             int stored = ByteBuffer.wrap(record, recordLength - 4, 4).order(Format.ORDER).getInt();
             int expected = Format.crc(record, 4, recordLength - 8);
             if (stored != expected) {
@@ -1081,6 +1084,54 @@ final class TransactionLog implements AutoCloseable {
     private int readInt(long offset) {
         byte[] data = Format.readFully(channel, offset, 4);
         return ByteBuffer.wrap(data).order(Format.ORDER).getInt();
+    }
+
+    /** Read-ahead for recovery scans, without a file mapping or retained log history. */
+    private final class RecordReader {
+        private final long end;
+        private final byte[] window = new byte[1024 * 1024];
+        private long start = -1;
+        private int available;
+
+        RecordReader(long end) {
+            this.end = end;
+        }
+
+        int length(long offset) {
+            fill(offset, Integer.BYTES);
+            return ByteBuffer.wrap(window, (int) (offset - start), Integer.BYTES).order(Format.ORDER).getInt();
+        }
+
+        byte[] read(long offset, int length) {
+            if (length > window.length) {
+                return Format.readFully(channel, offset, length);
+            }
+            fill(offset, length);
+            int at = (int) (offset - start);
+            return Arrays.copyOfRange(window, at, at + length);
+        }
+
+        private void fill(long offset, int needed) {
+            if (offset >= start && offset - start <= (long) available - needed) {
+                return;
+            }
+            int count = (int) Math.min(window.length, end - offset);
+            ByteBuffer buffer = ByteBuffer.wrap(window, 0, count);
+            long position = offset;
+            try {
+                while (buffer.hasRemaining()) {
+                    int read = channel.read(buffer, position);
+                    if (read < 0) {
+                        throw new NexException("transaction log is truncated");
+                    }
+                    position += read;
+                }
+            } catch (IOException exception) {
+                throw new NexException("could not read the transaction log: " + exception.getMessage(), exception);
+            }
+            start = offset;
+            available = count;
+        }
     }
 
     private static long fileSizeOf(byte[] record) {
