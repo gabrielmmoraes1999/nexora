@@ -1249,7 +1249,7 @@ final class Engine implements AutoCloseable {
                 continue;
             }
             if (!keyExists(parent, parentColumns, values, key.columns)) {
-                throw new NexException("foreign key " + key.name + " does not find the row in " + referencedLabel(key));
+                throw missingForeignRow(child, key, values);
             }
         }
     }
@@ -1265,9 +1265,26 @@ final class Engine implements AutoCloseable {
             }
             TableStore parent = parentOf(key);
             if (!keyExists(parent, referencedIndexes(parent.schema(), key), values, key.columns, excluded, excludedId)) {
-                throw new NexException("foreign key " + key.name + " does not find the row in " + referencedLabel(key));
+                throw missingForeignRow(child, key, values);
             }
         }
+    }
+
+    private NexException missingForeignRow(TableStore child, ForeignKey key, Object[] values) {
+        List<String> columns = new ArrayList<>();
+        List<String> comparedValues = new ArrayList<>();
+        for (int column : key.columns) {
+            columns.add(child.schema().columns.get(column).name);
+            Object value = values[column];
+            comparedValues.add(value instanceof String text
+                    ? "'" + text.replace("'", "''") + "'" : String.valueOf(value));
+        }
+        return new NexException("foreign key " + key.name + " does not find the row in " + referencedLabel(key)
+                + "\nProblematic key value is (" + String.join(", ", columns) + ") = ("
+                + String.join(", ", comparedValues) + ")"
+                + "\nReferenced key is " + referencedLabel(key) + " ("
+                + String.join(", ", key.referencedColumns) + ") = ("
+                + String.join(", ", comparedValues) + ")");
     }
 
     private void blockReferentialUpdate(TableStore parent, Object[] oldValues, Object[] newValues, long exceptId) {

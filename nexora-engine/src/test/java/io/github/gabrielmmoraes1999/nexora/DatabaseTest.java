@@ -476,6 +476,30 @@ class DatabaseTest {
     }
 
     @Test
+    void erroChaveEstrangeiraMostraValoresComparados() {
+        try (Database db = open()) {
+            db.execute("CREATE TABLE pedido (empresa INTEGER, codigo VARCHAR(20), PRIMARY KEY (empresa, codigo))");
+            db.execute("CREATE TABLE parcela (empresa_id INTEGER, pedido_codigo VARCHAR(20), "
+                    + "CONSTRAINT FK_parcela FOREIGN KEY (empresa_id, pedido_codigo) REFERENCES pedido)");
+            String details = "\nProblematic key value is (empresa_id, pedido_codigo) = (7, 'D''agua')"
+                    + "\nReferenced key is pedido (empresa, codigo) = (7, 'D''agua')";
+            NexException insert = assertThrows(NexException.class,
+                    () -> db.execute("INSERT INTO parcela VALUES (7, 'D''agua')"));
+            assertEquals("foreign key FK_parcela does not find the row in pedido" + details, insert.getMessage());
+            db.execute("INSERT INTO pedido VALUES (7, 'ok')");
+            db.execute("INSERT INTO parcela VALUES (7, 'ok')");
+            NexException update = assertThrows(NexException.class,
+                    () -> db.execute("UPDATE parcela SET pedido_codigo = 'D''agua'"));
+            assertEquals(insert.getMessage(), update.getMessage());
+            db.execute("CREATE TABLE legado (empresa_id INTEGER, pedido_codigo VARCHAR(20))");
+            db.execute("INSERT INTO legado VALUES (7, 'D''agua')");
+            NexException alter = assertThrows(NexException.class, () -> db.execute("ALTER TABLE legado "
+                    + "ADD CONSTRAINT FK_legado FOREIGN KEY (empresa_id, pedido_codigo) REFERENCES pedido"));
+            assertEquals("foreign key FK_legado does not find the row in pedido" + details, alter.getMessage());
+        }
+    }
+
+    @Test
     void chavePrimariaEEstrangeiraCriamIndice() {
         try (Database db = open()) {
             db.execute("CREATE TABLE pedido (id INTEGER PRIMARY KEY)");
