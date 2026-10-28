@@ -119,8 +119,10 @@ final class Engine implements AutoCloseable {
         Engine engine = new Engine(storage);
         try {
             engine.loadTables();
-            engine.recoverUncommitted();
-            engine.recoverCommittedSql();
+            if (!session) {
+                engine.recoverUncommitted();
+                engine.recoverCommittedSql();
+            }
             engine.ensureSystem(DatabaseOptions.defaults());
             if (session) {
                 engine.closeStaleConnections();
@@ -153,6 +155,7 @@ final class Engine implements AutoCloseable {
     void applyExternalLog(Path logFile, IntConsumer applied) {
         DatabaseFile.ApplyPlan plan = storage.planApply(logFile);
         if (plan.idle()) {
+            storage.finishApply();
             return;
         }
         Session replay = new Session("DBA", true, 0);
@@ -178,6 +181,7 @@ final class Engine implements AutoCloseable {
                 }
             }
             storage.completeApply(plan);
+            storage.finishApply();
         } finally {
             bypass = previousBypass;
             suppressCapture = previousSuppress;

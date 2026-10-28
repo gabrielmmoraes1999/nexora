@@ -2048,6 +2048,9 @@ class DatabaseTest {
             TransactionLog.crashAfterRedo = false;
             db.close();
         }
+        NexException checkpoint = assertThrows(NexException.class, this::open);
+        assertTrue(checkpoint.getMessage().contains("checkpoint"));
+        Database.applyLog(arquivo(), dir.resolve("banco.log"));
         try (Database deNovo = open()) {
             assertEquals("Ana", deNovo.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));
             assertEquals(1, deNovo.query("SELECT NEX$FORMAT FROM NEX$DATABASE").rows().get(0).getInt("NEX$FORMAT"));
@@ -2068,6 +2071,8 @@ class DatabaseTest {
             TransactionLog.crashAfterRedo = false;
             db.close();
         }
+        assertThrows(NexException.class, () -> Database.open(arquivo, "dba", "dba"));
+        Database.applyLog(arquivo, dir.resolve("loja.log"));
         assertTrue(zeroConnectionSlot(arquivo));
         try (Database deNovo = Database.open(arquivo, "dba", "dba")) {
             assertEquals("Ana", deNovo.query("SELECT nome FROM t WHERE id = 1").rows().get(0).getString("nome"));

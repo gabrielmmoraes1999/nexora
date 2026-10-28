@@ -22,7 +22,8 @@ import java.util.function.IntConsumer;
  * and advances the generation: the old file can no longer open the database.
  * Starting writes a checkpoint into the database and into the log. Stopping writes it again.
  * A checkpoint may also store pages of a transaction that is still open. That does not commit it.
- * Opening undoes those transactions. SQL waits for that checkpoint, two open transactions cannot
+ * Normal opening refuses pending recovery; explicit log application undoes those transactions.
+ * SQL waits for that checkpoint, two open transactions cannot
  * change the same table, and a large before-image is stored whole in the log. The log is not
  * cut until a full backup. Applying a log records only the checkpoint already stored
  * in that file. A rejected log leaves the database checkpoint unchanged.

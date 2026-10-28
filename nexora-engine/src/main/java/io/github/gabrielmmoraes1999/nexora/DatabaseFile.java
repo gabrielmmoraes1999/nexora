@@ -26,11 +26,12 @@ import java.util.TreeMap;
  * pages already stored. The log from the previous generation can no longer open the database.
  * Starting writes a checkpoint into the database and into the log. Stopping writes it again.
  * A checkpoint may store pages of a transaction that is still open. The undo record is forced
- * first, and opening undoes that transaction. Writing the page does not commit it.
+ * first, and explicit log application undoes that transaction. Normal open refuses pending recovery.
+ * Writing the page does not commit it.
  * The checkpoint uses the same lock as SQL. Two open transactions cannot change the same table.
  * A large before-image is stored whole in the log, and the log is not cut until a full backup.
- * Applying a log records only the checkpoint already stored in that file. A rejected log
- * leaves the database checkpoint unchanged.
+ * A successful explicit apply synchronizes the checkpoint before normal opening is allowed.
+ * A rejected log leaves the database checkpoint unchanged.
  */
 final class DatabaseFile implements AutoCloseable {
 
@@ -692,7 +693,7 @@ final class DatabaseFile implements AutoCloseable {
         checkpointLsn = buffer.getLong(Format.CHECKPOINT_LSN_OFFSET);
         epoch = buffer.getLong(Format.LOG_EPOCH_OFFSET);
         appliedOffset = buffer.getLong(Format.APPLIED_OFFSET);
-        if (TransactionLog.missing(path)) {
+        if (TransactionLog.missing(path, applying)) {
             long next = epoch + 1;
             writeEpoch(next);
             writeAppliedOffset(0L);
@@ -700,33 +701,37 @@ final class DatabaseFile implements AutoCloseable {
             forceChannel();
             log = TransactionLog.create(path, logId, pageSize, next);
         } else {
-            log = TransactionLog.open(path, logId, pageSize);
+            log = TransactionLog.open(path, logId, pageSize, applying);
         }
         long logEpoch = log.epoch();
-        if (logEpoch == epoch + 1) {
-            checkpointLsn = Format.LOG_HEADER_SIZE;
-        } else if (logEpoch != epoch) {
-            throw new NexException(logEpoch < epoch
-                    ? "log is from a previous generation of the database"
-                    : "a log is missing between the database and this file");
-        }
-        if (checkpointLsn < Format.LOG_HEADER_SIZE || checkpointLsn > log.size()) {
-            throw new NexException("transaction log does not cover the checkpoint");
-        }
-        boolean applied = log.replay(checkpointLsn, this::applyRedo);
-        log.truncate(log.consistentEnd());
-        if (checkpointLsn > log.size()) {
-            throw new NexException("transaction log does not cover the checkpoint");
-        }
-        pendingUndos = log.transactionsToUndo(checkpointLsn);
-        undoPending = !pendingUndos.isEmpty();
-        sqlReplay = log.sqlToReplay(checkpointLsn);
-        if (logEpoch != epoch) {
-            writeEpoch(logEpoch);
-        }
-        if (!applying && !undoPending && sqlReplay.isEmpty()
-                && (applied || log.size() > checkpointLsn || logEpoch != epoch)) {
-            checkpoint();
+        if (!applying) {
+            if (logEpoch != epoch || checkpointLsn != log.size() || !log.cleanCheckpoint(checkpointLsn)) {
+                throw new NexException("checkpoint mismatch between database and transaction log (generation "
+                        + epoch + "/" + logEpoch + ", database checkpoint " + checkpointLsn + ", log end " + log.size()
+                        + "); apply the log explicitly using a tool with -a before opening the database");
+            }
+        } else {
+            if (logEpoch == epoch + 1) {
+                checkpointLsn = Format.LOG_HEADER_SIZE;
+            } else if (logEpoch != epoch) {
+                throw new NexException(logEpoch < epoch
+                        ? "log is from a previous generation of the database"
+                        : "a log is missing between the database and this file");
+            }
+            if (checkpointLsn < Format.LOG_HEADER_SIZE || checkpointLsn > log.size()) {
+                throw new NexException("transaction log does not cover the checkpoint");
+            }
+            log.replay(checkpointLsn, this::applyRedo);
+            log.truncate(log.consistentEnd());
+            if (checkpointLsn > log.size()) {
+                throw new NexException("transaction log does not cover the checkpoint");
+            }
+            pendingUndos = log.transactionsToUndo(checkpointLsn);
+            undoPending = !pendingUndos.isEmpty();
+            sqlReplay = log.sqlToReplay(checkpointLsn);
+            if (logEpoch != epoch) {
+                writeEpoch(logEpoch);
+            }
         }
         header = readBytes(0, Format.DB_HEADER_SIZE);
         buffer = ByteBuffer.wrap(header).order(Format.ORDER);
@@ -738,6 +743,9 @@ final class DatabaseFile implements AutoCloseable {
         }
         byte[] encoded = readBytes(active.metaOffset(), active.metaLength());
         CatalogImage image = CatalogCodec.decode(encoded, pageSize);
+        if (!applying && image.tables.stream().anyMatch(table -> table.pending != null)) {
+            throw new NexException("checkpoint has pending table changes; apply the log explicitly using -a");
+        }
         if (active.metaOffset() + reserved > image.fileSize) {
             throw new NexException("database catalog is corrupt");
         }
@@ -1121,6 +1129,15 @@ final class DatabaseFile implements AutoCloseable {
     void beginSession() {
         checkpoint(true);
         sessionBoundary = true;
+    }
+
+    /** Only a successfully accepted explicit apply may synchronize recovery results. */
+    void finishApply() {
+        boolean synchronizedCheckpoint = log.cleanCheckpoint(checkpointLsn);
+        applying = false;
+        if (!synchronizedCheckpoint) {
+            checkpoint(true);
+        }
     }
 
     long checkpointLsn() {

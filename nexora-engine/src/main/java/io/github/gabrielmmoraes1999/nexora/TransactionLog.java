@@ -128,14 +128,26 @@ final class TransactionLog implements AutoCloseable {
         return openAt(beside(database), logId, pageSize, true);
     }
 
+    static TransactionLog open(Path database, long logId, int pageSize, boolean applying) {
+        return openAt(beside(database), logId, pageSize, applying);
+    }
+
     /**
      * There is no log beside the database: the file does not exist or is empty,
      * even after resuming an interrupted copy.
      */
     static boolean missing(Path database) {
+        return missing(database, true);
+    }
+
+    static boolean missing(Path database, boolean applying) {
         Path path = beside(database);
         try {
-            absorbPending(path);
+            if (applying) {
+                absorbPending(path);
+            } else if (Files.exists(pendingPath(path))) {
+                throw new NexException("checkpoint has an interrupted log apply; resume explicitly using -a");
+            }
             return !Files.isRegularFile(path) || Files.size(path) == 0;
         } catch (IOException exception) {
             throw new NexException("could not open the transaction log: " + exception.getMessage(), exception);
@@ -268,6 +280,34 @@ final class TransactionLog implements AutoCloseable {
 
     long consistentEnd() {
         return consistentEnd;
+    }
+
+    /** Normal open validates only the terminal clean checkpoint, not the log history. */
+    boolean cleanCheckpoint(long end) {
+        if (end != size()) {
+            return false;
+        }
+        if (end == Format.LOG_HEADER_SIZE) {
+            return true;
+        }
+        // Both encodings have been used for checkpoints without active transactions.
+        int[] lengths = {20 + pack(new byte[0]).length, 20 + pack(encodeActive(List.of())).length};
+        for (int length : lengths) {
+            long start = end - length;
+            if (start < Format.LOG_HEADER_SIZE) {
+                continue;
+            }
+            byte[] record = Format.readFully(channel, start, length);
+            ByteBuffer frame = ByteBuffer.wrap(record).order(Format.ORDER);
+            if (frame.getInt() != length || frame.getInt() != Format.RECORD_CHECKPOINT || frame.getLong() != start
+                    || frame.getInt(length - 4) != Format.crc(record, 4, length - 8)) {
+                continue;
+            }
+            if (decodeActive(readable(record)).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

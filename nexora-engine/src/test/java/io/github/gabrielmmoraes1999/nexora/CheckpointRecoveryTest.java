@@ -377,7 +377,16 @@ class CheckpointRecoveryTest {
     }
 
     private static Database open(Path file) {
-        Database db = Database.open(file, "dba", "dba");
+        Database db;
+        try {
+            db = Database.open(file, "dba", "dba");
+        } catch (NexException exception) {
+            // Crash fixtures must now be refused before an explicit -a-style recovery.
+            assertTrue(exception.getMessage().contains("checkpoint"));
+            assertTrue(exception.getMessage().contains("-a"));
+            Database.applyLog(file, logOf(file));
+            db = Database.open(file, "dba", "dba");
+        }
         db.checkpointPolicy(CheckpointPolicy.MANUAL);
         return db;
     }
