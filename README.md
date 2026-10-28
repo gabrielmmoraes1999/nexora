@@ -150,6 +150,8 @@ The embedded connection opens the `.db` in this process. If the server already h
 4. User `dba`, password `dba`.
 5. Libraries: the driver JAR (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). The engine is inside that JAR. In DBeaver, replace the old JAR with this one. The personal server and the network server are not added to DBeaver.
 
+Opening an embedded database loads the catalog, table metadata, and row locations. Clean row values are decoded on access through the bounded page cache; scanning a table does not retain every decoded row in the engine. Row locations still use memory proportional to the number of rows. Modified rows and transaction snapshots that must survive page reuse can also use additional memory. Large query results are materialized by the current query API.
+
 
 
 ## Example

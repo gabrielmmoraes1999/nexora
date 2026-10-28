@@ -37,7 +37,8 @@ final class Cell {
 
 final class StoredRow {
     final long id;
-    final Cell[] cells;
+    private volatile Cell[] cells;
+    private final Loader loader;
     final long slotOffset;
     final long slotSize;
     final boolean dirty;
@@ -45,13 +46,40 @@ final class StoredRow {
     StoredRow(long id, Cell[] cells, long slotOffset, long slotSize, boolean dirty) {
         this.id = id;
         this.cells = cells;
+        this.loader = null;
         this.slotOffset = slotOffset;
         this.slotSize = slotSize;
         this.dirty = dirty;
     }
 
+    StoredRow(long id, long slotOffset, long slotSize, Loader loader) {
+        this.id = id;
+        this.slotOffset = slotOffset;
+        this.slotSize = slotSize;
+        this.dirty = false;
+        this.loader = loader;
+    }
+
+    /** Clean rows keep their disk location, not their decoded values. */
+    Cell[] cells() {
+        Cell[] resident = cells;
+        return resident == null ? loader.read(this) : resident;
+    }
+
+    /** A transaction snapshot must survive reuse of its old disk pages. */
+    synchronized Cell[] pinCells() {
+        if (cells == null) {
+            cells = loader.read(this).clone();
+        }
+        return cells;
+    }
+
     Cell[] copyCells() {
-        return cells.clone();
+        return cells().clone();
+    }
+
+    interface Loader {
+        Cell[] read(StoredRow row);
     }
 }
 

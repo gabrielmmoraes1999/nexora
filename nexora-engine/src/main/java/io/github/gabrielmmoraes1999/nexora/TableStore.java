@@ -136,7 +136,7 @@ final class TableStore implements AutoCloseable {
     Object[] copyValues(Schema shape, StoredRow row) {
         Object[] values = new Object[shape.columns.size()];
         for (int i = 0; i < values.length; i++) {
-            values[i] = detached(logical(row.cells[i], shape.columns.get(i)));
+            values[i] = detached(logical(row.cells()[i], shape.columns.get(i)));
         }
         return values;
     }
@@ -357,7 +357,7 @@ final class TableStore implements AutoCloseable {
     }
 
     Object value(StoredRow row, int index) {
-        return logical(row.cells[index], schema.columns.get(index));
+        return logical(row.cells()[index], schema.columns.get(index));
     }
 
     long insertOne(Object[] raw) {
@@ -494,8 +494,8 @@ final class TableStore implements AutoCloseable {
         TreeMap<Long, StoredRow> next = new TreeMap<>();
         List<Extent> freed = new ArrayList<>();
         for (StoredRow current : rows.values()) {
-            Cell[] cells = new Cell[current.cells.length + 1];
-            System.arraycopy(current.cells, 0, cells, 0, current.cells.length);
+            Cell[] cells = new Cell[current.cells().length + 1];
+            System.arraycopy(current.cells(), 0, cells, 0, current.cells().length);
             Object value = null;
             if (!rows.isEmpty() && stored.autoIncrement && !stored.hasDefault) {
                 value = identity++;
@@ -577,9 +577,9 @@ final class TableStore implements AutoCloseable {
         TreeMap<Long, StoredRow> next = new TreeMap<>();
         List<Extent> freed = new ArrayList<>();
         for (StoredRow current : rows.values()) {
-            Cell[] cells = new Cell[current.cells.length];
-            for (int i = 0; i < current.cells.length; i++) {
-                cells[Schema.movedIndex(i, from, to)] = current.cells[i];
+            Cell[] cells = new Cell[current.cells().length];
+            for (int i = 0; i < current.cells().length; i++) {
+                cells[Schema.movedIndex(i, from, to)] = current.cells()[i];
             }
             freed.addAll(freedExtents(current, cells));
             next.put(current.id, new StoredRow(current.id, cells, -1, 0, true));
@@ -603,10 +603,10 @@ final class TableStore implements AutoCloseable {
         TreeMap<Long, StoredRow> next = new TreeMap<>();
         List<Extent> freed = new ArrayList<>();
         for (StoredRow current : rows.values()) {
-            Cell[] cells = new Cell[current.cells.length - 1];
-            for (int i = 0, target = 0; i < current.cells.length; i++) {
+            Cell[] cells = new Cell[current.cells().length - 1];
+            for (int i = 0, target = 0; i < current.cells().length; i++) {
                 if (i != index) {
-                    cells[target++] = current.cells[i];
+                    cells[target++] = current.cells()[i];
                 }
             }
             freed.addAll(freedExtents(current, cells));
@@ -638,13 +638,14 @@ final class TableStore implements AutoCloseable {
             return null;
         }
         for (StoredRow row : snapshot.rows.values()) {
-            for (int i = 0; i < row.cells.length; i++) {
-                Cell cell = row.cells[i];
+            Cell[] cells = row.pinCells();
+            for (int i = 0; i < cells.length; i++) {
+                Cell cell = cells[i];
                 if (!cell.onDisk()) {
                     continue;
                 }
                 Object value = logical(cell, snapshot.schema.columns.get(i));
-                row.cells[i] = new Cell(value, -1, 0);
+                cells[i] = new Cell(value, -1, 0);
             }
         }
         List<IndexTree.DiskIndex> built = new ArrayList<>();
@@ -883,7 +884,7 @@ final class TableStore implements AutoCloseable {
     private Object[] valuesOf(Schema shape, StoredRow row) {
         Object[] values = new Object[shape.columns.size()];
         for (int i = 0; i < values.length; i++) {
-            values[i] = detached(logical(row.cells[i], shape.columns.get(i)));
+            values[i] = detached(logical(row.cells()[i], shape.columns.get(i)));
         }
         return values;
     }
@@ -910,9 +911,9 @@ final class TableStore implements AutoCloseable {
     long packedBytes() {
         long size = Format.HEADER_SIZE;
         for (StoredRow row : rows.values()) {
-            for (int i = 0; i < row.cells.length; i++) {
+            for (int i = 0; i < row.cells().length; i++) {
                 Column column = schema.columns.get(i);
-                Cell cell = row.cells[i];
+                Cell cell = row.cells()[i];
                 if (!column.heapBacked() || cell.isNull()) {
                     continue;
                 }
@@ -926,7 +927,7 @@ final class TableStore implements AutoCloseable {
                     size += Format.blobExtent(length);
                 }
             }
-            size += Format.slotExtent(RecordCodec.encodedSize(schema, row.cells));
+            size += Format.slotExtent(RecordCodec.encodedSize(schema, row.cells()));
         }
         return size + 1024L + rows.size() * 48L + IndexTree.footprint(indexes, pages());
     }
@@ -1261,9 +1262,18 @@ final class TableStore implements AutoCloseable {
         rows = new RowMap();
         shared = false;
         boolean droppedConnection = false;
+        StoredRow.Loader reader = new SlotReader(schema);
         for (LiveSlot slot : image.rows) {
             try {
-                StoredRow row = readSlot(slot);
+                if (slot.offset < Format.HEADER_SIZE || slot.size <= Format.BLOCK_HEADER
+                        || slot.size > Integer.MAX_VALUE || slot.offset > fileSize - slot.size) {
+                    throw new NexException("corrupt record in table " + schema.name);
+                }
+                StoredRow row = new StoredRow(slot.rowId, slot.offset, slot.size, reader);
+                // Stale connection rows have a recovery path that must run on open.
+                if (Names.same(schema.name, SystemTables.CONNECTIONS)) {
+                    row.pinCells();
+                }
                 rows.put(row.id, row);
             } catch (NexException exception) {
                 if (!Names.same(schema.name, SystemTables.CONNECTIONS) || !exception.getMessage().startsWith("corrupt record")) {
@@ -1318,26 +1328,46 @@ final class TableStore implements AutoCloseable {
         dirty = false;
     }
 
-    private StoredRow readSlot(LiveSlot slot) {
-        if (slot.size <= Format.BLOCK_HEADER || slot.size > Integer.MAX_VALUE) {
-            throw new NexException("corrupt record in table " + schema.name);
+    private Cell[] readSlot(StoredRow row, Schema shape) {
+        if (row.slotSize <= Format.BLOCK_HEADER || row.slotSize > Integer.MAX_VALUE) {
+            throw new NexException("corrupt record in table " + shape.name);
         }
-        byte[] block = readAt(slot.offset, (int) slot.size);
+        byte[] block = readAt(row.slotOffset, (int) row.slotSize);
         ByteBuffer buffer = ByteBuffer.wrap(block).order(Format.ORDER);
         int magic = buffer.getInt();
         int declared = buffer.getInt();
         long blockSize = buffer.getLong();
         long rowId = buffer.getLong();
-        if (magic != Format.SLOT_MAGIC || blockSize != slot.size || rowId != slot.rowId) {
-            throw new NexException("corrupt record in table " + schema.name);
+        if (magic != Format.SLOT_MAGIC || blockSize != row.slotSize || rowId != row.id) {
+            throw new NexException("corrupt record in table " + shape.name);
         }
-        if (declared <= 0 || Format.slotExtent(declared) != slot.size || buffer.remaining() < declared) {
-            throw new NexException("corrupt record in table " + schema.name);
+        if (declared <= 0 || Format.slotExtent(declared) != row.slotSize || buffer.remaining() < declared) {
+            throw new NexException("corrupt record in table " + shape.name);
         }
         byte[] payload = new byte[declared];
         buffer.get(payload);
-        Cell[] cells = RecordCodec.decode(schema, payload);
-        return new StoredRow(rowId, cells, slot.offset, slot.size, false);
+        return RecordCodec.decode(shape, payload);
+    }
+
+    /** One decoded row per reader; scans never retain the table's values. */
+    private final class SlotReader implements StoredRow.Loader {
+        private final Schema shape;
+        private StoredRow lastRow;
+        private Cell[] lastCells;
+
+        SlotReader(Schema shape) {
+            this.shape = shape;
+        }
+
+        @Override
+        public synchronized Cell[] read(StoredRow row) {
+            if (lastRow != row) {
+                Cell[] decoded = readSlot(row, shape);
+                lastRow = row;
+                lastCells = decoded;
+            }
+            return lastCells;
+        }
     }
 
     private byte[] readBlob(long offset, long length) {
@@ -1505,7 +1535,7 @@ final class TableStore implements AutoCloseable {
         for (int i = 0; i < index.columns.length; i++) {
             int columnIndex = index.columns[i];
             Column column = target.columns.get(columnIndex);
-            Object value = logical(row.cells[columnIndex], column);
+            Object value = logical(row.cells()[columnIndex], column);
             if (value == null) {
                 if (index.primary) {
                     throw new NexException("primary key does not accept NULL in " + target.name + "." + column.name);
@@ -1552,7 +1582,7 @@ final class TableStore implements AutoCloseable {
                 }
             }
         }
-        for (Cell cell : current.cells) {
+        for (Cell cell : current.cells()) {
             if (cell.offset > 0 && !preserve.contains(cell.offset)) {
                 extents.add(new Extent(cell.offset, Format.blobExtent(cell.length)));
             }
