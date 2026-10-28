@@ -45,19 +45,8 @@ final class TableStore implements AutoCloseable {
     private long[] insertedIds = new long[16];
     private int insertedCount;
     private int structureEpoch;
-    private RowMap encodingRows;
     private RowMap encodingLive;
-    private TreeMap<Long, StoredRow> encodingFlat;
-    private List<IndexTree.DiskIndex> encodingIndexes;
-    private List<Extent> encodingFree;
-    private List<Extent> encodingPending;
-    private long encodingFileSize;
-    private long encodingMetaOffset;
-    private int encodingMetaLength;
-    private long encodingGeneration;
-    private int encodingActiveSlot;
-    private long encodingNextRowId;
-    private boolean encoding;
+    private TableStore encodingSnapshot;
     private Plan preparedPlan;
     private boolean encodeMerged;
     /**
@@ -947,35 +936,47 @@ final class TableStore implements AutoCloseable {
     }
 
     /** Freezes the current rows so page bytes can be built while inserts continue. */
-    void beginEncode() {
-        encodingRows = rows;
+    synchronized void beginEncode() {
+        TableStore snapshot = new TableStore(file, base, capacity);
+        snapshot.schema = schema;
+        snapshot.rows = rows;
+        snapshot.indexes = List.copyOf(indexes);
+        snapshot.freeExtents = new ArrayList<>(freeExtents);
+        snapshot.pendingFree = new ArrayList<>(pendingFree);
+        snapshot.fileSize = fileSize;
+        snapshot.metaOffset = metaOffset;
+        snapshot.metaLength = metaLength;
+        snapshot.generation = generation;
+        snapshot.activeSlot = activeSlot;
+        snapshot.nextRowId = nextRowId;
         rows = rows.sprout();
         encodingLive = rows;
-        encodingFlat = null;
-        encodingIndexes = List.copyOf(indexes);
-        encodingFree = new ArrayList<>(freeExtents);
-        encodingPending = new ArrayList<>(pendingFree);
-        encodingFileSize = fileSize;
-        encodingMetaOffset = metaOffset;
-        encodingMetaLength = metaLength;
-        encodingGeneration = generation;
-        encodingActiveSlot = activeSlot;
-        encodingNextRowId = nextRowId;
-        encoding = true;
+        encodingSnapshot = snapshot;
         preparedPlan = null;
         encodeMerged = false;
     }
 
     /** Builds the page image from the snapshot taken by {@link #beginEncode()}. */
     void encodePrepared() {
-        encodingFlat = encodingRows.tree();
-        preparedPlan = prepare(false);
-        preparedPlan.packed = pack(preparedPlan.writes);
-        encoding = false;
-        encodingRows = null;
+        TableStore snapshot;
+        synchronized (this) {
+            snapshot = encodingSnapshot;
+        }
+        if (snapshot == null) {
+            return;
+        }
+        // The worker owns this image. A simultaneous commit must prepare the
+        // live rows and indexes, never a mixture of live and frozen state.
+        Plan plan = snapshot.prepare();
+        plan.packed = pack(plan.writes);
+        synchronized (this) {
+            if (encodingSnapshot == snapshot) {
+                preparedPlan = plan;
+            }
+        }
     }
 
-    Plan takePrepared() {
+    synchronized Plan takePrepared() {
         Plan plan = preparedPlan;
         preparedPlan = null;
         return plan;
@@ -985,26 +986,23 @@ final class TableStore implements AutoCloseable {
      * Installs a snapshot image. Returns false when a row changed after the snapshot;
      * the caller then builds a fresh image from the live table.
      */
-    boolean finishEncode(Plan plan) {
+    synchronized boolean finishEncode(Plan plan) {
         encodeMerged = false;
         if (encodingLive == null || rows != encodingLive) {
-            encodingFlat = null;
             encodingLive = null;
-            encoding = false;
+            encodingSnapshot = null;
             return false;
         }
+        List<IndexTree.DiskIndex> encodingIndexes = encodingSnapshot.indexes;
         boolean sameIndex = indexes.size() == encodingIndexes.size();
         for (int i = 0; sameIndex && i < indexes.size(); i++) {
             if (indexes.get(i) != encodingIndexes.get(i)) {
                 sameIndex = false;
             }
         }
-        if (encodingFlat != null) {
-            encodingFlat = null;
-        }
         if (!rows.reparentClean(RowMap.adoptClean(plan.rows))) {
             encodingLive = null;
-            encoding = false;
+            encodingSnapshot = null;
             return false;
         }
         freeExtents = new ArrayList<>(plan.free);
@@ -1020,8 +1018,7 @@ final class TableStore implements AutoCloseable {
         }
         dirty = rows.dirtyCount() > 0;
         encodingLive = null;
-        encodingIndexes = null;
-        encoding = false;
+        encodingSnapshot = null;
         encodeMerged = true;
         return true;
     }
@@ -1032,32 +1029,27 @@ final class TableStore implements AutoCloseable {
         return merged;
     }
 
-    void abortEncode() {
-        encodingRows = null;
+    synchronized void abortEncode() {
         encodingLive = null;
-        encodingFlat = null;
-        encodingIndexes = null;
-        encodingFree = null;
-        encodingPending = null;
-        encoding = false;
+        encodingSnapshot = null;
         preparedPlan = null;
         encodeMerged = false;
     }
 
     private Plan prepare(boolean pack) {
-        List<IndexTree.DiskIndex> sourceIndexes = encoding ? encodingIndexes : indexes;
-        List<Extent> sourceFree = encoding ? encodingFree : freeExtents;
-        List<Extent> sourcePending = encoding ? encodingPending : pendingFree;
-        long sourceFileSize = encoding ? encodingFileSize : fileSize;
-        long sourceMetaOffset = encoding ? encodingMetaOffset : metaOffset;
-        int sourceMetaLength = encoding ? encodingMetaLength : metaLength;
-        long sourceGeneration = encoding ? encodingGeneration : generation;
-        int sourceActive = encoding ? encodingActiveSlot : activeSlot;
-        long sourceNext = encoding ? encodingNextRowId : nextRowId;
+        List<IndexTree.DiskIndex> sourceIndexes = indexes;
+        List<Extent> sourceFree = freeExtents;
+        List<Extent> sourcePending = pendingFree;
+        long sourceFileSize = fileSize;
+        long sourceMetaOffset = metaOffset;
+        int sourceMetaLength = metaLength;
+        long sourceGeneration = generation;
+        int sourceActive = activeSlot;
+        long sourceNext = nextRowId;
         Space space = pack ? new Space(List.of(), Format.HEADER_SIZE) : new Space(sourceFree, sourceFileSize);
         List<Write> writes = new ArrayList<>();
         List<StoredRow> changed = new ArrayList<>();
-        TreeMap<Long, StoredRow> committed = encoding && encodingFlat != null ? new TreeMap<>(encodingFlat) : rows.tree();
+        TreeMap<Long, StoredRow> committed = rows.tree();
         List<LiveSlot> lives = new ArrayList<>();
         for (StoredRow row : List.copyOf(committed.values())) {
             if (!pack && !row.dirty) {

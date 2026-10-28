@@ -3840,6 +3840,11 @@ final class Engine implements AutoCloseable {
                 }
                 boolean shrink = shouldShrink(table);
                 long storedSize = table.logicalSize();
+                if (!pagesOnly) {
+                    // Commit must persist every live row, including inserts made
+                    // after the background checkpoint froze its image.
+                    table.abortEncode();
+                }
                 TableStore.Plan prepared = shrink ? null : table.takePrepared();
                 boolean merged = prepared != null && table.finishEncode(prepared);
                 if (prepared != null && !merged) {
