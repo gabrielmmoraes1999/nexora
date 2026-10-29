@@ -25,7 +25,7 @@ if errorlevel 1 exit /b 1
 
 echo.
 echo Building the JARs...
-call "%MVN%" -f "%~dp0pom.xml" package
+call "%MVN%" -f "%~dp0pom.xml" clean package
 if errorlevel 1 (
     echo Maven package failed.
     exit /b 1
@@ -43,34 +43,34 @@ call :runtime
 if errorlevel 1 goto :failed
 call :icon
 if errorlevel 1 goto :failed
-call :embed nexora-cli console
+call :embed seadb-cli console
 if errorlevel 1 goto :failed
-call :embed nexora-backup hybrid
+call :embed seadb-backup hybrid
 if errorlevel 1 goto :failed
-call :embed nexora-dbtran hybrid
+call :embed seadb-dbtran hybrid
 if errorlevel 1 goto :failed
-call :embed nexora-dbsrv window
+call :embed seadb-dbsrv window
 if errorlevel 1 goto :failed
-call :embed nexora-dbeng window
+call :embed seadb-dbeng window
 if errorlevel 1 goto :failed
-call :embed nexora-studio window
+call :embed seadb-studio window
 if errorlevel 1 goto :failed
 
 call :cleanup
 echo.
 echo Done. The executables share one Java folder:
-echo   %DEST%\nexora-cli.exe
-echo   %DEST%\nexora-backup.exe
-echo   %DEST%\nexora-dbtran.exe
-echo   %DEST%\nexora-dbsrv.exe
-echo   %DEST%\nexora-dbeng.exe
-echo   %DEST%\nexora-studio.exe
+echo   %DEST%\seadb-cli.exe
+echo   %DEST%\seadb-backup.exe
+echo   %DEST%\seadb-dbtran.exe
+echo   %DEST%\seadb-dbsrv.exe
+echo   %DEST%\seadb-dbeng.exe
+echo   %DEST%\seadb-studio.exe
 echo   %DEST%\java
 echo.
 echo The JAR is inside each .exe, not in the folder.
 echo Keep the executables next to java. Moving one .exe by itself leaves it without Java.
-echo nexora-cli opens a console.
-echo nexora-backup and nexora-dbtran do not open a console with the window.
+echo seadb-cli opens a console.
+echo seadb-backup and seadb-dbtran do not open a console with the window.
 exit /b 0
 
 :failed
@@ -154,7 +154,7 @@ if not defined JAVA_MAJOR (
     exit /b 1
 )
 if %JAVA_MAJOR% LSS 21 (
-    echo jlink is from Java %JAVA_MAJOR%. Nexora needs JDK 21 or newer, so the bundled runtime can run the classes.
+    echo jlink is from Java %JAVA_MAJOR%. SeaDB needs JDK 21 or newer, so the bundled runtime can run the classes.
     exit /b 1
 )
 echo Using "%JLINK%"
@@ -170,7 +170,7 @@ exit /b 1
 :runtime
 echo.
 echo Linking the shared Java...
-"%JBIN%jdeps.exe" --ignore-missing-deps --print-module-deps --multi-release 21 "%~dp0nexora-cli\target\nexora-cli-%VERSION%.jar" "%~dp0nexora-backup\target\nexora-backup-%VERSION%.jar" "%~dp0nexora-dbtran\target\nexora-dbtran-%VERSION%.jar" "%~dp0nexora-dbsrv\target\nexora-dbsrv-%VERSION%.jar" "%~dp0nexora-dbeng\target\nexora-dbeng-%VERSION%.jar" "%~dp0nexora-studio\target\nexora-studio-%VERSION%.jar" > "%STAGE%\modules.txt"
+"%JBIN%jdeps.exe" --ignore-missing-deps --print-module-deps --multi-release 21 "%~dp0seadb-cli\target\seadb-cli-%VERSION%.jar" "%~dp0seadb-backup\target\seadb-backup-%VERSION%.jar" "%~dp0seadb-dbtran\target\seadb-dbtran-%VERSION%.jar" "%~dp0seadb-dbsrv\target\seadb-dbsrv-%VERSION%.jar" "%~dp0seadb-dbeng\target\seadb-dbeng-%VERSION%.jar" "%~dp0seadb-studio\target\seadb-studio-%VERSION%.jar" > "%STAGE%\modules.txt"
 if errorlevel 1 (
     echo jdeps failed.
     exit /b 1
@@ -202,8 +202,8 @@ exit /b 0
 :icon
 echo.
 echo Writing the icon...
-set "ICON=%STAGE%\nexora.ico"
-"%JBIN%javac.exe" -encoding UTF-8 -d "%STAGE%\icons" "%~dp0packaging\IconWriter.java"
+set "ICON=%STAGE%\seadb.ico"
+"%JBIN%javac.exe" -encoding UTF-8 -d "%STAGE%\icons" "%~dp0packaging\IconWriter.java" "%~dp0seadb-engine\src\main\java\io\github\gabrielmmoraes1999\seadb\SeaIcon.java"
 if errorlevel 1 (
     echo Could not compile the icon writer.
     exit /b 1
@@ -238,7 +238,7 @@ if not exist "%APPJAR%" (
     exit /b 1
 )
 echo Embedding %MODULE%...
-"%CSC%" /nologo /optimize+ /target:%TARGET% %DEFINE% %WINFORMS% /win32icon:"%ICON%" /resource:"%APPJAR%",AppJar /out:"%OUT%" "%~dp0packaging\NexoraLauncher.cs"
+"%CSC%" /nologo /optimize+ /target:%TARGET% %DEFINE% %WINFORMS% /win32icon:"%ICON%" /resource:"%APPJAR%",AppJar /out:"%OUT%" "%~dp0packaging\SeaDBLauncher.cs"
 if errorlevel 1 (
     echo Could not embed the JAR for %MODULE%.
     exit /b 1

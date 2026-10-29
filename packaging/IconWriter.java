@@ -1,14 +1,4 @@
 import javax.imageio.ImageIO;
-import java.awt.BasicStroke;
-import java.awt.Color;
-import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.GradientPaint;
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.awt.geom.Ellipse2D;
-import java.awt.geom.Rectangle2D;
-import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -18,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Writes the Nexora mark as a Windows {@code .ico}.
+ * Writes the SeaDB mark as a Windows {@code .ico}.
  * The drawing matches the studio window icon.
  */
 public final class IconWriter {
@@ -44,44 +34,7 @@ public final class IconWriter {
     }
 
     private static BufferedImage icon(int size) {
-        BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = image.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-        float side = size;
-        float arc = side * 0.28f;
-        g.setPaint(new GradientPaint(0, 0, new Color(0x2F86C5), 0, side, new Color(0x143044)));
-        g.fill(new RoundRectangle2D.Float(0, 0, side, side, arc, arc));
-
-        float left = side * 0.22f;
-        float width = side * 0.56f;
-        float top = side * 0.24f;
-        float ellipse = Math.max(3f, side * 0.16f);
-        float body = side * 0.46f;
-        g.setColor(Color.WHITE);
-        g.fill(new Rectangle2D.Float(left, top + ellipse / 2f, width, body));
-        g.fill(new Ellipse2D.Float(left, top + body - ellipse / 2f, width, ellipse));
-        g.setColor(new Color(0xE7F3FB));
-        g.fill(new Ellipse2D.Float(left, top, width, ellipse));
-        g.setStroke(new BasicStroke(Math.max(1f, side / 32f)));
-        g.setColor(new Color(0x1F6AA5));
-        g.draw(new Ellipse2D.Float(left, top, width, ellipse));
-        if (size >= 48) {
-            g.setColor(new Color(0x143044));
-            g.setFont(new Font("Segoe UI", Font.BOLD, 1).deriveFont(side * 0.2f));
-            FontMetrics metrics = g.getFontMetrics();
-            float textX = (side - metrics.stringWidth("N")) / 2f;
-            float capBottom = top + ellipse * 0.92f;
-            float base = top + ellipse / 2f + body - ellipse * 0.2f;
-            float textY = capBottom + (base - capBottom - metrics.getHeight()) / 2f + metrics.getAscent();
-            g.drawString("N", textX, textY);
-        } else if (size >= 24) {
-            g.setColor(new Color(0xC5D9E8));
-            g.draw(new Ellipse2D.Float(left, top + body * 0.42f, width, ellipse));
-        }
-        g.dispose();
-        return image;
+        return io.github.gabrielmmoraes1999.seadb.SeaIcon.image(size);
     }
 
     private static byte[] ico(List<byte[]> pngs, int[] sizes) throws IOException {

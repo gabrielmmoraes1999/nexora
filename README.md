@@ -1,10 +1,14 @@
-# Nexora — JDBC
+# SeaDB — JDBC
 
-Nexora JDBC driver. The database is a pair of files: the `.db` holds the tables, the `BLOB`s, the configuration, the users, and the connection registry; the `.log` beside it holds the transactions. The application talks to it through `java.sql`, with `DriverManager`, a connection pool, or DBeaver.
+<p align="center">
+  <img src="branding/seadb-logo.png" alt="Logo SeaDB com leão-marinho" width="600">
+</p>
+
+SeaDB JDBC driver. The database is a pair of files: the `.db` holds the tables, the `BLOB`s, the configuration, the users, and the connection registry; the `.log` beside it holds the transactions. The application talks to it through `java.sql`, with `DriverManager`, a connection pool, or DBeaver.
 
 Java 21. The driver declares JDBC 4.2 and is not a certified driver (`jdbcCompliant()` returns `false`).
 
-There are eight Maven projects. `nexora-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `nexora-jdbc` has the driver, with an embedded connection and a connection to the server. `nexora-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `nexora-dbeng` is the personal server window and uses that same listener on this machine. `nexora-cli` creates the database. `nexora-studio` is the administrative interface. `nexora-backup` is the backup window. `nexora-dbtran` is the log translation window. The driver, the network server, the CLI, the studio, the backup window, and the log translation window depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The studio and the backup window depend on the driver. The CLI and the log translation window depend only on the engine.
+There are eight Maven projects. `seadb-engine` has the `.db` file, the `.log`, the SQL, and the protocol. `seadb-jdbc` has the driver, with an embedded connection and a connection to the server. `seadb-dbsrv` is the network server: it holds the files, listens on the network, and opens the message console. `seadb-dbeng` is the personal server window and uses that same listener on this machine. `seadb-cli` creates the database. `seadb-studio` is the administrative interface. `seadb-backup` is the backup window. `seadb-dbtran` is the log translation window. The driver, the network server, the CLI, the studio, the backup window, and the log translation window depend on the engine. The personal server depends on the network server. The driver and the servers do not depend on each other. The studio and the backup window depend on the driver. The CLI and the log translation window depend only on the engine.
 
 ## Installation
 
@@ -14,14 +18,14 @@ From the root, Maven builds the engine and then the driver, the network server, 
 mvn package
 ```
 
-The network server is the JAR `nexora-dbsrv/target/nexora-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `nexora-dbeng/target/nexora-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `nexora-cli/target/nexora-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `nexora-studio/target/nexora-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `nexora-backup/target/nexora-backup-1.0.jar`, with the driver and the engine inside. It copies the database from the window or from the command line, as in [Backup window](#backup-window). The log translation window is the JAR `nexora-dbtran/target/nexora-dbtran-1.0.jar`, with the engine inside. It writes the SQL from the log, as in [Log translation](#log-translation).
+The network server is the JAR `seadb-dbsrv/target/seadb-dbsrv-1.0.jar`, with the engine inside. The personal server is the JAR `seadb-dbeng/target/seadb-dbeng-1.0.jar`. Both open the message console, as in [Network](#network). The CLI is the JAR `seadb-cli/target/seadb-cli-1.0.jar`, also with the engine inside. It creates the database, as in [Create the database](#create-the-database). The studio is the JAR `seadb-studio/target/seadb-studio-1.0.jar`, with the driver and the engine inside. It opens the interface, as in [Studio](#studio). The backup window is the JAR `seadb-backup/target/seadb-backup-1.0.jar`, with the driver and the engine inside. It copies the database from the window or from the command line, as in [Backup window](#backup-window). The log translation window is the JAR `seadb-dbtran/target/seadb-dbtran-1.0.jar`, with the engine inside. It writes the SQL from the log, as in [Log translation](#log-translation).
 
 `mvn install` publishes the driver to the local repository. The application depends only on the driver:
 
 ```xml
 <dependency>
     <groupId>io.github.gabrielmmoraes1999</groupId>
-    <artifactId>nexora-jdbc</artifactId>
+    <artifactId>seadb-jdbc</artifactId>
     <version>1.0</version>
 </dependency>
 ```
@@ -31,22 +35,22 @@ The `META-INF/services/java.sql.Driver` service registers the driver. `DriverMan
 
 |              |                                                      |
 | ------------ | ---------------------------------------------------- |
-| Class        | `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver` |
-| Embedded URL | `jdbc:nexora:embedded:<file.db>`                     |
-| Network URL  | `jdbc:nexora://<host>:<port>/<name>`                 |
+| Class        | `io.github.gabrielmmoraes1999.seadb.jdbc.SeaDriver` |
+| Embedded URL | `jdbc:seadb:embedded:<file.db>`                     |
+| Network URL  | `jdbc:seadb://<host>:<port>/<name>`                 |
 | User         | `dba`                                                |
 | Password     | `dba`                                                |
-| Product      | Nexora 1.0                                           |
+| Product      | SeaDB 1.0                                           |
 
 
 ```java
-String url = "jdbc:nexora:embedded:C:/data/store.db";
+String url = "jdbc:seadb:embedded:C:/data/store.db";
 try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
     // ...
 }
 ```
 
-`jdbc:nexora:C:/data/store.db` remains valid. `jdbc:nexora://C:/data/store.db` does too: the slash before the drive letter is ignored. A URL with no file (`jdbc:nexora:`) fails. For another process, use the network URL described in [Network](#network). A blank user or password fails with SQLSTATE `28000`. A wrong password fails with the invalid user or password message.
+`jdbc:seadb:C:/data/store.db` remains valid. `jdbc:seadb://C:/data/store.db` does too: the slash before the drive letter is ignored. A URL with no file (`jdbc:seadb:`) fails. For another process, use the network URL described in [Network](#network). A blank user or password fails with SQLSTATE `28000`. A wrong password fails with the invalid user or password message.
 
 The `.db` file already exists. JDBC and the server do not create it. The page size stays fixed, chosen at creation by the CLI.
 
@@ -59,7 +63,7 @@ The password is not stored in plain text. Each write uses bcrypt (`$2a$`, cost 1
 The CLI `create` command generates the `.db`, the `.log` beside it, and the DBA user. The page size is `4096`, `8192`, `16384`, or `32768`. The default is `8192`. It does not change after creation. Page 0 is the header; the catalog and the tables occupy whole pages. Commit writes the `.log` before the pages and returns only after that commit record is durable. The checkpoint synchronizes dirty pages to the `.db`, including pages of a transaction that is still open, and leaves the history in the log. Storing those pages does not commit the transaction. Normal opening validates the terminal clean checkpoint without scanning the log history. If the database and log checkpoints or generations differ, or a checkpoint contains uncommitted work, opening fails with a checkpoint message and an instruction to use -a. Only explicit log application (-a, or Database.applyLog in the API) replays committed work, undoes uncommitted pages, and discards a torn log tail. A refused opening leaves both files unchanged. Every open and every close writes the checkpoint. An automatic checkpoint also runs from time, dirty pages, log growth, or cache pressure; those thresholds do not commit an open transaction. If the `.log` is not beside the database, or is empty, opening creates a new log with only the header, advances the generation, and the database continues with the pages already written. A log from the previous generation does not open the database. The log is not cut at a checkpoint. A full backup is what starts a new generation. A checkpoint uses the same lock as SQL, so it does not run beside a statement. Two open transactions cannot change the same table. The before-image of a large value is stored whole in the log, and the log keeps growing until a full backup.
 
 ```bash
-java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/data/store.db --page-size 16384 --user DBA --password secret --name STORE --charset UTF8
+java -jar seadb-cli/target/seadb-cli-1.0.jar create C:/data/store.db --page-size 16384 --user DBA --password secret --name STORE --charset UTF8
 ```
 
 
@@ -69,7 +73,7 @@ java -jar nexora-cli/target/nexora-cli-1.0.jar create C:/data/store.db --page-si
 | `--user`        | `DBA`                            |
 | `--password`    | `dba`                            |
 | `--name`        | file name, without the extension |
-| `--description` | `Nexora`                         |
+| `--description` | `SeaDB`                         |
 | `--charset`     | `UTF8`                           |
 
 
@@ -77,78 +81,78 @@ A file that already has content is not rewritten, and neither is the correspondi
 
 The log accumulates the committed transactions since the database was created or the last full backup. Each commit writes the command and the values compressed, so the file shows neither the SQL nor the contents of the `INSERT`s. A full backup copies the `.db` and the `.log` to another folder and, on the live database, the log then records only what changes after that copy. An incremental backup copies only the `.log`, and the live log continues from where it is. Applying a log decompresses those transactions and runs the SQL against a `.db`: the same generation continues from the checkpoint, and the following generation brings what changed after the full backup.
 
-`nexora-backup` copies the files, as in [Backup window](#backup-window). The personal server and the network server apply a log with `-a`, as in [Network](#network). `nexora-dbtran` writes the SQL from the log, as in [Log translation](#log-translation).
+`seadb-backup` copies the files, as in [Backup window](#backup-window). The personal server and the network server apply a log with `-a`, as in [Network](#network). `seadb-dbtran` writes the SQL from the log, as in [Log translation](#log-translation).
 
 In the API, `Database.backup(file, folder)` performs the full backup, `Database.backupLog(file, folder)` copies only the log, `Database.applyLog(file, log)` applies it, and `Database.exportSql(log, file.sql)` exports. `exportSql` also accepts the `.db` and reads the `.log` beside it. `applyLog` accepts only the log of the same database, including the backup copy: the identifier stored in the log must belong to that `.db`. The backup folder stays outside the database folder.
 
-`NEX$PAGE_SIZE` stores the page size. `NEX$FORMAT` is `1`. `Default.CharacterSet` in `NEX$CONFIG` stores the character set supplied at creation.
+`SEA$PAGE_SIZE` stores the page size. `SEA$FORMAT` is `1`. `Default.CharacterSet` in `SEA$CONFIG` stores the character set supplied at creation.
 
 ## Backup window
 
-`nexora-backup` copies the database. With no arguments, a window opens. With a source and a directory, the command writes the copy and prints the percentage while it runs. The source is a `.db` file or a JDBC URL. A JDBC URL needs `--user` and `--password`, and that user must be a DBA. `--role` is optional. `jdbc:nexora:embedded:<file.db>` opens the file in this process. `jdbc:nexora://host:port/name` asks the server that holds the file to send the copy; the directory is on the machine running the command. A full backup resets the live log after the files have been written. An incremental backup copies only the `.log` and leaves the live log in place. With no kind, the copy is full. The window stores the last fields in `~/.nexora/backup.properties`. The password is written there only when Remember password is checked. `--help` shows the usage.
+`seadb-backup` copies the database. With no arguments, a window opens. With a source and a directory, the command writes the copy and prints the percentage while it runs. The source is a `.db` file or a JDBC URL. A JDBC URL needs `--user` and `--password`, and that user must be a DBA. `--role` is optional. `jdbc:seadb:embedded:<file.db>` opens the file in this process. `jdbc:seadb://host:port/name` asks the server that holds the file to send the copy; the directory is on the machine running the command. A full backup resets the live log after the files have been written. An incremental backup copies only the `.log` and leaves the live log in place. With no kind, the copy is full. The window stores the last fields in `~/.seadb/backup.properties`. The password is written there only when Remember password is checked. `--help` shows the usage.
 
 ```bash
-java -jar nexora-backup/target/nexora-backup-1.0.jar
-java -jar nexora-backup/target/nexora-backup-1.0.jar full C:/data/store.db C:/data/backup
-java -jar nexora-backup/target/nexora-backup-1.0.jar incremental C:/data/store.db C:/data/logs
-java -jar nexora-backup/target/nexora-backup-1.0.jar full jdbc:nexora://127.0.0.1:4580/store --user dba --password secret C:/data/backup
+java -jar seadb-backup/target/seadb-backup-1.0.jar
+java -jar seadb-backup/target/seadb-backup-1.0.jar full C:/data/store.db C:/data/backup
+java -jar seadb-backup/target/seadb-backup-1.0.jar incremental C:/data/store.db C:/data/logs
+java -jar seadb-backup/target/seadb-backup-1.0.jar full jdbc:seadb://127.0.0.1:4580/store --user dba --password secret C:/data/backup
 ```
 
 ## Log translation
 
-`nexora-dbtran` writes the SQL from the transaction log. With no arguments, a window opens. With a log and a SQL file, the command writes the script and prints the percentage while it reads the file. The source is a `.log` or the `.db` beside it. Parameters are written into the text in place of each `?`. The window stores the last fields in `~/.nexora/dbtran.properties`. `--help` shows the usage.
+`seadb-dbtran` writes the SQL from the transaction log. With no arguments, a window opens. With a log and a SQL file, the command writes the script and prints the percentage while it reads the file. The source is a `.log` or the `.db` beside it. Parameters are written into the text in place of each `?`. The window stores the last fields in `~/.seadb/dbtran.properties`. `--help` shows the usage.
 
 ```bash
-java -jar nexora-dbtran/target/nexora-dbtran-1.0.jar
-java -jar nexora-dbtran/target/nexora-dbtran-1.0.jar C:/data/store.log C:/data/store.sql
-java -jar nexora-dbtran/target/nexora-dbtran-1.0.jar C:/data/store.db C:/data/store.sql
+java -jar seadb-dbtran/target/seadb-dbtran-1.0.jar
+java -jar seadb-dbtran/target/seadb-dbtran-1.0.jar C:/data/store.log C:/data/store.sql
+java -jar seadb-dbtran/target/seadb-dbtran-1.0.jar C:/data/store.db C:/data/store.sql
 ```
 
 ## Network
 
-The `.db` file stays open in a single process, together with the `.log`. That process is `nexora-dbeng` on this machine, or `nexora-dbsrv` for other machines. Each one listens on a port and serves JDBC. The driver, in the `nexora-jdbc` project, talks to it through `jdbc:nexora://host:port/name` and also opens the file directly with `jdbc:nexora:embedded:`. The password travels in the clear on TCP, intended for the local network.
+The `.db` file stays open in a single process, together with the `.log`. That process is `seadb-dbeng` on this machine, or `seadb-dbsrv` for other machines. Each one listens on a port and serves JDBC. The driver, in the `seadb-jdbc` project, talks to it through `jdbc:seadb://host:port/name` and also opens the file directly with `jdbc:seadb:embedded:`. The password travels in the clear on TCP, intended for the local network.
 
-`nexora-dbeng` is the personal server. `nexora-dbsrv` is the network server. With no database on the command line, the first window asks for the database file, the cache size, and the options. An empty options field starts the database. `-a banco.log` applies that log and the process exits when the apply finishes. `-x tcpip(port=4580)` changes the port. OK opens the message console, with a Shutdown button. OK also stores those three fields. The next time the window opens with no database and no options on the command line, it shows them again. The personal server writes `~/.nexora/dbeng.properties`. The network server writes `~/.nexora/dbsrv.properties`. A database file on the command line still skips the window and leaves the stored fields as they were.
+`seadb-dbeng` is the personal server. `seadb-dbsrv` is the network server. With no database on the command line, the first window asks for the database file, the cache size, and the options. An empty options field starts the database. `-a banco.log` applies that log and the process exits when the apply finishes. `-x tcpip(port=4580)` changes the port. OK opens the message console, with a Shutdown button. OK also stores those three fields. The next time the window opens with no database and no options on the command line, it shows them again. The personal server writes `~/.seadb/dbeng.properties`. The network server writes `~/.seadb/dbsrv.properties`. A database file on the command line still skips the window and leaves the stored fields as they were.
 
 After the database is started, the process stays in the background and an icon sits in the Windows notification area. Closing or minimizing the console hides it there. Double-click the icon, or Open, brings the console back. Shutdown stops the server and releases the files. Server, then Log SQL, writes each statement on the console.
 
 The personal server listens on `127.0.0.1` only. The network server listens on all interfaces unless `--host` says otherwise. The default port is `4580`. The default cache size is `8M`. That size is the maximum memory for database pages. It is rounded up to a whole number of pages. When the cache is full, the oldest pages are dropped and read again from the file. A `-n` after the database file, or `file.db=name`, is the name in the JDBC URL. A database file on the command line skips the first window and opens the console directly. Each file already exists, created by the CLI.
 
 ```bash
-java -jar nexora-dbeng/target/nexora-dbeng-1.0.jar -p 4580 C:/data/store.db
-java -jar nexora-dbsrv/target/nexora-dbsrv-1.0.jar -x tcpip(port=4580) C:/data/store.db C:/data/other.db
+java -jar seadb-dbeng/target/seadb-dbeng-1.0.jar -p 4580 C:/data/store.db
+java -jar seadb-dbsrv/target/seadb-dbsrv-1.0.jar -x tcpip(port=4580) C:/data/store.db C:/data/other.db
 ```
 
 On the client:
 
 ```java
-String url = "jdbc:nexora://192.168.0.10:4580/store";
+String url = "jdbc:seadb://192.168.0.10:4580/store";
 try (Connection connection = DriverManager.getConnection(url, "dba", "dba")) {
     // ...
 }
 ```
 
-On this machine the personal server is `jdbc:nexora://127.0.0.1:4580/store`. The name after the port is the name from `-n` or from the file name, with no case distinction. Several connections on the server follow the rule of one transaction per file. While the server holds the `.db`, another process that tries to open the same file receives database already open. Shutdown releases the files.
+On this machine the personal server is `jdbc:seadb://127.0.0.1:4580/store`. The name after the port is the name from `-n` or from the file name, with no case distinction. Several connections on the server follow the rule of one transaction per file. While the server holds the `.db`, another process that tries to open the same file receives database already open. Shutdown releases the files.
 
 ## Studio
 
 The studio is the administrative screen, in the spirit of IBExpert: an explorer on the left, documents in the center, and the grid below the SQL. It registers a local file and a database on the server, creates the `.db`, runs a script, and opens a table, a view, a procedure, a trigger, a generator, a role, a user, a privilege, and a connection.
 
 ```bash
-java -jar nexora-studio/target/nexora-studio-1.0.jar
+java -jar seadb-studio/target/seadb-studio-1.0.jar
 ```
 
 F9 runs the script in the editor. Ctrl+Enter does the same. A `SELECT` has to be the last command, as in JDBC. The grid writes to tables that have a primary key. An empty cell becomes `NULL`; for `CHAR` and `VARCHAR`, `''` stores empty text. On the Columns tab of a table, Move up and Move down run `ALTER COLUMN ... POSITION` and the data grid follows that order.
 
-The embedded connection opens the `.db` in this process. If the server already holds the file, it fails: register the database over the network, with the host, the port, and the name the server is publishing. The registration is stored in `~/.nexora/studio.json`. The password is written to that file only when "remember password" is checked.
+The embedded connection opens the `.db` in this process. If the server already holds the file, it fails: register the database over the network, with the host, the port, and the name the server is publishing. The registration is stored in `~/.seadb/studio.json`. The password is written to that file only when "remember password" is checked.
 
 ## DBeaver
 
 1. New connection, custom driver.
-2. Class: `io.github.gabrielmmoraes1999.nexora.jdbc.NexDriver`.
-3. URL: `jdbc:nexora:C:/data/store.db`.
+2. Class: `io.github.gabrielmmoraes1999.seadb.jdbc.SeaDriver`.
+3. URL: `jdbc:seadb:C:/data/store.db`.
 4. User `dba`, password `dba`.
-5. Libraries: the driver JAR (`nexora-jdbc/target/nexora-jdbc-1.0.jar`). The engine is inside that JAR. In DBeaver, replace the old JAR with this one. The personal server and the network server are not added to DBeaver.
+5. Libraries: the driver JAR (`seadb-jdbc/target/seadb-jdbc-1.0.jar`). The engine is inside that JAR. In DBeaver, replace the old JAR with this one. The personal server and the network server are not added to DBeaver.
 
 Opening an embedded database loads the catalog, table metadata, and row locations. Clean row values are decoded on access through the bounded page cache; scanning a table does not retain every decoded row in the engine. Row locations still use memory proportional to the number of rows. Modified rows and transaction snapshots that must survive page reuse can also use additional memory. Large query results are materialized by the current query API.
 
@@ -172,7 +176,7 @@ import java.sql.Statement;
 
 Path file = Path.of("C:/data/store.db");
 
-try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + file.toAbsolutePath(), "dba", "dba")) {
+try (Connection connection = DriverManager.getConnection("jdbc:seadb:" + file.toAbsolutePath(), "dba", "dba")) {
     try (Statement statement = connection.createStatement()) {
         statement.execute("""
                 CREATE TABLE customer (
@@ -216,7 +220,7 @@ try (Connection connection = DriverManager.getConnection("jdbc:nexora:" + file.t
 
 Several commands can go in the same `execute`, separated by `;`. A `SELECT` has to be the last one. The `?` placeholders are positional and apply to the whole script. Comments are `--` through the end of the line and `/* ... */`.
 
-Unquoted identifiers are case-insensitive. Quoted identifiers preserve case, and an embedded `"` is written `""`. A table, column, or index name is at most 128 characters. `$` is allowed in a name, as in `NEX$USERS`.
+Unquoted identifiers are case-insensitive. Quoted identifiers preserve case, and an embedded `"` is written `""`. A table, column, or index name is at most 128 characters. `$` is allowed in a name, as in `SEA$USERS`.
 
 ### Types
 
@@ -354,7 +358,7 @@ DROP SCHEMA sales RESTRICT;
 DROP SCHEMA IF EXISTS sales CASCADE;
 ```
 
-`CREATE SCHEMA IF NOT EXISTS` does not fail if the schema already exists. `DROP SCHEMA` without `CASCADE` requires the schema to be empty. `CASCADE` removes the tables, the views, and the procedures of that schema, and views outside it that depend on them. It does not remove the current session's schema: run `SET SCHEMA public` first. `GRANT` and `REVOKE` accept `schema.table`. `NEX$` tables stay in `public` and remain visible without qualification, in any session schema.
+`CREATE SCHEMA IF NOT EXISTS` does not fail if the schema already exists. `DROP SCHEMA` without `CASCADE` requires the schema to be empty. `CASCADE` removes the tables, the views, and the procedures of that schema, and views outside it that depend on them. It does not remove the current session's schema: run `SET SCHEMA public` first. `GRANT` and `REVOKE` accept `schema.table`. `SEA$` tables stay in `public` and remain visible without qualification, in any session schema.
 
 ### Indexes
 
@@ -433,10 +437,10 @@ Context values: `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCALTIME`
 SELECT CURRENT_DATE;
 
 SELECT CURRENT_DATE, CURRENT_TIMESTAMP, CURRENT_USER, CURRENT_ROLE
-FROM NEX$DATABASE;
+FROM SEA$DATABASE;
 
 INSERT INTO log (occurred_at) VALUES (CURRENT_TIMESTAMP);
-SELECT LOCALTIME(3), CURRENT_TRANSACTION FROM NEX$DATABASE;
+SELECT LOCALTIME(3), CURRENT_TRANSACTION FROM SEA$DATABASE;
 ```
 
 `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` can stand alone or sit next to grouped columns. Mixing an aggregate with a bare column fails when that column is not in the `GROUP BY`.
@@ -537,9 +541,9 @@ COMMIT;
 
 ## Multiple connections
 
-In the same process, several `jdbc:nexora:` connections to the same file share the database. Each connection supplies a user and a password. The `roleName` property (or `role`) chooses the role; empty or `NONE` signs in with no role. Another process receives a database-already-open error.
+In the same process, several `jdbc:seadb:` connections to the same file share the database. Each connection supplies a user and a password. The `roleName` property (or `role`) chooses the role; empty or `NONE` signs in with no role. Another process receives a database-already-open error.
 
-`DROP CONNECTION n` drops the active connection numbered `n`, the same number as `CURRENT_CONNECTION`. The DBA drops any of them. Another user drops only their own. The dropped connection leaves `NEX$CONNECTIONS`, and the next command on it fails. If it owned the open transaction, the database rolls that transaction back.
+`DROP CONNECTION n` drops the active connection numbered `n`, the same number as `CURRENT_CONNECTION`. The DBA drops any of them. Another user drops only their own. The dropped connection leaves `SEA$CONNECTIONS`, and the next command on it fails. If it owned the open transaction, the database rolls that transaction back.
 
 Only one transaction stays open. While it exists, the other connections can read, including what has not been committed yet, and they do not write. A write attempt fails with the open-transaction message.
 
@@ -564,12 +568,12 @@ On a `Statement`, `addBatch` receives the SQL and `executeBatch` runs each comma
 
 ## Metadata
 
-The catalog is `null`. The default schema is `public`. A name pattern uses `%` and `_`, with no case distinction: `"PUBLIC"` matches `public`. `NEX$` tables appear as `SYSTEM TABLE`. `TABLE` returns only the tables created by the application.
+The catalog is `null`. The default schema is `public`. A name pattern uses `%` and `_`, with no case distinction: `"PUBLIC"` matches `public`. `SEA$` tables appear as `SYSTEM TABLE`. `TABLE` returns only the tables created by the application.
 
 ```java
 DatabaseMetaData meta = connection.getMetaData();
-meta.getDatabaseProductName();   // Nexora
-meta.getDriverName();            // Nexora JDBC
+meta.getDatabaseProductName();   // SeaDB
+meta.getDriverName();            // SeaDB JDBC
 
 try (ResultSet tables = meta.getTables(null, null, "%", new String[]{"TABLE"})) {
     while (tables.next()) {
@@ -613,43 +617,43 @@ An SQL failure becomes an `SQLException`. A syntax message or a database-rule me
 
 ## File and internal tables
 
-The database is the `.db` file: page 0 is the header, the catalog comes next, and each table occupies whole pages, with the `BLOB` stored in the table itself. Beside it is the `.log`, with the same name and a different extension (`store.db` and `store.log`). Each committed transaction is stored in that log, compressed, and commit writes the log before the pages. The checkpoint synchronizes the `.db` and keeps that history, from creation or the last full backup. The incremental backup copies only the `.log`. If the process crashes in the middle, the next open reapplies what remained after the checkpoint. `apply` decompresses the transactions and runs the SQL again against a `.db`. There is no folder of tables. The page size is the one chosen in `create`. `NEX$FORMAT` remains `1`.
+The database is the `.db` file: page 0 is the header, the catalog comes next, and each table occupies whole pages, with the `BLOB` stored in the table itself. Beside it is the `.log`, with the same name and a different extension (`store.db` and `store.log`). Each committed transaction is stored in that log, compressed, and commit writes the log before the pages. The checkpoint synchronizes the `.db` and keeps that history, from creation or the last full backup. The incremental backup copies only the `.log`. If the process crashes in the middle, the next open reapplies what remained after the checkpoint. `apply` decompresses the transactions and runs the SQL again against a `.db`. There is no folder of tables. The page size is the one chosen in `create`. `SEA$FORMAT` remains `1`.
 
-Thirteen tables are created with the file, among them `NEX$SCHEMAS` with the `public` row. `CREATE TABLE` adds the owner in `NEX$PRIVILEGES`. The `NEX$` prefix is reserved. `DROP`, `ALTER`, and `CREATE INDEX` on them fail. Identifiers may use `$`.
+Thirteen tables are created with the file, among them `SEA$SCHEMAS` with the `public` row. `CREATE TABLE` adds the owner in `SEA$PRIVILEGES`. The `SEA$` prefix is reserved. `DROP`, `ALTER`, and `CREATE INDEX` on them fail. Identifiers may use `$`.
 
 
 | Table                      | Purpose                                                             | Writes                          |
 | -------------------------- | ------------------------------------------------------------------- | ------------------------------- |
-| `NEX$DATABASE`             | name, description, owner, date, file version, and `NEX$PAGE_SIZE`  | read-only                       |
-| `NEX$CONFIG`               | key and value (`Auth.Hash`, `Default.CharacterSet`)                 | DBA                             |
-| `NEX$USERS`                | users, salted password, active, and administrator                   | DBA                             |
-| `NEX$PRIVILEGES`           | what each user can do on each table                                 | `GRANT` and `REVOKE`            |
-| `NEX$CONNECTIONS`          | active connections: user, login, state, and remote origin           | the database itself             |
-| `NEX$GENERATORS`           | schema, name, current value, start, step, and generator owner       | `CREATE` / `SET GENERATOR`      |
-| `NEX$PROCEDURES`           | schema, name, code, and procedure owner                             | `CREATE PROCEDURE`              |
-| `NEX$PROCEDURE_PARAMETERS` | schema, arguments, and return values (`NEX$PARAMETER_TYPE` 0 or 1) | `CREATE PROCEDURE`              |
-| `NEX$TRIGGERS`             | name, table, position, phase, code, inactive, and owner             | `CREATE TRIGGER`                |
-| `NEX$VIEWS`                | name, `SELECT`, base relation, columns, and owner                   | `CREATE VIEW`                   |
-| `NEX$ROLES`                | role name and owner                                                 | `CREATE ROLE`                   |
-| `NEX$ROLE_MEMBERS`         | who was granted the role and whether they can grant it further      | `GRANT role TO user`            |
-| `NEX$SCHEMAS`              | name and owner of each schema; `public` is the default              | `CREATE SCHEMA` / `DROP SCHEMA` |
+| `SEA$DATABASE`             | name, description, owner, date, file version, and `SEA$PAGE_SIZE`  | read-only                       |
+| `SEA$CONFIG`               | key and value (`Auth.Hash`, `Default.CharacterSet`)                 | DBA                             |
+| `SEA$USERS`                | users, salted password, active, and administrator                   | DBA                             |
+| `SEA$PRIVILEGES`           | what each user can do on each table                                 | `GRANT` and `REVOKE`            |
+| `SEA$CONNECTIONS`          | active connections: user, login, state, and remote origin           | the database itself             |
+| `SEA$GENERATORS`           | schema, name, current value, start, step, and generator owner       | `CREATE` / `SET GENERATOR`      |
+| `SEA$PROCEDURES`           | schema, name, code, and procedure owner                             | `CREATE PROCEDURE`              |
+| `SEA$PROCEDURE_PARAMETERS` | schema, arguments, and return values (`SEA$PARAMETER_TYPE` 0 or 1) | `CREATE PROCEDURE`              |
+| `SEA$TRIGGERS`             | name, table, position, phase, code, inactive, and owner             | `CREATE TRIGGER`                |
+| `SEA$VIEWS`                | name, `SELECT`, base relation, columns, and owner                   | `CREATE VIEW`                   |
+| `SEA$ROLES`                | role name and owner                                                 | `CREATE ROLE`                   |
+| `SEA$ROLE_MEMBERS`         | who was granted the role and whether they can grant it further      | `GRANT role TO user`            |
+| `SEA$SCHEMAS`              | name and owner of each schema; `public` is the default              | `CREATE SCHEMA` / `DROP SCHEMA` |
 
 
-The initial DBA is `DBA`, password `dba`, administrator and active. Another user is added with `INSERT` into `NEX$USERS`; the `NEX$PASSWORD` column receives the password as text and the database stores bcrypt. `SELECT` returns the hash, not the password. The last DBA cannot be deleted or deactivated.
+The initial DBA is `DBA`, password `dba`, administrator and active. Another user is added with `INSERT` into `SEA$USERS`; the `SEA$PASSWORD` column receives the password as text and the database stores bcrypt. `SELECT` returns the hash, not the password. The last DBA cannot be deleted or deactivated.
 
 ```sql
-INSERT INTO NEX$USERS (NEX$USER_NAME, NEX$PASSWORD) VALUES ('ana', 'ana');
-UPDATE NEX$USERS SET NEX$PASSWORD = 'new' WHERE NEX$USER_NAME = 'DBA';
-SELECT NEX$USER_NAME, NEX$REMOTE_PROTOCOL, NEX$REMOTE_ADDRESS, NEX$CONNECTED_AT FROM NEX$CONNECTIONS;
+INSERT INTO SEA$USERS (SEA$USER_NAME, SEA$PASSWORD) VALUES ('ana', 'ana');
+UPDATE SEA$USERS SET SEA$PASSWORD = 'new' WHERE SEA$USER_NAME = 'DBA';
+SELECT SEA$USER_NAME, SEA$REMOTE_PROTOCOL, SEA$REMOTE_ADDRESS, SEA$CONNECTED_AT FROM SEA$CONNECTIONS;
 ```
 
-The row exists only while the connection is open: `NEX$STATE` is `ACTIVE`. On close, the row is deleted. If the process crashes, the next open deletes the rows that remained. `NEX$REMOTE_PROTOCOL` is `local` on the embedded connection and `TCPv4` or `TCPv6` on the server. `NEX$REMOTE_ADDRESS` is the client address. `NEX$REMOTE_HOST`, `NEX$REMOTE_OS_USER`, and `NEX$REMOTE_PROCESS` come from the client process.
+The row exists only while the connection is open: `SEA$STATE` is `ACTIVE`. On close, the row is deleted. If the process crashes, the next open deletes the rows that remained. `SEA$REMOTE_PROTOCOL` is `local` on the embedded connection and `TCPv4` or `TCPv6` on the server. `SEA$REMOTE_ADDRESS` is the client address. `SEA$REMOTE_HOST`, `SEA$REMOTE_OS_USER`, and `SEA$REMOTE_PROCESS` come from the client process.
 
 ## Authorization
 
 The DBA is allowed on every table. The user who creates a table becomes its owner and can read, write, alter the structure, and grant access. Other users get in only through `GRANT`.
 
-`NEX$PRIVILEGES` stores the user, the table, the privilege (`OWNER`, `SELECT`, `INSERT`, `UPDATE`, or `DELETE`), whether it can be granted further (`NEX$GRANT_OPTION`), and who granted it (`NEX$GRANTOR`). A direct `INSERT` into that table fails. `PUBLIC` applies to everyone.
+`SEA$PRIVILEGES` stores the user, the table, the privilege (`OWNER`, `SELECT`, `INSERT`, `UPDATE`, or `DELETE`), whether it can be granted further (`SEA$GRANT_OPTION`), and who granted it (`SEA$GRANTOR`). A direct `INSERT` into that table fails. `PUBLIC` applies to everyone.
 
 ```sql
 GRANT SELECT ON customer TO ana;
@@ -681,19 +685,19 @@ Session ana = db.login("ana", "ana", "sales");
 
 The value is committed immediately: `ROLLBACK` undoes the row, but not the `GEN_ID`. `CREATE GENERATOR` starts at 0, so the first `GEN_ID(name, 1)` returns 1. `SET GENERATOR name TO 100` stores 100; the next step of 1 returns 101. `CREATE SEQUENCE name START WITH 10 INCREMENT BY 2` makes the first `NEXT VALUE FOR name` return 10. `ALTER SEQUENCE name RESTART WITH 20` makes the next value 20. `GEN_ID(name, 0)` only reads the current value. The user who creates the generator is its owner; the DBA can drop it as well.
 
-A generator and a sequence live in the schema, like a table and a procedure. Without a prefix, the name uses the session schema. `CREATE SEQUENCE sales.seq_item` stores it in `sales`, and the same name can exist in another schema. `GEN_ID` and `NEXT VALUE FOR` without a schema use the session; inside a procedure or trigger, they use the routine's schema or the table's schema. `DROP SCHEMA ... CASCADE` drops the sequences of that schema. `NEX$SCHEMA_NAME` stores the schema, including `public`.
+A generator and a sequence live in the schema, like a table and a procedure. Without a prefix, the name uses the session schema. `CREATE SEQUENCE sales.seq_item` stores it in `sales`, and the same name can exist in another schema. `GEN_ID` and `NEXT VALUE FOR` without a schema use the session; inside a procedure or trigger, they use the routine's schema or the table's schema. `DROP SCHEMA ... CASCADE` drops the sequences of that schema. `SEA$SCHEMA_NAME` stores the schema, including `public`.
 
 ```sql
 CREATE GENERATOR gen_item;
 CREATE SEQUENCE seq_item START WITH 10 INCREMENT BY 2;
-SELECT GEN_ID(gen_item, 1) AS n FROM NEX$DATABASE;
-SELECT NEXT VALUE FOR seq_item AS n FROM NEX$DATABASE;
+SELECT GEN_ID(gen_item, 1) AS n FROM SEA$DATABASE;
+SELECT NEXT VALUE FOR seq_item AS n FROM SEA$DATABASE;
 SET GENERATOR gen_item TO 100;
 ALTER SEQUENCE seq_item RESTART WITH 20;
 DROP GENERATOR gen_item;
 ```
 
-A procedure stores the code and the parameters, in the session schema or in the schema written in the name. `CREATE PROCEDURE sales.series` lives in `sales`; without the prefix, it lives in the current schema. The same name can exist in different schemas. `EXECUTE PROCEDURE series` and `SELECT ... FROM series(...)` use the session schema when the name carries no schema. In the body, a name without a schema uses the procedure's schema. `DROP SCHEMA ... CASCADE` drops the procedures of that schema. `NEX$SCHEMA_NAME` stores the schema, including `public`.
+A procedure stores the code and the parameters, in the session schema or in the schema written in the name. `CREATE PROCEDURE sales.series` lives in `sales`; without the prefix, it lives in the current schema. The same name can exist in different schemas. `EXECUTE PROCEDURE series` and `SELECT ... FROM series(...)` use the session schema when the name carries no schema. In the body, a name without a schema uses the procedure's schema. `DROP SCHEMA ... CASCADE` drops the procedures of that schema. `SEA$SCHEMA_NAME` stores the schema, including `public`.
 
 In the body, the semicolon is part of the routine: `SET TERM` is not required. `EXECUTE PROCEDURE` returns one row with the return values, stopping at the first `SUSPEND`. `SELECT` from `name(arguments)` returns one row per `SUSPEND`. Without `SUSPEND`, the `SELECT` comes back empty and `EXECUTE PROCEDURE` still returns the final values. Inside the routine SQL, a variable uses `:name`. In `IF`, `WHILE`, and assignment, the bare name is already the variable. `NEW` and `OLD` exist in a trigger. `OLD` is only read. An assignment in `BEFORE INSERT` or `BEFORE UPDATE` goes into the row; in `AFTER`, it does not change what was already written. `DELETE` has only `OLD`.
 
@@ -760,3 +764,11 @@ CREATE VIEW names AS SELECT person FROM active;
 DROP VIEW names;
 DROP VIEW active;
 ```
+
+## Identidade SeaDB
+
+O projeto foi renomeado de Nexora para SeaDB. Os módulos e executáveis usam o prefixo `seadb-`, os pacotes Java usam `io.github.gabrielmmoraes1999.seadb` e as URLs JDBC usam `jdbc:seadb:`. Atualize as dependências Maven, imports, configurações e scripts dos clientes ao migrar.
+
+As assinaturas binárias históricas dos arquivos de banco e log foram preservadas para permitir a leitura dos bancos existentes. O símbolo do leão-marinho é desenhado por `SeaIcon` e compartilhado pelas janelas e pelo gerador de ícones Windows.
+
+O driver JDBC agora é `io.github.gabrielmmoraes1999.seadb.jdbc.SeaDriver`. As classes JDBC auxiliares e a exceção pública também usam `Sea` (por exemplo, `SeaConnection` e `SeaException`). O catálogo usa tabelas e colunas `SEA$`, como `SEA$USERS` e `SEA$USER_NAME`. A leitura dos metadados anteriores traduz o prefixo reservado `NEX$` para `SEA$`; o SQL anterior continua sendo aceito para recuperar logs e definições existentes. Literais e dados dos usuários permanecem intactos.
