@@ -758,6 +758,10 @@ final class TransactionLog implements AutoCloseable {
      * An incomplete record or one with an invalid CRC at the end of the file is discarded.
      */
     boolean replay(long checkpointLsn, BiConsumer<Long, List<Span>> redo) {
+        return replay(checkpointLsn, redo, null);
+    }
+
+    boolean replay(long checkpointLsn, BiConsumer<Long, List<Span>> redo, LongConsumer checkpointRead) {
         long size = size();
         consistentEnd = Math.min(size, Format.LOG_HEADER_SIZE);
         if (size < Format.LOG_HEADER_SIZE) {
@@ -796,6 +800,9 @@ final class TransactionLog implements AutoCloseable {
             }
             at += recordLength;
             consistentEnd = at;
+            if (type == Format.RECORD_CHECKPOINT && at >= checkpointLsn && checkpointRead != null) {
+                checkpointRead.accept(at);
+            }
         }
         return applied;
     }

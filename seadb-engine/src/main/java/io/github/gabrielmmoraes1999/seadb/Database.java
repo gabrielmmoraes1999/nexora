@@ -13,6 +13,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.IntConsumer;
+import java.util.function.Consumer;
 
 /**
  * SeaDB. The database is a {@code .db} file: tables, BLOBs,
@@ -127,15 +128,29 @@ public final class Database implements AutoCloseable {
      * from 1 to 100, when that percent changes. It is not called when the log is rejected.
      */
     public static void applyLog(Path database, Path log, Cache cache, IntConsumer applied) {
+        applyLog(database, log, cache, applied, null);
+    }
+
+    /**
+     * Also reports recovery stages and checkpoint positions, including recovery performed
+     * before SQL replay. Messages about reading a checkpoint do not imply a durable apply;
+     * the final checkpoint message is sent only after successful application and close.
+     */
+    public static void applyLog(Path database, Path log, Cache cache, IntConsumer applied,
+                                Consumer<String> messages) {
         if (database == null) {
             throw new SeaException("database file is required");
         }
         if (log == null) {
             throw new SeaException("transaction log is required");
         }
-        try (Engine engine = Engine.openApplying(database, cache)) {
+        long checkpoint;
+        try (Engine engine = Engine.openApplying(database, cache, messages)) {
+            if (messages != null) messages.accept("Applying committed transactions from " + log);
             engine.applyExternalLog(log, applied);
+            checkpoint = engine.checkpointLsn();
         }
+        if (messages != null) messages.accept("Checkpoint applied at log offset " + checkpoint);
     }
 
     /**

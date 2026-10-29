@@ -20,6 +20,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.IntConsumer;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 final class Engine implements AutoCloseable {
@@ -114,13 +115,23 @@ final class Engine implements AutoCloseable {
         return open(file, cache, false);
     }
 
+    static Engine openApplying(Path file, Cache cache, Consumer<String> messages) {
+        return open(file, cache, false, messages);
+    }
+
     private static Engine open(Path file, Cache cache, boolean session) {
-        DatabaseFile storage = session ? DatabaseFile.open(file, cache) : DatabaseFile.openApplying(file, cache);
+        return open(file, cache, session, null);
+    }
+
+    private static Engine open(Path file, Cache cache, boolean session, Consumer<String> messages) {
+        DatabaseFile storage = session ? DatabaseFile.open(file, cache) : DatabaseFile.openApplying(file, cache, messages);
         Engine engine = new Engine(storage);
         try {
             engine.loadTables();
             if (!session) {
+                if (messages != null) messages.accept("Undoing uncommitted transactions");
                 engine.recoverUncommitted();
+                if (messages != null) messages.accept("Recovering committed transactions");
                 engine.recoverCommittedSql();
             }
             engine.ensureSystem(DatabaseOptions.defaults());

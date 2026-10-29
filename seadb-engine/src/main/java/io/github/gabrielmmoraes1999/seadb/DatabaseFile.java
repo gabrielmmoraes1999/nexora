@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 
 /**
  * The {@code .db} file. Page 0 is the header. The catalog and each table
@@ -80,6 +81,7 @@ final class DatabaseFile implements AutoCloseable {
     private final List<Extent> retire = new ArrayList<>();
     private List<Extent> wipeAfter = List.of();
     private final Cache cache;
+    private Consumer<String> recoveryMessages;
     private boolean backupActive;
     private boolean backupFull;
     private List<BackupSlice> backupSlices = List.of();
@@ -109,11 +111,20 @@ final class DatabaseFile implements AutoCloseable {
         return open(file, Format.DEFAULT_PAGE_SIZE, true, cache, true);
     }
 
+    static DatabaseFile openApplying(Path file, Cache cache, Consumer<String> messages) {
+        return open(file, Format.DEFAULT_PAGE_SIZE, true, cache, true, messages);
+    }
+
     static DatabaseFile create(Path file, int pageSize) {
         return open(file, Format.checkPageSize(pageSize), false, null, false);
     }
 
     private static DatabaseFile open(Path file, int pageSize, boolean existing, Cache cache, boolean applying) {
+        return open(file, pageSize, existing, cache, applying, null);
+    }
+
+    private static DatabaseFile open(Path file, int pageSize, boolean existing, Cache cache, boolean applying,
+                                     Consumer<String> messages) {
         if (file == null) {
             throw new SeaException("database file is required");
         }
@@ -146,6 +157,7 @@ final class DatabaseFile implements AutoCloseable {
                     : Format.openHeld(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             DatabaseFile database = new DatabaseFile(path, channel, cache);
             database.applying = applying;
+            database.recoveryMessages = messages;
             try {
                 database.lock();
                 if (created || channel.size() == 0) {
@@ -721,7 +733,11 @@ final class DatabaseFile implements AutoCloseable {
             if (checkpointLsn < Format.LOG_HEADER_SIZE || checkpointLsn > log.size()) {
                 throw new SeaException("transaction log does not cover the checkpoint");
             }
-            log.replay(checkpointLsn, this::applyRedo);
+            if (recoveryMessages != null) {
+                recoveryMessages.accept("Recovering from checkpoint at log offset " + checkpointLsn);
+            }
+            log.replay(checkpointLsn, this::applyRedo, recoveryMessages == null ? null :
+                    offset -> recoveryMessages.accept("Checkpoint read at log offset " + offset));
             log.truncate(log.consistentEnd());
             if (checkpointLsn > log.size()) {
                 throw new SeaException("transaction log does not cover the checkpoint");

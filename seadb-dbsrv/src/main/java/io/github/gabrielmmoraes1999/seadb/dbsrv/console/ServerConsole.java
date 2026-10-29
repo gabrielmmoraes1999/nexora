@@ -303,7 +303,7 @@ public final class ServerConsole extends JFrame {
             Database.applyLog(file, transactionLog, Cache.of(arguments.cacheBytes()), percent -> {
                 shown[0] = percent;
                 show(percent + "% complete");
-            });
+            }, this::show);
         } catch (RuntimeException exception) {
             error(message(exception));
             error("The log was not applied. Shutdown closes this window.");
