@@ -85,6 +85,9 @@ final class DatabaseFile implements AutoCloseable {
     private boolean backupActive;
     private boolean backupFull;
     private List<BackupSlice> backupSlices = List.of();
+    private final Object backupLock = new Object();
+    private BackupSnapshot backupSnapshot;
+    private long backupLogLength;
 
     private DatabaseFile(Path path, FileChannel channel, Cache cache) {
         this.path = path;
@@ -321,7 +324,7 @@ final class DatabaseFile implements AutoCloseable {
             }
             return;
         }
-        Format.writeFully(channel, offset, data);
+        writeNow(offset, data);
         if (pageSize > 0) {
             cache.forget(path, pageSize, offset, data.length);
         }
@@ -335,7 +338,7 @@ final class DatabaseFile implements AutoCloseable {
             }
             return;
         }
-        Format.zero(channel, offset, length);
+        zeroNow(offset, length);
         if (pageSize > 0) {
             cache.forget(path, pageSize, offset, length);
         }
@@ -541,9 +544,9 @@ final class DatabaseFile implements AutoCloseable {
         }
         for (DeferredIo op : pending) {
             if (op.kind == DeferredIo.WRITE) {
-                Format.writeFully(channel, op.offset, op.data);
+                writeNow(op.offset, op.data);
             } else if (op.kind == DeferredIo.ZERO) {
-                Format.zero(channel, op.offset, op.length);
+                zeroNow(op.offset, op.length);
             } else {
                 resizeNow(op.length);
             }
@@ -607,6 +610,11 @@ final class DatabaseFile implements AutoCloseable {
 
     @Override
     public void close() {
+        try {
+            endBackup();
+        } catch (RuntimeException ignored) {
+            // Always release the database and log even if snapshot cleanup fails.
+        }
         try {
             if (!applying) {
                 saveCheckpoint(sessionBoundary);
@@ -895,21 +903,38 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     private void resizeNow(long size) {
-        try {
-            long current = channel.size();
-            if (current > size) {
-                channel.truncate(size);
-            } else if (current < size) {
-                ByteBuffer zero = ByteBuffer.allocate(1);
-                if (channel.write(zero, size - 1) != 1) {
-                    throw new SeaException("failed to resize the database file");
+        synchronized (backupLock) {
+            try {
+                long current = channel.size();
+                if (current > size) {
+                    if (backupSnapshot != null) backupSnapshot.preserve(size, current - size);
+                    channel.truncate(size);
+                } else if (current < size) {
+                    ByteBuffer zero = ByteBuffer.allocate(1);
+                    if (channel.write(zero, size - 1) != 1) {
+                        throw new SeaException("failed to resize the database file");
+                    }
                 }
+                cache.release(path);
+            } catch (SeaException exception) {
+                throw exception;
+            } catch (IOException exception) {
+                throw new SeaException("failed to resize the database file: " + exception.getMessage(), exception);
             }
-            cache.release(path);
-        } catch (SeaException exception) {
-            throw exception;
-        } catch (IOException exception) {
-            throw new SeaException("failed to resize the database file: " + exception.getMessage(), exception);
+        }
+    }
+
+    private void writeNow(long offset, byte[] data) {
+        synchronized (backupLock) {
+            if (backupSnapshot != null) backupSnapshot.preserve(offset, data.length);
+            Format.writeFully(channel, offset, data);
+        }
+    }
+
+    private void zeroNow(long offset, long length) {
+        synchronized (backupLock) {
+            if (backupSnapshot != null) backupSnapshot.preserve(offset, length);
+            Format.zero(channel, offset, length);
         }
     }
 
@@ -1242,9 +1267,8 @@ final class DatabaseFile implements AutoCloseable {
     }
 
     /**
-     * Checkpoint and remember the files a remote backup will read.
-     * The live log moves to the next generation only in {@link #finishBackup},
-     * after those bytes have been copied.
+     * Capture the checkpoint. Database before-images preserve it during writes;
+     * the append-only log is read only up to its captured length.
      */
     List<BackupPiece> beginBackup(boolean incremental) {
         if (backupActive) {
@@ -1262,6 +1286,10 @@ final class DatabaseFile implements AutoCloseable {
         }
         String dbName = fileName(path);
         String logName = fileName(log.path);
+        synchronized (backupLock) {
+            backupSnapshot = incremental ? null : new BackupSnapshot(channel, dbBytes);
+        }
+        backupLogLength = log.logicalLength();
         backupFull = !incremental;
         backupSlices = incremental
                 ? List.of(new BackupSlice(logName, log.size(), true))
@@ -1296,15 +1324,22 @@ final class DatabaseFile implements AutoCloseable {
         if (slice.log) {
             return log.readAt(offset, want);
         }
-        return Format.readFully(channel, offset, want);
+        synchronized (backupLock) {
+            return backupSnapshot.read(offset, want);
+        }
     }
 
-    /** Full backup advances the live log. An incremental backup leaves it in place. */
-    void finishBackup() {
+    /** Only an unchanged full backup may discard the live log history. */
+    void finishBackup(boolean mayRotate) {
         if (!backupActive) {
             throw new SeaException("there is no backup in progress");
         }
-        if (backupFull) {
+        boolean unchanged;
+        synchronized (backupLock) {
+            unchanged = backupSnapshot != null && !backupSnapshot.changed()
+                    && log.logicalLength() == backupLogLength;
+        }
+        if (backupFull && mayRotate && unchanged) {
             rollLog();
         }
         endBackup();
@@ -1327,6 +1362,11 @@ final class DatabaseFile implements AutoCloseable {
         backupActive = false;
         backupFull = false;
         backupSlices = List.of();
+        synchronized (backupLock) {
+            BackupSnapshot snapshot = backupSnapshot;
+            backupSnapshot = null;
+            if (snapshot != null) snapshot.close();
+        }
     }
 
     private static String fileName(Path file) {

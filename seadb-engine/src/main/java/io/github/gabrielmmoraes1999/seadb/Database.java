@@ -565,9 +565,8 @@ public final class Database implements AutoCloseable {
 
     /**
      * Checkpoints the open database and returns the files a backup will copy.
-     * Only a DBA may call this. Writers must wait until {@link #finishBackup}
-     * or {@link #abortBackup}. A full backup passes {@code incremental} as false
-     * and advances the live log only when {@link #finishBackup} runs.
+     * Only a DBA may call this. Other sessions may continue writing while the
+     * captured pages and log prefix are read. A full backup passes false.
      */
     public List<BackupPiece> beginBackup(Session session, boolean incremental) {
         synchronized (engine) {
@@ -585,8 +584,8 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Ends a backup started by this session. A full backup then makes the live
-     * log record only what changes afterward.
+     * Ends a backup. An unchanged full backup advances the live log generation;
+     * concurrent changes or open transactions keep the log for recovery.
      */
     public void finishBackup(Session session) {
         synchronized (engine) {

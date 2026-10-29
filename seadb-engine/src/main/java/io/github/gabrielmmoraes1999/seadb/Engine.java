@@ -536,6 +536,9 @@ final class Engine implements AutoCloseable {
         if (closed) {
             throw new SeaException("session closed");
         }
+        awaitPageForce();
+        if (forcing) throw new SeaException("backup interrupted while waiting for checkpoint");
+        checkpoint(true);
         return storage.beginBackup(incremental);
     }
 
@@ -550,7 +553,9 @@ final class Engine implements AutoCloseable {
         if (closed) {
             throw new SeaException("session closed");
         }
-        storage.finishBackup();
+        awaitPageForce();
+        if (forcing) throw new SeaException("backup interrupted while waiting for checkpoint");
+        storage.finishBackup(transactions.isEmpty());
     }
 
     void abortBackup() {

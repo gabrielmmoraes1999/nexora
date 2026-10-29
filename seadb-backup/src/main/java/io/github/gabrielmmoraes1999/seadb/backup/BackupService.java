@@ -22,7 +22,8 @@ public final class BackupService {
 
     /**
      * Copies the database into {@code directory}.
-     * A full backup also resets the live log after the files have been written.
+     * A full backup resets the live log only if concurrent changes or open
+     * transactions do not require retaining it.
      * An incremental backup copies only the {@code .log} and leaves the live log in place.
      *
      * @param source a {@code .db} path or a {@code jdbc:seadb:} URL

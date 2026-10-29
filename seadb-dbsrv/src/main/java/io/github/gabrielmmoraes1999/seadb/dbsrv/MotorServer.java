@@ -470,7 +470,6 @@ public final class MotorServer implements AutoCloseable {
 
         private Session login(String user, String password, String role, RemoteClient remote) {
             synchronized (database) {
-                gate(null);
                 Session session = database.login(user, password, role, remote);
                 sessions.add(session);
                 return session;
@@ -479,7 +478,6 @@ public final class MotorServer implements AutoCloseable {
 
         private Reply execute(Session session, String sql, Object[] params) {
             synchronized (database) {
-                gate(session);
                 ensure(session);
                 if (backupSession == session) {
                     throw new SeaException("a backup is in progress on this connection");
@@ -528,7 +526,6 @@ public final class MotorServer implements AutoCloseable {
                     throw exception;
                 } finally {
                     backupSession = null;
-                    database.notifyAll();
                 }
             }
         }
@@ -542,14 +539,12 @@ public final class MotorServer implements AutoCloseable {
                     database.abortBackup(session);
                 } finally {
                     backupSession = null;
-                    database.notifyAll();
                 }
             }
         }
 
         private Wire.StateView setSchema(Session session, String schema) {
             synchronized (database) {
-                gate(session);
                 ensure(session);
                 database.setSchema(session, schema == null || schema.isBlank() ? "public" : schema);
                 return view(session);
@@ -558,7 +553,6 @@ public final class MotorServer implements AutoCloseable {
 
         private Wire.StateView state(Session session) {
             synchronized (database) {
-                gate(session);
                 ensure(session);
                 return view(session);
             }
@@ -566,7 +560,6 @@ public final class MotorServer implements AutoCloseable {
 
         private List<String> schemas(Session session) {
             synchronized (database) {
-                gate(session);
                 ensure(session);
                 return database.schemas(session);
             }
@@ -574,7 +567,6 @@ public final class MotorServer implements AutoCloseable {
 
         private List<TableDescription> describeTables(Session session) {
             synchronized (database) {
-                gate(session);
                 ensure(session);
                 return database.describeAllTables(session);
             }
@@ -582,7 +574,6 @@ public final class MotorServer implements AutoCloseable {
 
         private List<TableDescription> describeViews(Session session) {
             synchronized (database) {
-                gate(session);
                 ensure(session);
                 return database.describeViews(session);
             }
@@ -597,9 +588,6 @@ public final class MotorServer implements AutoCloseable {
                         // logout still removes the connection
                     }
                     backupSession = null;
-                    database.notifyAll();
-                } else {
-                    gate(session);
                 }
                 try {
                     if (database.transactionActive(session) && !session.closed()) {
@@ -627,7 +615,6 @@ public final class MotorServer implements AutoCloseable {
                         // shutdown still releases the file
                     }
                     backupSession = null;
-                    database.notifyAll();
                 }
                 for (Session session : List.copyOf(sessions)) {
                     try {
@@ -650,20 +637,7 @@ public final class MotorServer implements AutoCloseable {
 
         private boolean transactionOpen(Session session) {
             synchronized (database) {
-                gate(session);
                 return database.transactionActive(session);
-            }
-        }
-
-        /** Other sessions wait so the bytes captured at the checkpoint stay put. */
-        private void gate(Session session) {
-            while (backupSession != null && backupSession != session) {
-                try {
-                    database.wait();
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                    throw new SeaException("the backup was interrupted");
-                }
             }
         }
 

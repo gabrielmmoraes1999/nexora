@@ -30,6 +30,44 @@ class BackupServiceTest {
     Path dir;
 
     @Test
+    void insertsAndNewConnectionsContinueWhileRemoteBackupIsOpen() throws Exception {
+        Path file = dir.resolve("online.db");
+        Database.create(file, DatabaseOptions.defaults());
+        try (Database db = Database.open(file, "dba", "dba")) {
+            db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+            db.execute("INSERT INTO t VALUES (1)");
+        }
+        var config = new MotorConfig("127.0.0.1", 0, List.of(new MotorConfig.DatabaseSpec("online", file)));
+        try (MotorServer server = MotorServer.start(config)) {
+            String url = "jdbc:seadb://127.0.0.1:" + server.port() + "/online";
+            var wrote = new java.util.concurrent.atomic.AtomicBoolean();
+            BackupService.backup(url, "dba", "dba", null, false, dir.resolve("copy"), percent -> {
+                if (percent != 0 || !wrote.compareAndSet(false, true)) return;
+                var future = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try (var connection = DriverManager.getConnection(url, "dba", "dba")) {
+                        connection.createStatement().execute("INSERT INTO t VALUES (2)");
+                        try (var rows = connection.createStatement().executeQuery("SELECT COUNT(*) FROM t")) {
+                            assertTrue(rows.next());
+                            assertEquals(2, rows.getInt(1));
+                        }
+                    } catch (java.sql.SQLException exception) {
+                        throw new RuntimeException(exception);
+                    }
+                });
+                try { future.get(5, java.util.concurrent.TimeUnit.SECONDS); }
+                catch (Exception exception) { throw new AssertionError("SQL blocked by backup", exception); }
+            });
+            assertTrue(wrote.get());
+            try (Database db = Database.open(dir.resolve("copy/online.db"), "dba", "dba")) {
+                assertEquals(1, db.query("SELECT * FROM t").rows().size());
+            }
+        }
+        try (Database db = Database.open(file, "dba", "dba")) {
+            assertEquals(2, db.query("SELECT * FROM t").rows().size());
+        }
+    }
+
+    @Test
     void backupCompletoEIncremental() throws Exception {
         assertTrue(assertThrows(SeaException.class, () ->
                 BackupService.backup("  ", null, null, null, false, dir, null)).getMessage().contains(".db"));

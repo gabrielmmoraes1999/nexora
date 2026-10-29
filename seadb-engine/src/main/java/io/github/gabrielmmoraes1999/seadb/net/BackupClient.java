@@ -113,7 +113,7 @@ public final class BackupClient {
                 Wire.writeFrame(output, Wire.LOGOUT, new byte[0]);
                 readOk(input, "invalid response from the server");
             } catch (IOException | SeaException ignored) {
-                // the files are already in place and the live log was reset
+                // the files are already in place and the backup has finished
             }
         } catch (SeaException exception) {
             throw exception;
