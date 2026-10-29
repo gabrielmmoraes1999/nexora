@@ -3888,7 +3888,14 @@ final class Engine implements AutoCloseable {
                     long previousBase = table.base();
                     long previousCapacity = table.capacity();
                     if (grow) {
-                        storage.copy(previousBase, base, storedSize);
+                        if (merged && plan.relocation != null
+                                && plan.sourceBase == previousBase && plan.sourceSize == storedSize) {
+                            for (TableStore.Write chunk : plan.relocation) {
+                                storage.writeBytes(base + chunk.offset, chunk.bytes);
+                            }
+                        } else {
+                            storage.copy(previousBase, base, storedSize);
+                        }
                     }
                     storage.retire(previousBase, previousCapacity);
                     draft.free(previousBase, previousCapacity);

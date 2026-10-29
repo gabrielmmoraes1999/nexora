@@ -47,6 +47,7 @@ final class TableStore implements AutoCloseable {
     private int structureEpoch;
     private RowMap encodingLive;
     private TableStore encodingSnapshot;
+    private DatabaseFile.Allocator encodingAllocator;
     private Plan preparedPlan;
     private boolean encodeMerged;
     /**
@@ -950,6 +951,8 @@ final class TableStore implements AutoCloseable {
         snapshot.generation = generation;
         snapshot.activeSlot = activeSlot;
         snapshot.nextRowId = nextRowId;
+        snapshot.encodingAllocator = file.draft();
+        snapshot.encodingAllocator.free(file.catalogOffset(), file.catalogSpan());
         rows = rows.sprout();
         encodingLive = rows;
         encodingSnapshot = snapshot;
@@ -970,6 +973,20 @@ final class TableStore implements AutoCloseable {
         // live rows and indexes, never a mixture of live and frozen state.
         Plan plan = snapshot.prepare();
         plan.packed = pack(plan.writes);
+        if (plan.fileSize > snapshot.capacity && !snapshot.encodingAllocator.extendTail(
+                snapshot.base, snapshot.capacity, DatabaseFile.capacityFor(plan.fileSize, file.pageSize()))) {
+            // A relocation used to read the entire old region with the engine
+            // locked. Capture it with the frozen image instead. A concurrent
+            // commit invalidates encodingSnapshot and discards both images.
+            plan.relocation = new ArrayList<>();
+            plan.sourceBase = snapshot.base;
+            plan.sourceSize = snapshot.fileSize;
+            for (long at = 0; at < snapshot.fileSize;) {
+                int count = (int) Math.min(1024 * 1024L, snapshot.fileSize - at);
+                plan.relocation.add(new Write(at, snapshot.readAt(at, count)));
+                at += count;
+            }
+        }
         synchronized (this) {
             if (encodingSnapshot == snapshot) {
                 preparedPlan = plan;
@@ -1821,6 +1838,9 @@ final class TableStore implements AutoCloseable {
         final long nextRowId;
         final long[] indexRoots;
         List<Write> packed;
+        List<Write> relocation;
+        long sourceBase;
+        long sourceSize;
 
         Plan(List<Write> writes, TreeMap<Long, StoredRow> rows, List<StoredRow> changed, List<Extent> free, long fileSize,
              long metaOffset, int metaLength, long generation, int targetSlot, Schema schema, long nextRowId,

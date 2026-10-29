@@ -1918,6 +1918,19 @@ final class DatabaseFile implements AutoCloseable {
         }
 
         void apply(DatabaseFile file) {
+            if (file.deferDbSync) {
+                // Prepared checkpoint writes already own immutable byte arrays.
+                // Do not concatenate the entire table while SQL holds the lock;
+                // the worker writes these bounded spans after the lock is released.
+                for (TransactionLog.Span span : spans.values()) {
+                    if (span.data == null) {
+                        file.diskZero(span.offset, span.length);
+                    } else {
+                        file.diskWrite(span.offset, span.data);
+                    }
+                }
+                return;
+            }
             long runAt = -1;
             byte[] run = null;
             int runLength = 0;
