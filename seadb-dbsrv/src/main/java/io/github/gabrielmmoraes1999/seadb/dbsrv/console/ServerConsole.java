@@ -879,7 +879,7 @@ public final class ServerConsole extends JFrame {
         return new Font(Font.SANS_SERIF, style, size);
     }
 
-    private static List<Image> iconImages() {
+    static List<Image> iconImages() {
         List<Image> images = new ArrayList<>();
         for (int size : new int[]{16, 20, 24, 32, 40, 48, 64, 128, 256}) {
             images.add(icon(size));

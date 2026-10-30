@@ -49,6 +49,7 @@ public final class StartDialog extends JDialog {
 
     private StartDialog(Kind kind, Arguments preset) {
         super((JDialog) null, kind.product(), true);
+        setIconImages(ServerConsole.iconImages());
         this.kind = kind;
         Font ui = getFont() == null ? new Font(Font.SANS_SERIF, Font.PLAIN, 13) : getFont();
         database.setFont(ui);
