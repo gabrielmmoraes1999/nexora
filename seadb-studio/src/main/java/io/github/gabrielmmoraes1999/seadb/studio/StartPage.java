@@ -34,7 +34,7 @@ final class StartPage extends JPanel {
 
         JLabel text = new JLabel("""
                 <html><body style='width:460px'>
-                Administrative interface for the <b>.db</b> file, in the spirit of IBExpert.
+                Administrative interface for the <b>.db</b> file.
                 The explorer sits on the left. SQL and objects open in the center.
                 The grid writes to tables that have a primary key.
                 <br><br>

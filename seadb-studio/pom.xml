@@ -12,7 +12,7 @@
 
     <artifactId>seadb-studio</artifactId>
     <name>SeaDB Studio</name>
-    <description>Administrative interface for SeaDB. Explorer, SQL editor, and grid, in the spirit of IBExpert.</description>
+    <description>Administrative interface for SeaDB. Explorer, SQL editor, and grid.</description>
 
     <dependencies>
         <dependency>

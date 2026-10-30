@@ -138,7 +138,7 @@ On this machine the personal server is `jdbc:seadb://127.0.0.1:4580/store`. The 
 
 ## Studio
 
-The studio is the administrative screen, in the spirit of IBExpert: an explorer on the left, documents in the center, and the grid below the SQL. It registers a local file and a database on the server, creates the `.db`, runs a script, and opens a table, a view, a procedure, a trigger, a generator, a role, a user, a privilege, and a connection.
+The studio is the administrative screen: an explorer on the left, documents in the center, and the grid below the SQL. It registers a local file and a database on the server, creates the `.db`, runs a script, and opens a table, a view, a procedure, a trigger, a generator, a role, a user, a privilege, and a connection.
 
 ```bash
 java -jar seadb-studio/target/seadb-studio-1.0.jar

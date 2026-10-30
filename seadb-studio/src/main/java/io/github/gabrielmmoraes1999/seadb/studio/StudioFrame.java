@@ -773,7 +773,7 @@ final class StudioFrame extends JFrame implements ExplorerPane.Listener, Hub {
         help.add(item("About", () -> javax.swing.JOptionPane.showMessageDialog(this, """
                 SeaDB Studio 1.0
 
-                Administrative interface for SeaDB, in the spirit of IBExpert.
+                Administrative interface for SeaDB.
                 The database is a .db file with the .log beside it. The embedded connection opens the file
                 in this process. The network connection talks to the personal or the network server.
                 """, "About", javax.swing.JOptionPane.PLAIN_MESSAGE, Look.imageIcon(64))));
