@@ -11,10 +11,10 @@ import java.util.zip.CRC32;
 
 final class Format {
 
-    // Keep the original on-disk signatures and offsets so existing databases remain readable.
-    static final byte[] MAGIC = "NEXORANEX".getBytes(StandardCharsets.US_ASCII);
-    static final byte[] DB_MAGIC = "NEXORADBF".getBytes(StandardCharsets.US_ASCII);
-    static final byte[] LOG_MAGIC = "NEXORALOG".getBytes(StandardCharsets.US_ASCII);
+    // Nine-byte signatures. The version field starts immediately after the magic.
+    static final byte[] MAGIC = "SEADB-TBL".getBytes(StandardCharsets.US_ASCII);
+    static final byte[] DB_MAGIC = "SEADB-DBF".getBytes(StandardCharsets.US_ASCII);
+    static final byte[] LOG_MAGIC = "SEADB-LOG".getBytes(StandardCharsets.US_ASCII);
     static final int VERSION = 1;
     static final int DB_VERSION = 1;
     static final int LOG_VERSION = 1;

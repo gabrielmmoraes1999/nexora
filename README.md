@@ -1,4 +1,4 @@
-# SeaDB — JDBC
+# SeaDB
 
 <p align="center">
   <img src="branding/seadb-logo.png" alt="Logo SeaDB com leão-marinho" width="600">

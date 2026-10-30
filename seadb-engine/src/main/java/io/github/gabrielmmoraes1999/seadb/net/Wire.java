@@ -32,7 +32,7 @@ import java.util.List;
  */
 public final class Wire {
 
-    public static final int MAGIC = 0x4E455831;
+    public static final int MAGIC = 0x53454131;
     public static final int VERSION = 1;
     public static final int MAX_FRAME = 64 * 1024 * 1024;
 
