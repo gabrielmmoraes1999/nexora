@@ -766,11 +766,3 @@ CREATE VIEW names AS SELECT person FROM active;
 DROP VIEW names;
 DROP VIEW active;
 ```
-
-## Identidade SeaDB
-
-O projeto foi renomeado de Nexora para SeaDB. Os módulos e executáveis usam o prefixo `seadb-`, os pacotes Java usam `io.github.gabrielmmoraes1999.seadb` e as URLs JDBC usam `jdbc:seadb:`. Atualize as dependências Maven, imports, configurações e scripts dos clientes ao migrar.
-
-As assinaturas binárias históricas dos arquivos de banco e log foram preservadas para permitir a leitura dos bancos existentes. O símbolo do leão-marinho é desenhado por `SeaIcon` e compartilhado pelas janelas e pelo gerador de ícones Windows.
-
-O driver JDBC agora é `io.github.gabrielmmoraes1999.seadb.jdbc.SeaDriver`. As classes JDBC auxiliares e a exceção pública também usam `Sea` (por exemplo, `SeaConnection` e `SeaException`). O catálogo usa tabelas e colunas `SEA$`, como `SEA$USERS` e `SEA$USER_NAME`. A leitura dos metadados anteriores traduz o prefixo reservado `NEX$` para `SEA$`; o SQL anterior continua sendo aceito para recuperar logs e definições existentes. Literais e dados dos usuários permanecem intactos.
