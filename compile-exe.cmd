@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 rem Builds the six tools into one folder.
-rem Each .exe has its JAR inside. They share dist\java, one Java for all of them.
+rem Each x64 .exe hosts the JVM in-process and has its JAR inside. They share dist\java, one Java for all of them.
 rem Console tools keep a console so progress, --help, and errors stay visible.
 rem Backup and dbtran are window programs, so opening the window does not create a console.
 rem Arguments still print in the console that launched them.
@@ -157,6 +157,11 @@ if %JAVA_MAJOR% LSS 21 (
     echo jlink is from Java %JAVA_MAJOR%. SeaDB needs JDK 21 or newer, so the bundled runtime can run the classes.
     exit /b 1
 )
+findstr /b "OS_ARCH=" "%JAVA_HOME%\release" | findstr "amd64 x86_64" >nul
+if errorlevel 1 (
+    echo An x64 JDK is required for the in-process launcher.
+    exit /b 1
+)
 echo Using "%JLINK%"
 echo Java %JAVA_MAJOR%
 exit /b 0
@@ -185,16 +190,6 @@ echo Modules: %MODLIST%
 "%JBIN%jlink.exe" --add-modules %MODLIST% --strip-debug --no-header-files --no-man-pages --strip-native-commands --output "%DEST%\java"
 if errorlevel 1 (
     echo jlink failed.
-    exit /b 1
-)
-copy /y "%JBIN%java.exe" "%DEST%\java\bin\java.exe" >nul
-if errorlevel 1 (
-    echo Could not copy java.exe into the shared runtime.
-    exit /b 1
-)
-copy /y "%JBIN%javaw.exe" "%DEST%\java\bin\javaw.exe" >nul
-if errorlevel 1 (
-    echo Could not copy javaw.exe into the shared runtime.
     exit /b 1
 )
 exit /b 0
@@ -238,7 +233,12 @@ if not exist "%APPJAR%" (
     exit /b 1
 )
 echo Embedding %MODULE%...
-"%CSC%" /nologo /optimize+ /target:%TARGET% %DEFINE% %WINFORMS% /win32icon:"%ICON%" /resource:"%APPJAR%",AppJar /out:"%OUT%" "%~dp0packaging\SeaDBLauncher.cs"
+> "%STAGE%\AppInfo.cs" echo using System.Reflection;
+>> "%STAGE%\AppInfo.cs" echo [assembly: AssemblyTitle("%MODULE%")]
+>> "%STAGE%\AppInfo.cs" echo [assembly: AssemblyProduct("SeaDB")]
+>> "%STAGE%\AppInfo.cs" echo [assembly: AssemblyDescription("%MODULE%")]
+>> "%STAGE%\AppInfo.cs" echo [assembly: AssemblyVersion("%VERSION%.0.0")]
+"%CSC%" /nologo /platform:x64 /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /optimize+ /target:%TARGET% %DEFINE% %WINFORMS% /win32icon:"%ICON%" /resource:"%APPJAR%",AppJar /out:"%OUT%" "%~dp0packaging\SeaDBLauncher.cs" "%STAGE%\AppInfo.cs"
 if errorlevel 1 (
     echo Could not embed the JAR for %MODULE%.
     exit /b 1
